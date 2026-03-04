@@ -533,64 +533,46 @@ let
         )}
 
         # --- Compile local packages (two-pass) ---
-        # Pass 1: library packages (is_command=false)
-        # Pass 2: main packages (is_command=true) — compiled with -p main, then linked
         localdir="$NIX_BUILD_TOP/local-pkgs"
         mkdir -p "$localdir"
 
-        # Find all directories with .go files under src.
-        find "${src}" -name '*.go' -not -path '*/vendor/*' -not -path '*/_*' -not -path '*/testdata/*' \
-          | while read -r gofile; do dirname "$gofile"; done \
-          | sort -u \
-          | while read -r pkgdir; do
-            # Compute import path from directory relative to module root.
-            reldir="''${pkgdir#"${src}/"}"
-            if [ "$reldir" = "${src}" ]; then
-              importpath="${modulePath}"
-            else
-              importpath="${modulePath}/$reldir"
-            fi
+        # Get all local packages in dependency order.
+        localjson=$(go2nix list-local-packages ${tagFlag} "${src}")
 
-            # Discover files.
-            filesjson=$(go2nix list-files ${tagFlag} "$pkgdir")
-            gofiles=$(echo "$filesjson" | jq -r '.go_files[]')
+        # Pass 1: compile library packages (in topological order).
+        # Use process substitution to avoid pipe subshell (which would swallow errors).
+        while read -r pkgentry; do
+          importpath=$(echo "$pkgentry" | jq -r '.import_path')
+          srcdir=$(echo "$pkgentry" | jq -r '.src_dir')
+          gofiles=$(echo "$pkgentry" | jq -r '.go_files[]')
 
-            if [ -z "$gofiles" ]; then
-              continue
-            fi
+          if [ -z "$gofiles" ]; then
+            continue
+          fi
 
-            # Skip main packages — they are handled in pass 2.
-            is_command=$(echo "$filesjson" | jq -r '.is_command')
-            if [ "$is_command" = "true" ]; then
-              continue
-            fi
+          echo "Compiling local library: $importpath ($srcdir)"
 
-            echo "Compiling local library: $importpath ($pkgdir)"
+          embedflag=""
+          hasEmbed=$(echo "$pkgentry" | jq -r '.embed_cfg // empty')
+          if [ -n "$hasEmbed" ]; then
+            echo "$pkgentry" | jq '.embed_cfg' > "$NIX_BUILD_TOP/embedcfg-local.json"
+            embedflag="-embedcfg=$NIX_BUILD_TOP/embedcfg-local.json"
+          fi
 
-            # Check for embeds.
-            embedflag=""
-            hasEmbed=$(echo "$filesjson" | jq -r '.embed_cfg // empty')
-            if [ -n "$hasEmbed" ]; then
-              echo "$filesjson" | jq '.embed_cfg' > "$NIX_BUILD_TOP/embedcfg-local.json"
-              embedflag="-embedcfg=$NIX_BUILD_TOP/embedcfg-local.json"
-            fi
+          mkdir -p "$localdir/$(dirname "$importpath")"
+          cd "$srcdir"
+          go tool compile \
+            -importcfg "$NIX_BUILD_TOP/importcfg" \
+            -p "$importpath" \
+            -trimpath="$NIX_BUILD_TOP" \
+            ${tagFlag} \
+            $embedflag \
+            -pack \
+            -o "$localdir/$importpath.a" \
+            $gofiles
 
-            # Compile the library package.
-            mkdir -p "$localdir/$(dirname "$importpath")"
-            cd "$pkgdir"
-            go tool compile \
-              -importcfg "$NIX_BUILD_TOP/importcfg" \
-              -p "$importpath" \
-              -trimpath="$NIX_BUILD_TOP" \
-              ${tagFlag} \
-              $embedflag \
-              -pack \
-              -o "$localdir/$importpath.a" \
-              $gofiles
-
-            # Add to importcfg so later local packages (and the linker) can find it.
-            echo "packagefile $importpath=$localdir/$importpath.a" >> "$NIX_BUILD_TOP/importcfg"
-          done
+          echo "packagefile $importpath=$localdir/$importpath.a" >> "$NIX_BUILD_TOP/importcfg"
+        done < <(echo "$localjson" | jq -c '.[] | select(.is_command == false)')
 
         # --- Pass 2: Compile main packages and link ---
         mkdir -p "$out/bin"
