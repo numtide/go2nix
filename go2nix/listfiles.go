@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"go/build"
 	"io/fs"
@@ -32,12 +33,18 @@ type EmbedCfg struct {
 }
 
 func listFilesCmd(args []string) {
-	if len(args) != 1 {
-		log.Fatal("usage: go2nix list-files <package-dir>")
+	flagSet := flag.NewFlagSet("list-files", flag.ExitOnError)
+	tagsFlag := flagSet.String("tags", "", "comma-separated build tags")
+	flagSet.Parse(args)
+	if flagSet.NArg() != 1 {
+		log.Fatal("usage: go2nix list-files [-tags=...] <package-dir>")
 	}
-	dir := args[0]
+	dir := flagSet.Arg(0)
 
 	ctx := build.Default
+	if *tagsFlag != "" {
+		ctx.BuildTags = strings.Split(*tagsFlag, ",")
+	}
 	// Respect GOOS/GOARCH from environment for cross-compilation.
 	if v := os.Getenv("GOOS"); v != "" {
 		ctx.GOOS = v
