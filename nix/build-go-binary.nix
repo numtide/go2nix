@@ -74,6 +74,17 @@ let
   # All third-party package derivations (used in importcfg for linking).
   allThirdPartyDeps = builtins.attrValues packageSet;
 
+  # Pre-generate importcfg entries at eval time to avoid inlining shell per dep
+  # (which would exceed ARG_MAX with large dependency sets).
+  # Each package derivation outputs $out/<importPath>.a, so no `find` needed.
+  thirdPartyImportcfg = pkgs.writeText "importcfg-third-party" (
+    builtins.concatStringsSep "\n" (
+      map (importPath:
+        "packagefile ${importPath}=${packageSet.${importPath}}/${importPath}.a"
+      ) (builtins.attrNames packageSet)
+    )
+  );
+
   # Filter out our known args so extra attrs can be passed through to mkDerivation.
   extraArgs = builtins.removeAttrs args [
     "src"
@@ -118,16 +129,7 @@ pkgs.stdenv.mkDerivation (extraArgs // {
 
     # Build importcfg with ALL packages (stdlib + third-party).
     cat "${stdlib}/importcfg" > "$NIX_BUILD_TOP/importcfg"
-
-    ${builtins.concatStringsSep "\n" (
-      map (dep: ''
-        find "${dep}" -name '*.a' | while read -r pkgp; do
-          relpath="''${pkgp#"${dep}/"}"
-          pkgname="''${relpath%.a}"
-          echo "packagefile $pkgname=$pkgp"
-        done >> "$NIX_BUILD_TOP/importcfg"
-      '') allThirdPartyDeps
-    )}
+    cat "${thirdPartyImportcfg}" >> "$NIX_BUILD_TOP/importcfg"
 
     runHook postConfigure
   '';
