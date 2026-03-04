@@ -265,6 +265,8 @@ func main() {
 		generateCmd(os.Args[2:])
 	case "list-files":
 		listFilesCmd(os.Args[2:])
+	case "list-local-packages":
+		listLocalPackagesCmd(os.Args[2:])
 	default:
 		generateCmd(os.Args[1:])
 	}
