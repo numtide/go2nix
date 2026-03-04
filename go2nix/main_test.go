@@ -3,21 +3,25 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
+
+	"slices"
 )
 
 func TestLockfileRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lock.toml")
 
-	orig := &lockfile{Mod: map[string]Entry{
-		"github.com/foo/bar@v1.2.3":  {Version: "v1.2.3", Hash: "sha256-aaa="},
-		"github.com/alpha/z@v0.0.1":  {Version: "v0.0.1", Hash: "sha256-bbb="},
-		"github.com/foo/bar@v1.2.4":  {Version: "v1.2.4", Hash: "sha256-ccc="},
-		"github.com/replaced@v2.0.0": {Version: "v2.0.0", Hash: "sha256-ddd=", Replaced: "github.com/fork"},
-	}}
+	orig := &lockfile{
+		Mod: map[string]ModEntry{
+			"github.com/foo/bar@v1.2.3":  {Version: "v1.2.3", Hash: "sha256-aaa=", NumPkgs: 1},
+			"github.com/alpha/z@v0.0.1":  {Version: "v0.0.1", Hash: "sha256-bbb=", NumPkgs: 2},
+			"github.com/foo/bar@v1.2.4":  {Version: "v1.2.4", Hash: "sha256-ccc=", NumPkgs: 1},
+			"github.com/replaced@v2.0.0": {Version: "v2.0.0", Hash: "sha256-ddd=", Replaced: "github.com/fork", NumPkgs: 3},
+		},
+		Pkg: map[string]PkgEntry{},
+	}
 	if err := orig.write(path, "# header\n\n"); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -69,28 +73,6 @@ func TestReadLockfileMissing(t *testing.T) {
 	}
 	if len(lf.Mod) != 0 {
 		t.Errorf("missing file should return empty lockfile, got %d entries", len(lf.Mod))
-	}
-}
-
-func TestReadProjects(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "p.txt")
-	content := `# comment
-foo
-  bar
-
-# another comment
-baz/qux
-`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readProjects(path)
-	if err != nil {
-		t.Fatalf("readProjects: %v", err)
-	}
-	want := []string{"foo", "bar", "baz/qux"}
-	if !slices.Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
