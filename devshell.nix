@@ -6,6 +6,6 @@ pkgs.mkShell {
 
   shellHook = ''
     export PRJ_ROOT=$PWD
-    export NIXPKGS=${pkgs.path}
+    export NIX_PATH=nixpkgs=${pkgs.path}
   '';
 }
