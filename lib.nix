@@ -64,14 +64,16 @@ let
   # --- Helpers ----------------------------------------------------------------
 
   # Parse a module key like "github.com/foo/bar@v1.2.3" into { path, version }.
+  # Uses match instead of split: avoids regex iterator allocation and
+  # the 2*m+1 intermediate list that split produces (see primops.cc:4820).
   parseModKey =
     key:
     let
-      parts = builtins.split "@" key;
+      m = builtins.match "(.+)@(.+)" key;
     in
     {
-      path = builtins.elemAt parts 0;
-      version = builtins.elemAt parts 2;
+      path = builtins.elemAt m 0;
+      version = builtins.elemAt m 1;
     };
 
   # Make a string safe for use as a Nix derivation name.
@@ -152,14 +154,15 @@ let
   # Returns an attrset: { "import/path" = <derivation>; ... }
   mkGoPackageSet =
     {
-      goLock, # path to go2nix.toml lockfile
+      goLock ? null, # path to go2nix.toml lockfile (parsed if lockfileData not given)
+      lockfileData ? builtins.fromTOML (builtins.readFile goLock), # pre-parsed lockfile
       go, # Go toolchain
       go2nix, # go2nix binary (for list-files subcommand)
       pkgs, # nixpkgs
       tags ? [], # build tags
     }:
     let
-      lockfile = builtins.fromTOML (builtins.readFile goLock);
+      lockfile = lockfileData;
       tagFlag = if tags == [] then "" else "-tags=${builtins.concatStringsSep "," tags}";
       stdlib = buildGoStdlib {
         inherit go;
@@ -461,6 +464,8 @@ let
       CGO_ENABLED ? null,
     }:
     let
+      # Parse lockfile once; share with mkGoPackageSet to avoid double fromTOML
+      # (fromTOML has no internal caching — see primops/fromTOML.cc).
       lockfile = builtins.fromTOML (builtins.readFile goLock);
 
       # Build tag flag for go tool compile and go2nix list-files.
@@ -492,10 +497,10 @@ let
         binName = if sp == "." then pname else builtins.baseNameOf sp;
       }) subPackages;
 
-      # Third-party package set.
+      # Third-party package set — pass pre-parsed lockfile to avoid re-parsing.
       packageSet = mkGoPackageSet {
+        lockfileData = lockfile;
         inherit
-          goLock
           go
           go2nix
           pkgs
