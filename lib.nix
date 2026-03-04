@@ -243,14 +243,16 @@ let
           }
           ''
             export HOME=$NIX_BUILD_TOP
+            go_os=$(go env GOOS)
+            go_arch=$(go env GOARCH)
 
             # Discover Go source files for this package (build-constraint filtered).
             filesjson=$(go2nix list-files ${tagFlag} "${srcDir}")
-            gofiles=$(echo "$filesjson" | jq -r '.go_files[]')
-            cgofiles=$(echo "$filesjson" | jq -r '.cgo_files[]')
-            sfiles=$(echo "$filesjson" | jq -r '.s_files[]')
-            cfiles=$(echo "$filesjson" | jq -r '.c_files[]')
-            hfiles=$(echo "$filesjson" | jq -r '.h_files[]')
+            gofiles=$(echo "$filesjson" | jq -r '(.go_files // [])[]')
+            cgofiles=$(echo "$filesjson" | jq -r '(.cgo_files // [])[]')
+            sfiles=$(echo "$filesjson" | jq -r '(.s_files // [])[]')
+            cfiles=$(echo "$filesjson" | jq -r '(.c_files // [])[]')
+            hfiles=$(echo "$filesjson" | jq -r '(.h_files // [])[]')
 
             if [ -z "$gofiles" ] && [ -z "$cgofiles" ]; then
               echo "ERROR: no Go files found in ${srcDir}" >&2
@@ -313,6 +315,18 @@ let
                 compiled_ofiles="$compiled_ofiles $cgowork/$base.o"
               done
 
+              # Compile .S files (C preprocessor assembly) with gcc.
+              for f in $sfiles; do
+                base="$(basename "$f" .S)"
+                gcc -c \
+                  -I "$cgowork" \
+                  -I "${srcDir}" \
+                  -fPIC -pthread \
+                  "$f" \
+                  -o "$cgowork/$base.o"
+                compiled_ofiles="$compiled_ofiles $cgowork/$base.o"
+              done
+
               # Step 3: gcc test link + dynimport — needed for external linking.
               # Produces _cgo_import.go with //go:cgo_import_dynamic directives.
               if [ -f "$cgowork/_cgo_main.c" ]; then
@@ -366,7 +380,7 @@ let
                   -trimpath "$NIX_BUILD_TOP" \
                   -I "$NIX_BUILD_TOP" \
                   -I "$(go env GOROOT)/pkg/include" \
-                  -D GOOS_linux -D GOARCH_amd64 \
+                  -D "GOOS_$go_os" -D "GOARCH_$go_arch" \
                   -gensymabis \
                   -o "$NIX_BUILD_TOP/symabis" \
                   $sfiles
@@ -391,7 +405,7 @@ let
                     -trimpath "$NIX_BUILD_TOP" \
                     -I "$NIX_BUILD_TOP" \
                     -I "$(go env GOROOT)/pkg/include" \
-                    -D GOOS_linux -D GOARCH_amd64 \
+                    -D "GOOS_$go_os" -D "GOARCH_$go_arch" \
                     -o "$NIX_BUILD_TOP/$base.o" \
                     "$sf"
                   go tool pack r "$out/${importPath}.a" "$NIX_BUILD_TOP/$base.o"
@@ -436,6 +450,7 @@ let
     {
       src,
       goLock ? "${src}/go2nix.toml",
+      moduleDir ? ".",  # relative path from src to directory containing go.mod
       go,
       go2nix,
       pkgs,
@@ -456,7 +471,10 @@ let
 
       # The main module path from go.mod (first line: "module <path>").
       # We need this to compute import paths for local packages.
-      goModContent = builtins.readFile "${src}/go.mod";
+      # moduleRoot is the directory containing go.mod, resolved within src.
+      moduleRoot = if moduleDir == "." then "${src}" else "${src}/${moduleDir}";
+
+      goModContent = builtins.readFile "${moduleRoot}/go.mod";
       modulePath =
         let
           lines = builtins.filter (l: l != [ ] && builtins.isString l) (builtins.split "\n" goModContent);
@@ -493,19 +511,6 @@ let
       # All third-party package derivations (used in importcfg for linking).
       allThirdPartyDeps = builtins.attrValues packageSet;
 
-      # Check if any third-party package is cgo (needs external linker).
-      # We detect this by checking if any cgo-related packages are in the lockfile.
-      # For simplicity, always use external linker if DataDog/zstd or similar cgo
-      # packages are present.
-      hasCgo = builtins.any (
-        name:
-        let
-          pkg = lockfile.pkg.${name};
-        in
-        # Packages known to use cgo — we can refine this detection later.
-        false
-      ) (builtins.attrNames (lockfile.pkg or { }));
-
     in
     pkgs.runCommandCC "${pname}"
       {
@@ -518,6 +523,215 @@ let
       ''
         export HOME=$NIX_BUILD_TOP
         ${if CGO_ENABLED != null then "export CGO_ENABLED=${CGO_ENABLED}" else ""}
+
+        go_os=$(go env GOOS)
+        go_arch=$(go env GOARCH)
+
+        # compile_go_pkg: compile a single Go package (pure Go, assembly, or cgo).
+        #   $1 = p_flag (import path for libs, "main" for commands)
+        #   $2 = src_dir (absolute path to package source)
+        #   $3 = output_archive (path to write .a file)
+        #   $4 = pkg_json (JSON string with go_files, cgo_files, s_files, etc.)
+        #   $5 = unique_id (optional, for temp file uniqueness; defaults to sanitized $1)
+        compile_go_pkg() {
+          local p_flag="$1"
+          local src_dir="$2"
+          local output_archive="$3"
+          local pkg_json="$4"
+          local uid="''${5:-$(echo "$p_flag" | tr '/' '_')}"
+
+          local gofiles cgofiles sfiles cfiles cxxfiles hfiles
+
+          gofiles=$(echo "$pkg_json" | jq -r '(.go_files // [])[]')
+          cgofiles=$(echo "$pkg_json" | jq -r '(.cgo_files // [])[]')
+          sfiles=$(echo "$pkg_json" | jq -r '(.s_files // [])[]')
+          cfiles=$(echo "$pkg_json" | jq -r '(.c_files // [])[]')
+          cxxfiles=$(echo "$pkg_json" | jq -r '(.cxx_files // [])[]')
+          hfiles=$(echo "$pkg_json" | jq -r '(.h_files // [])[]')
+
+          if [ -z "$gofiles" ] && [ -z "$cgofiles" ]; then
+            echo "ERROR: no Go files found in $src_dir" >&2
+            echo "Package: $p_flag" >&2
+            exit 1
+          fi
+
+          # Generate embedcfg if the package uses //go:embed.
+          local embedflag=""
+          local hasEmbed
+          hasEmbed=$(echo "$pkg_json" | jq -r '.embed_cfg // empty')
+          if [ -n "$hasEmbed" ]; then
+            echo "$pkg_json" | jq '.embed_cfg' > "$NIX_BUILD_TOP/embedcfg_''${uid}.json"
+            embedflag="-embedcfg=$NIX_BUILD_TOP/embedcfg_''${uid}.json"
+          fi
+
+          mkdir -p "$(dirname "$output_archive")"
+          cd "$src_dir"
+
+          if [ -n "$cgofiles" ]; then
+            # --- Cgo compilation pipeline ---
+            touch "$NIX_BUILD_TOP/.has_cgo"
+
+            local cgowork="$NIX_BUILD_TOP/cgo_work_''${uid}"
+            mkdir -p "$cgowork"
+
+            # Copy header files so cgo/gcc can find them.
+            for h in $hfiles; do
+              cp "$h" "$cgowork/"
+            done
+
+            # Step 1: go tool cgo
+            go tool cgo \
+              -objdir "$cgowork" \
+              -importpath "$p_flag" \
+              -- \
+              -I "$cgowork" \
+              $cgofiles
+
+            # Step 2: gcc/g++ — compile C/C++ files
+            local cc_files=""
+            local compiled_ofiles=""
+            for f in "$cgowork"/_cgo_export.c "$cgowork"/*.cgo2.c; do
+              [ -f "$f" ] && cc_files="$cc_files $f"
+            done
+            for f in $cfiles; do
+              cc_files="$cc_files $f"
+            done
+
+            for f in $cc_files; do
+              local base
+              base="$(basename "$f" .c)"
+              gcc -c \
+                -I "$cgowork" \
+                -I "$src_dir" \
+                -fPIC -pthread \
+                "$f" \
+                -o "$cgowork/''${base}_''${uid}.o"
+              compiled_ofiles="$compiled_ofiles $cgowork/''${base}_''${uid}.o"
+            done
+
+            # Compile .S files (C preprocessor assembly) with gcc.
+            for f in $sfiles; do
+              local base
+              base="$(basename "$f" .S)"
+              gcc -c \
+                -I "$cgowork" \
+                -I "$src_dir" \
+                -fPIC -pthread \
+                "$f" \
+                -o "$cgowork/''${base}_asm_''${uid}.o"
+              compiled_ofiles="$compiled_ofiles $cgowork/''${base}_asm_''${uid}.o"
+            done
+
+            # Compile C++ files
+            for f in $cxxfiles; do
+              local base
+              base="$(basename "$f" .cc)"
+              base="$(basename "$base" .cpp)"
+              base="$(basename "$base" .cxx)"
+              g++ -c \
+                -I "$cgowork" \
+                -I "$src_dir" \
+                -fPIC -pthread \
+                "$f" \
+                -o "$cgowork/''${base}_cxx_''${uid}.o"
+              compiled_ofiles="$compiled_ofiles $cgowork/''${base}_cxx_''${uid}.o"
+            done
+
+            # Step 3: gcc test link + dynimport
+            if [ -f "$cgowork/_cgo_main.c" ]; then
+              gcc -c \
+                -I "$cgowork" \
+                -I "$src_dir" \
+                -fPIC -pthread \
+                "$cgowork/_cgo_main.c" \
+                -o "$cgowork/_cgo_main_''${uid}.o"
+              gcc -o "$cgowork/_cgo__''${uid}.o" "$cgowork/_cgo_main_''${uid}.o" $compiled_ofiles -lpthread || echo "note: cgo test link failed (no dynamic imports for this package)"
+              if [ -f "$cgowork/_cgo__''${uid}.o" ]; then
+                local pkgname
+                pkgname=$(sed -n 's/^package //p' "$cgowork/_cgo_gotypes.go" | head -1)
+                go tool cgo -dynimport "$cgowork/_cgo__''${uid}.o" \
+                  -dynout "$cgowork/_cgo_import_''${uid}.go" \
+                  -dynpackage "$pkgname" \
+                  -dynlinker || echo "note: cgo dynimport failed (continuing)"
+              fi
+            fi
+
+            # Step 4: go tool compile — Go files + cgo-generated Go files
+            local cgo_gofiles=""
+            for f in "$cgowork"/_cgo_gotypes.go "$cgowork"/*.cgo1.go; do
+              [ -f "$f" ] && cgo_gofiles="$cgo_gofiles $f"
+            done
+            [ -f "$cgowork/_cgo_import_''${uid}.go" ] && cgo_gofiles="$cgo_gofiles $cgowork/_cgo_import_''${uid}.go"
+
+            go tool compile \
+              -importcfg "$NIX_BUILD_TOP/importcfg" \
+              -p "$p_flag" \
+              -trimpath="$NIX_BUILD_TOP" \
+              $embedflag \
+              -pack \
+              -o "$output_archive" \
+              $gofiles $cgo_gofiles
+
+            # Step 5: pack compiled C/C++ objects
+            go tool pack r "$output_archive" $compiled_ofiles
+
+          else
+            # --- Pure Go (possibly with assembly) ---
+            local compile_files="$gofiles"
+
+            if [ -n "$sfiles" ]; then
+              local asmhdr="$NIX_BUILD_TOP/go_asm_''${uid}.h"
+              touch "$asmhdr"
+
+              # First pass: generate symabis
+              go tool asm \
+                -p "$p_flag" \
+                -trimpath "$NIX_BUILD_TOP" \
+                -I "$NIX_BUILD_TOP" \
+                -I "$(go env GOROOT)/pkg/include" \
+                -D "GOOS_$go_os" -D "GOARCH_$go_arch" \
+                -gensymabis \
+                -o "$NIX_BUILD_TOP/symabis_''${uid}" \
+                $sfiles
+
+              # Compile Go with symabis + asmhdr
+              go tool compile \
+                -importcfg "$NIX_BUILD_TOP/importcfg" \
+                -p "$p_flag" \
+                -trimpath="$NIX_BUILD_TOP" \
+                -symabis "$NIX_BUILD_TOP/symabis_''${uid}" \
+                -asmhdr "$asmhdr" \
+                $embedflag \
+                -pack \
+                -o "$output_archive" \
+                $compile_files
+
+              # Second pass: assemble .s files
+              for sf in $sfiles; do
+                local base
+                base="$(basename "$sf" .s)"
+                go tool asm \
+                  -p "$p_flag" \
+                  -trimpath "$NIX_BUILD_TOP" \
+                  -I "$NIX_BUILD_TOP" \
+                  -I "$(go env GOROOT)/pkg/include" \
+                  -D "GOOS_$go_os" -D "GOARCH_$go_arch" \
+                  -o "$NIX_BUILD_TOP/''${base}_''${uid}.o" \
+                  "$sf"
+                go tool pack r "$output_archive" "$NIX_BUILD_TOP/''${base}_''${uid}.o"
+              done
+            else
+              go tool compile \
+                -importcfg "$NIX_BUILD_TOP/importcfg" \
+                -p "$p_flag" \
+                -trimpath="$NIX_BUILD_TOP" \
+                $embedflag \
+                -pack \
+                -o "$output_archive" \
+                $compile_files
+            fi
+          fi
+        }
 
         # --- Build importcfg with ALL packages (stdlib + third-party) ---
         cat "${stdlib}/importcfg" > "$NIX_BUILD_TOP/importcfg"
@@ -537,39 +751,16 @@ let
         mkdir -p "$localdir"
 
         # Get all local packages in dependency order.
-        localjson=$(go2nix list-local-packages ${tagFlag} "${src}")
+        localjson=$(go2nix list-local-packages ${tagFlag} "${moduleRoot}")
 
         # Pass 1: compile library packages (in topological order).
         # Use process substitution to avoid pipe subshell (which would swallow errors).
         while read -r pkgentry; do
           importpath=$(echo "$pkgentry" | jq -r '.import_path')
           srcdir=$(echo "$pkgentry" | jq -r '.src_dir')
-          gofiles=$(echo "$pkgentry" | jq -r '.go_files[]')
-
-          if [ -z "$gofiles" ]; then
-            continue
-          fi
 
           echo "Compiling local library: $importpath ($srcdir)"
-
-          embedflag=""
-          hasEmbed=$(echo "$pkgentry" | jq -r '.embed_cfg // empty')
-          if [ -n "$hasEmbed" ]; then
-            echo "$pkgentry" | jq '.embed_cfg' > "$NIX_BUILD_TOP/embedcfg-local.json"
-            embedflag="-embedcfg=$NIX_BUILD_TOP/embedcfg-local.json"
-          fi
-
-          mkdir -p "$localdir/$(dirname "$importpath")"
-          cd "$srcdir"
-          go tool compile \
-            -importcfg "$NIX_BUILD_TOP/importcfg" \
-            -p "$importpath" \
-            -trimpath="$NIX_BUILD_TOP" \
-            ${tagFlag} \
-            $embedflag \
-            -pack \
-            -o "$localdir/$importpath.a" \
-            $gofiles
+          compile_go_pkg "$importpath" "$srcdir" "$localdir/$importpath.a" "$pkgentry"
 
           echo "packagefile $importpath=$localdir/$importpath.a" >> "$NIX_BUILD_TOP/importcfg"
         done < <(echo "$localjson" | jq -c '.[] | select(.is_command == false)')
@@ -581,35 +772,18 @@ let
           map (meta: ''
             echo "Compiling main: ${meta.importPath} (${meta.srcDir})"
             filesjson=$(go2nix list-files ${tagFlag} "${meta.srcDir}")
-            gofiles=$(echo "$filesjson" | jq -r '.go_files[]')
 
-            if [ -z "$gofiles" ]; then
-              echo "ERROR: no Go files found in ${meta.srcDir}" >&2
-              exit 1
+            compile_go_pkg "main" "${meta.srcDir}" "$localdir/${meta.importPath}.a" "$filesjson" "main_${meta.binName}"
+
+            linkflags=""
+            if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
+              linkflags="-extld gcc -linkmode external"
             fi
-
-            embedflag=""
-            hasEmbed=$(echo "$filesjson" | jq -r '.embed_cfg // empty')
-            if [ -n "$hasEmbed" ]; then
-              echo "$filesjson" | jq '.embed_cfg' > "$NIX_BUILD_TOP/embedcfg-main.json"
-              embedflag="-embedcfg=$NIX_BUILD_TOP/embedcfg-main.json"
-            fi
-
-            mkdir -p "$localdir/$(dirname "${meta.importPath}")"
-            cd "${meta.srcDir}"
-            go tool compile \
-              -importcfg "$NIX_BUILD_TOP/importcfg" \
-              -p main \
-              -trimpath="$NIX_BUILD_TOP" \
-              ${tagFlag} \
-              $embedflag \
-              -pack \
-              -o "$localdir/${meta.importPath}.a" \
-              $gofiles
 
             go tool link \
               -importcfg "$NIX_BUILD_TOP/importcfg" \
               ${ldflagsStr} \
+              $linkflags \
               -o "$out/bin/${meta.binName}" \
               "$localdir/${meta.importPath}.a"
           '') subPackageMeta
