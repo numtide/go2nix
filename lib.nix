@@ -156,9 +156,11 @@ let
       go, # Go toolchain
       go2nix, # go2nix binary (for list-files subcommand)
       pkgs, # nixpkgs
+      tags ? [], # build tags
     }:
     let
       lockfile = builtins.fromTOML (builtins.readFile goLock);
+      tagFlag = if tags == [] then "" else "-tags=${builtins.concatStringsSep "," tags}";
       stdlib = buildGoStdlib {
         inherit go;
         inherit (pkgs) runCommandCC;
@@ -243,7 +245,7 @@ let
             export HOME=$NIX_BUILD_TOP
 
             # Discover Go source files for this package (build-constraint filtered).
-            filesjson=$(go2nix list-files "${srcDir}")
+            filesjson=$(go2nix list-files ${tagFlag} "${srcDir}")
             gofiles=$(echo "$filesjson" | jq -r '.go_files[]')
             cgofiles=$(echo "$filesjson" | jq -r '.cgo_files[]')
             sfiles=$(echo "$filesjson" | jq -r '.s_files[]')
@@ -320,13 +322,13 @@ let
                   -fPIC -pthread \
                   "$cgowork/_cgo_main.c" \
                   -o "$cgowork/_cgo_main.o"
-                gcc -o "$cgowork/_cgo_.o" "$cgowork/_cgo_main.o" $compiled_ofiles -lpthread 2>/dev/null || true
+                gcc -o "$cgowork/_cgo_.o" "$cgowork/_cgo_main.o" $compiled_ofiles -lpthread || echo "note: cgo test link failed (no dynamic imports for this package)"
                 if [ -f "$cgowork/_cgo_.o" ]; then
                   pkgname=$(sed -n 's/^package //p' "$cgowork/_cgo_gotypes.go" | head -1)
                   go tool cgo -dynimport "$cgowork/_cgo_.o" \
                     -dynout "$cgowork/_cgo_import.go" \
                     -dynpackage "$pkgname" \
-                    -dynlinker 2>/dev/null || true
+                    -dynlinker || echo "note: cgo dynimport failed (continuing)"
                 fi
               fi
 
@@ -420,25 +422,37 @@ let
   # Local packages are compiled from src in a single derivation.
   #
   # Arguments:
-  #   src        - local source tree (the Go module root)
-  #   goLock     - path to go2nix.toml lockfile
-  #   go         - Go toolchain
-  #   go2nix     - go2nix binary (for list-files)
-  #   pkgs       - nixpkgs
-  #   subPackage - import path suffix for the main package (default ".")
-  #   pname      - output binary name
+  #   src         - local source tree (the Go module root)
+  #   goLock      - path to go2nix.toml lockfile (default: ${src}/go2nix.toml)
+  #   go          - Go toolchain
+  #   go2nix      - go2nix binary (for list-files)
+  #   pkgs        - nixpkgs
+  #   subPackages - list of import path suffixes for main packages (default ["."])
+  #   pname       - output binary name (for single-binary; multi uses baseNameOf)
+  #   tags        - build tags (default [])
+  #   ldflags     - linker flags (default [])
+  #   CGO_ENABLED - "0" or "1" as string, or null for Go default
   buildGoBinary =
     {
       src,
-      goLock,
+      goLock ? "${src}/go2nix.toml",
       go,
       go2nix,
       pkgs,
-      subPackage ? ".",
+      subPackages ? ["."],
       pname ? "go-binary",
+      tags ? [],
+      ldflags ? [],
+      CGO_ENABLED ? null,
     }:
     let
       lockfile = builtins.fromTOML (builtins.readFile goLock);
+
+      # Build tag flag for go tool compile and go2nix list-files.
+      tagFlag = if tags == [] then "" else "-tags=${builtins.concatStringsSep "," tags}";
+
+      # Linker flags string.
+      ldflagsStr = builtins.concatStringsSep " " ldflags;
 
       # The main module path from go.mod (first line: "module <path>").
       # We need this to compute import paths for local packages.
@@ -452,8 +466,13 @@ let
         in
         builtins.substring 7 (builtins.stringLength moduleLine - 7) moduleLine;
 
-      # Main package import path.
-      mainImportPath = if subPackage == "." then "${modulePath}" else "${modulePath}/${subPackage}";
+      # Metadata for each sub-package to build.
+      subPackageMeta = map (sp: {
+        subPackage = sp;
+        importPath = if sp == "." then modulePath else "${modulePath}/${sp}";
+        srcDir = if sp == "." then "${src}" else "${src}/${sp}";
+        binName = if sp == "." then pname else builtins.baseNameOf sp;
+      }) subPackages;
 
       # Third-party package set.
       packageSet = mkGoPackageSet {
@@ -462,6 +481,7 @@ let
           go
           go2nix
           pkgs
+          tags
           ;
       };
 
@@ -497,6 +517,7 @@ let
       }
       ''
         export HOME=$NIX_BUILD_TOP
+        ${if CGO_ENABLED != null then "export CGO_ENABLED=${CGO_ENABLED}" else ""}
 
         # --- Build importcfg with ALL packages (stdlib + third-party) ---
         cat "${stdlib}/importcfg" > "$NIX_BUILD_TOP/importcfg"
@@ -511,15 +532,12 @@ let
           '') allThirdPartyDeps
         )}
 
-        # --- Compile local packages ---
-        # Discover local packages by walking the source tree for directories with .go files.
-        # Compile each in dependency order (local packages may depend on each other).
+        # --- Compile local packages (two-pass) ---
+        # Pass 1: library packages (is_command=false)
+        # Pass 2: main packages (is_command=true) — compiled with -p main, then linked
         localdir="$NIX_BUILD_TOP/local-pkgs"
         mkdir -p "$localdir"
 
-        # Use go list to find local packages and their build order.
-        # We provide GOMODCACHE with the fetched modules so go list can resolve imports.
-        # Instead, use go2nix list-files on each local package directory.
         # Find all directories with .go files under src.
         find "${src}" -name '*.go' -not -path '*/vendor/*' -not -path '*/_*' -not -path '*/testdata/*' \
           | while read -r gofile; do dirname "$gofile"; done \
@@ -533,16 +551,21 @@ let
               importpath="${modulePath}/$reldir"
             fi
 
-            echo "Compiling local package: $importpath ($pkgdir)"
-
             # Discover files.
-            filesjson=$(go2nix list-files "$pkgdir")
+            filesjson=$(go2nix list-files ${tagFlag} "$pkgdir")
             gofiles=$(echo "$filesjson" | jq -r '.go_files[]')
 
             if [ -z "$gofiles" ]; then
-              echo "  (no Go files, skipping)"
               continue
             fi
+
+            # Skip main packages — they are handled in pass 2.
+            is_command=$(echo "$filesjson" | jq -r '.is_command')
+            if [ "$is_command" = "true" ]; then
+              continue
+            fi
+
+            echo "Compiling local library: $importpath ($pkgdir)"
 
             # Check for embeds.
             embedflag=""
@@ -552,13 +575,14 @@ let
               embedflag="-embedcfg=$NIX_BUILD_TOP/embedcfg-local.json"
             fi
 
-            # Compile the package.
+            # Compile the library package.
             mkdir -p "$localdir/$(dirname "$importpath")"
             cd "$pkgdir"
             go tool compile \
               -importcfg "$NIX_BUILD_TOP/importcfg" \
               -p "$importpath" \
               -trimpath="$NIX_BUILD_TOP" \
+              ${tagFlag} \
               $embedflag \
               -pack \
               -o "$localdir/$importpath.a" \
@@ -568,12 +592,46 @@ let
             echo "packagefile $importpath=$localdir/$importpath.a" >> "$NIX_BUILD_TOP/importcfg"
           done
 
-        # --- Link ---
+        # --- Pass 2: Compile main packages and link ---
         mkdir -p "$out/bin"
-        go tool link \
-          -importcfg "$NIX_BUILD_TOP/importcfg" \
-          -o "$out/bin/${pname}" \
-          "$localdir/${mainImportPath}.a"
+
+        ${builtins.concatStringsSep "\n" (
+          map (meta: ''
+            echo "Compiling main: ${meta.importPath} (${meta.srcDir})"
+            filesjson=$(go2nix list-files ${tagFlag} "${meta.srcDir}")
+            gofiles=$(echo "$filesjson" | jq -r '.go_files[]')
+
+            if [ -z "$gofiles" ]; then
+              echo "ERROR: no Go files found in ${meta.srcDir}" >&2
+              exit 1
+            fi
+
+            embedflag=""
+            hasEmbed=$(echo "$filesjson" | jq -r '.embed_cfg // empty')
+            if [ -n "$hasEmbed" ]; then
+              echo "$filesjson" | jq '.embed_cfg' > "$NIX_BUILD_TOP/embedcfg-main.json"
+              embedflag="-embedcfg=$NIX_BUILD_TOP/embedcfg-main.json"
+            fi
+
+            mkdir -p "$localdir/$(dirname "${meta.importPath}")"
+            cd "${meta.srcDir}"
+            go tool compile \
+              -importcfg "$NIX_BUILD_TOP/importcfg" \
+              -p main \
+              -trimpath="$NIX_BUILD_TOP" \
+              ${tagFlag} \
+              $embedflag \
+              -pack \
+              -o "$localdir/${meta.importPath}.a" \
+              $gofiles
+
+            go tool link \
+              -importcfg "$NIX_BUILD_TOP/importcfg" \
+              ${ldflagsStr} \
+              -o "$out/bin/${meta.binName}" \
+              "$localdir/${meta.importPath}.a"
+          '') subPackageMeta
+        )}
       '';
 
 in
