@@ -32,32 +32,9 @@ type EmbedCfg struct {
 	Files    map[string]string   `json:"Files"`
 }
 
-func listFilesCmd(args []string) {
-	flagSet := flag.NewFlagSet("list-files", flag.ExitOnError)
-	tagsFlag := flagSet.String("tags", "", "comma-separated build tags")
-	flagSet.Parse(args)
-	if flagSet.NArg() != 1 {
-		log.Fatal("usage: go2nix list-files [-tags=...] <package-dir>")
-	}
-	dir := flagSet.Arg(0)
-
-	ctx := build.Default
-	if *tagsFlag != "" {
-		ctx.BuildTags = strings.Split(*tagsFlag, ",")
-	}
-	// Respect GOOS/GOARCH from environment for cross-compilation.
-	if v := os.Getenv("GOOS"); v != "" {
-		ctx.GOOS = v
-	}
-	if v := os.Getenv("GOARCH"); v != "" {
-		ctx.GOARCH = v
-	}
-
-	pkg, err := ctx.ImportDir(dir, build.IgnoreVendor)
-	if err != nil {
-		log.Fatalf("analysing %s: %v", dir, err)
-	}
-
+// buildPkgFiles constructs a PkgFiles from a go/build.Package, resolving
+// embed patterns if present. Shared by list-files and list-local-packages.
+func buildPkgFiles(pkg *build.Package, dir string) PkgFiles {
 	result := PkgFiles{
 		GoFiles:    nonNil(pkg.GoFiles),
 		CgoFiles:   nonNil(pkg.CgoFiles),
@@ -69,7 +46,6 @@ func listFilesCmd(args []string) {
 		IsCommand:  pkg.IsCommand(),
 	}
 
-	// Resolve embed patterns to actual files for -embedcfg.
 	if len(pkg.EmbedPatterns) > 0 {
 		cfg, err := resolveEmbedCfg(dir, pkg.EmbedPatterns)
 		if err != nil {
@@ -77,6 +53,42 @@ func listFilesCmd(args []string) {
 		}
 		result.EmbedCfg = cfg
 	}
+
+	return result
+}
+
+// buildContext returns a build.Context configured from flags and environment.
+func buildContext(tags string) build.Context {
+	ctx := build.Default
+	if tags != "" {
+		ctx.BuildTags = strings.Split(tags, ",")
+	}
+	if v := os.Getenv("GOOS"); v != "" {
+		ctx.GOOS = v
+	}
+	if v := os.Getenv("GOARCH"); v != "" {
+		ctx.GOARCH = v
+	}
+	return ctx
+}
+
+func listFilesCmd(args []string) {
+	flagSet := flag.NewFlagSet("list-files", flag.ExitOnError)
+	tagsFlag := flagSet.String("tags", "", "comma-separated build tags")
+	flagSet.Parse(args)
+	if flagSet.NArg() != 1 {
+		log.Fatal("usage: go2nix list-files [-tags=...] <package-dir>")
+	}
+	dir := flagSet.Arg(0)
+
+	ctx := buildContext(*tagsFlag)
+
+	pkg, err := ctx.ImportDir(dir, build.IgnoreVendor)
+	if err != nil {
+		log.Fatalf("analysing %s: %v", dir, err)
+	}
+
+	result := buildPkgFiles(pkg, dir)
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
