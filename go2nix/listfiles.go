@@ -154,13 +154,18 @@ func resolveEmbedCfg(dir string, patterns []string) (*EmbedCfg, error) {
 			if err != nil {
 				return nil, fmt.Errorf("glob %q: %w", pattern, err)
 			}
+			// Go's embed rule: files starting with "." or "_" are only
+			// excluded when the pattern itself doesn't start with "." or "_".
+			patBase := filepath.Base(matchPattern)
+			patAllowsDot := strings.HasPrefix(patBase, ".")
+			patAllowsUnderscore := strings.HasPrefix(patBase, "_")
 			for _, m := range matches {
 				rel, _ := filepath.Rel(dir, m)
 				name := filepath.Base(rel)
-				if !includeHidden && strings.HasPrefix(name, ".") {
+				if !includeHidden && !patAllowsDot && strings.HasPrefix(name, ".") {
 					continue
 				}
-				if !includeHidden && strings.HasPrefix(name, "_") {
+				if !includeHidden && !patAllowsUnderscore && strings.HasPrefix(name, "_") {
 					continue
 				}
 				// Skip directories for glob matches.
