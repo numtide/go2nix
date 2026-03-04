@@ -82,7 +82,7 @@ let
       map (importPath:
         "packagefile ${importPath}=${packageSet.${importPath}}/${importPath}.a"
       ) (builtins.attrNames packageSet)
-    )
+    ) + "\n"
   );
 
   # Filter out our known args so extra attrs can be passed through to mkDerivation.
