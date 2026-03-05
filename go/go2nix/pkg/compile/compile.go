@@ -3,12 +3,14 @@
 package compile
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/gofiles"
@@ -190,6 +192,16 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	cgoCxxflags := strings.Fields(os.Getenv("CGO_CXXFLAGS"))
 	cgoLdflags := strings.Fields(os.Getenv("CGO_LDFLAGS"))
 
+	// Resolve #cgo pkg-config: directives from source files.
+	// go tool cgo does not process pkg-config directives; that's done by cmd/go.
+	// We handle it here so packages with #cgo pkg-config: work correctly.
+	pkgCflags, pkgLdflags, err := resolvePkgConfig(opts.SrcDir, files.CgoFiles)
+	if err != nil {
+		return fmt.Errorf("pkg-config: %w", err)
+	}
+	cgoCflags = append(cgoCflags, pkgCflags...)
+	cgoLdflags = append(cgoLdflags, pkgLdflags...)
+
 	// Copy headers.
 	for _, h := range files.HFiles {
 		data, err := os.ReadFile(filepath.Join(opts.SrcDir, h))
@@ -202,6 +214,8 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	}
 
 	// Step 1: go tool cgo.
+	// Pass CGO_CFLAGS after "--" so cgo's internal C compiler picks them up
+	// (needed for #cgo pkg-config: directives and explicit -I/-L flags).
 	cgoArgs := []string{
 		"tool", "cgo",
 		"-objdir", cgowork,
@@ -209,12 +223,13 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		"--",
 		"-I", cgowork,
 	}
+	cgoArgs = append(cgoArgs, cgoCflags...)
 	cgoArgs = append(cgoArgs, files.CgoFiles...)
 	if err := runIn(opts.SrcDir, "go", cgoArgs...); err != nil {
 		return fmt.Errorf("cgo: %w", err)
 	}
 
-	// Read _cgo_flags written by go tool cgo (contains LDFLAGS from #cgo directives and pkg-config).
+	// Read _cgo_flags written by go tool cgo (contains LDFLAGS from #cgo directives).
 	var cgoFlagsLDFLAGS []string
 	cgoFlagsFile := filepath.Join(cgowork, "_cgo_flags")
 	if data, err := os.ReadFile(cgoFlagsFile); err == nil {
@@ -223,6 +238,14 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 				cgoFlagsLDFLAGS = strings.Fields(after)
 			}
 		}
+	}
+
+	// Append pkg-config LDFLAGS to _cgo_flags so they propagate to the final
+	// link step via the packed archive.
+	if len(pkgLdflags) > 0 {
+		cgoFlagsLDFLAGS = append(cgoFlagsLDFLAGS, pkgLdflags...)
+		allFlags := strings.Join(cgoFlagsLDFLAGS, " ")
+		os.WriteFile(cgoFlagsFile, []byte("_CGO_LDFLAGS="+allFlags+"\n"), 0o644)
 	}
 
 	// Step 2: compile C files.
@@ -312,6 +335,22 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		}
 	}
 
+	// Generate //go:cgo_ldflag directives so the linker picks up LDFLAGS.
+	// Normally cmd/go does this, but we invoke go tool cgo directly.
+	allLdflags := append(append([]string{}, cgoFlagsLDFLAGS...), cgoLdflags...)
+	if len(allLdflags) > 0 {
+		pkgName := extractPackageName(filepath.Join(cgowork, "_cgo_gotypes.go"))
+		ldflagFile := filepath.Join(cgowork, "_cgo_ldflag_"+uid+".go")
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "package %s\n\n", pkgName)
+		for _, flag := range allLdflags {
+			fmt.Fprintf(&sb, "//go:cgo_ldflag %q\n", flag)
+		}
+		if err := os.WriteFile(ldflagFile, []byte(sb.String()), 0o644); err != nil {
+			return fmt.Errorf("writing cgo_ldflag: %w", err)
+		}
+	}
+
 	// Step 4: compile Go + cgo-generated Go files.
 	var cgoGoFiles []string
 	gotypes := filepath.Join(cgowork, "_cgo_gotypes.go")
@@ -323,6 +362,10 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	dynImport := filepath.Join(cgowork, "_cgo_import_"+uid+".go")
 	if _, err := os.Stat(dynImport); err == nil {
 		cgoGoFiles = append(cgoGoFiles, dynImport)
+	}
+	ldflagFile := filepath.Join(cgowork, "_cgo_ldflag_"+uid+".go")
+	if _, err := os.Stat(ldflagFile); err == nil {
+		cgoGoFiles = append(cgoGoFiles, ldflagFile)
 	}
 
 	compileArgs := []string{
@@ -417,4 +460,114 @@ func extractPackageName(goFile string) string {
 		}
 	}
 	return "main"
+}
+
+// resolvePkgConfig scans Go cgo source files for #cgo pkg-config: directives,
+// runs pkg-config to resolve them, and returns the resulting CFLAGS and LDFLAGS.
+// This is necessary because go tool cgo does not process pkg-config directives;
+// that processing is normally done by cmd/go (go build).
+func resolvePkgConfig(srcDir string, cgoFiles []string) (cflags, ldflags []string, err error) {
+	var pkgNames []string
+
+	goos := os.Getenv("GOOS")
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	goarch := os.Getenv("GOARCH")
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+
+	for _, f := range cgoFiles {
+		path := filepath.Join(srcDir, f)
+		file, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+
+		// Scan only the C preamble (lines before import "C").
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, `import "C"`) {
+				break
+			}
+
+			// Match lines like: //#cgo pkg-config: foo bar
+			// or: //#cgo linux pkg-config: foo bar
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			trimmed = strings.TrimPrefix(trimmed, "//")
+			trimmed = strings.TrimSpace(trimmed)
+			if !strings.HasPrefix(trimmed, "#cgo ") {
+				continue
+			}
+			trimmed = strings.TrimPrefix(trimmed, "#cgo ")
+			trimmed = strings.TrimSpace(trimmed)
+
+			// Check for platform constraint before "pkg-config:".
+			if idx := strings.Index(trimmed, "pkg-config:"); idx >= 0 {
+				// Constraint is everything before "pkg-config:".
+				constraint := strings.TrimSpace(trimmed[:idx])
+				if constraint != "" && !matchesCgoConstraint(constraint, goos, goarch) {
+					continue
+				}
+				pkgs := strings.TrimSpace(trimmed[idx+len("pkg-config:"):])
+				if pkgs != "" {
+					pkgNames = append(pkgNames, strings.Fields(pkgs)...)
+				}
+			}
+		}
+		file.Close()
+	}
+
+	if len(pkgNames) == 0 {
+		return nil, nil, nil
+	}
+
+	slog.Debug("pkg-config", "packages", pkgNames)
+
+	// Run pkg-config --cflags.
+	cflagsOut, err := exec.Command("pkg-config", append([]string{"--cflags"}, pkgNames...)...).Output()
+	if err != nil {
+		return nil, nil, fmt.Errorf("pkg-config --cflags %v: %w", pkgNames, err)
+	}
+	cflags = strings.Fields(strings.TrimSpace(string(cflagsOut)))
+
+	// Run pkg-config --libs.
+	ldflagsOut, err := exec.Command("pkg-config", append([]string{"--libs"}, pkgNames...)...).Output()
+	if err != nil {
+		return nil, nil, fmt.Errorf("pkg-config --libs %v: %w", pkgNames, err)
+	}
+	ldflags = strings.Fields(strings.TrimSpace(string(ldflagsOut)))
+
+	return cflags, ldflags, nil
+}
+
+// matchesCgoConstraint checks if a #cgo constraint (e.g., "linux", "!windows",
+// "linux,amd64") matches the current build target.
+func matchesCgoConstraint(constraint, goos, goarch string) bool {
+	// Handle comma-separated AND constraints: "linux,amd64"
+	parts := strings.Split(constraint, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		negate := false
+		if strings.HasPrefix(part, "!") {
+			negate = true
+			part = part[1:]
+		}
+		match := part == goos || part == goarch
+		if negate {
+			match = !match
+		}
+		if !match {
+			return false
+		}
+	}
+	return true
 }

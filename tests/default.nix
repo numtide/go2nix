@@ -6,4 +6,8 @@
   compile-pkg = import ./compile-pkg.nix;
   link = import ./link.nix;
   mkgopackageset = import ./mkgopackageset.nix;
+  yubikey-agent = import ./yubikey-agent;
+  dotool = import ./dotool;
+  skopeo = import ./skopeo;
+  nwg-drawer = import ./nwg-drawer;
 }
