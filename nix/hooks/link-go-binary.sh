@@ -2,9 +2,9 @@
 #
 # Expected environment variables (set via derivation `env`):
 #   goModuleRoot    — absolute path to module root (containing go.mod)
-#   goModulePath    — Go module path (from go.mod)
 #   goSubPackages   — space-separated list of sub-packages (default: ".")
 #   goLdflags       — extra linker flags (optional)
+#   goLockfile      — path to go2nix.toml lockfile
 #   goPname         — binary name for "." package (optional)
 #
 # Third-party dependencies are discovered from $buildInputs at build time.
@@ -12,15 +12,18 @@
 linkGoBinaryConfigurePhase() {
     runHook preConfigure
 
+    # Validate lockfile consistency with go.mod.
+    @go2nix@ check-lockfile --lockfile "$goLockfile" "$goModuleRoot"
+
+    # Extract module path from go.mod at build time (avoids Nix eval-time parsing).
+    goModulePath=$(awk '/^module /{print $2; exit}' "$goModuleRoot/go.mod")
+    export goModulePath
+
     # Build importcfg: stdlib + all third-party deps.
     cat "@stdlib@/importcfg" > "$NIX_BUILD_TOP/importcfg"
     for dep in $buildInputs; do
-        if [ -d "$dep" ]; then
-            find "$dep" -name '*.a' 2>/dev/null | while read -r archive; do
-                rel="''${archive#"$dep/"}"
-                pkg="''${rel%.a}"
-                echo "packagefile $pkg=$archive"
-            done >> "$NIX_BUILD_TOP/importcfg"
+        if [ -f "$dep/importcfg" ]; then
+            cat "$dep/importcfg" >> "$NIX_BUILD_TOP/importcfg"
         fi
     done
 

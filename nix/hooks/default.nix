@@ -1,10 +1,9 @@
 # go2nix/nix2/hooks/default.nix — setup hooks for Go compilation.
 #
-# Three composite hooks following gobuild.nix's pattern:
+# Two composite hooks:
 #   goModuleHook  — compile a third-party Go package
-#   goPackageHook — compile a local library package
 #   goAppHook     — compile local packages and link a binary
-{ go, go2nix, stdlib, lib, makeSetupHook, tagFlag }:
+{ go, go2nix, stdlib, makeSetupHook, tagFlag }:
 let
   tagArg = if tagFlag == "" then "" else "--tags ${tagFlag}";
 
@@ -22,18 +21,6 @@ in
   #   buildInputs         — dependency package derivations
   goModuleHook = makeSetupHook {
     name = "go2nix-module-hook";
-    propagatedBuildInputs = [ go setupGoEnv ];
-    substitutions = {
-      go2nix = "${go2nix}/bin/go2nix";
-      stdlib = "${stdlib}";
-      inherit tagArg;
-    };
-  } ./compile-go-pkg.sh;
-
-  # Hook for compiling local library packages.
-  # Same interface as goModuleHook; sources come from the project.
-  goPackageHook = makeSetupHook {
-    name = "go2nix-package-hook";
     propagatedBuildInputs = [ go setupGoEnv ];
     substitutions = {
       go2nix = "${go2nix}/bin/go2nix";

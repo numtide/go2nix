@@ -1,11 +1,14 @@
-# Test: buildGoBinary with local cgo package (xkbcommon via pkg-config).
+# Test: buildGoApplication with local cgo package (xkbcommon via pkg-config).
 let
   pkgs = import <nixpkgs> { };
-  go2nixLib = import ../../lib.nix { };
   go = pkgs.go;
   go2nix = import ../../go/go2nix/package.nix { inherit pkgs; };
+  goEnv = import ../../nix/mk-go-env.nix {
+    inherit go go2nix;
+    inherit (pkgs) callPackage;
+  };
 in
-go2nixLib.buildGoBinary {
+goEnv.buildGoApplication {
   src = pkgs.fetchgit {
     url = "https://git.sr.ht/~geb/dotool";
     rev = "180af21c46dcc848d93dbec2644c011f4eea1592";
@@ -14,6 +17,5 @@ go2nixLib.buildGoBinary {
   goLock = ./go2nix.toml;
   pname = "dotool";
   version = "1.6";
-  inherit go go2nix pkgs;
   nativeBuildInputs = [ pkgs.pkg-config pkgs.libxkbcommon ];
 }

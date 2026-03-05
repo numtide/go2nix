@@ -12,12 +12,8 @@ compileGoPkgBuildPhase() {
     # Build importcfg: stdlib + dependency .a files.
     cat "@stdlib@/importcfg" > "$NIX_BUILD_TOP/importcfg"
     for dep in $buildInputs; do
-        if [ -d "$dep" ]; then
-            find "$dep" -name '*.a' 2>/dev/null | while read -r archive; do
-                rel="''${archive#"$dep/"}"
-                pkg="''${rel%.a}"
-                echo "packagefile $pkg=$archive"
-            done >> "$NIX_BUILD_TOP/importcfg"
+        if [ -f "$dep/importcfg" ]; then
+            cat "$dep/importcfg" >> "$NIX_BUILD_TOP/importcfg"
         fi
     done
 
@@ -31,6 +27,9 @@ compileGoPkgBuildPhase() {
         --output "$out/$goPackagePath.a" \
         --trimpath "$NIX_BUILD_TOP" \
         @tagArg@
+
+    # Write importcfg entry for consumers of this package.
+    echo "packagefile $goPackagePath=$out/$goPackagePath.a" > "$out/importcfg"
 
     runHook postBuild
 }

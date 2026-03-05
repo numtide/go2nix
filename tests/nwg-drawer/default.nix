@@ -1,7 +1,6 @@
-# Test: buildGoBinary with many GTK cgo deps (15 packages using pkg-config).
+# Test: buildGoApplication with many GTK cgo deps (15 packages using pkg-config).
 let
   pkgs = import <nixpkgs> { };
-  go2nixLib = import ../../lib.nix { };
   go = pkgs.go;
   go2nix = import ../../go/go2nix/package.nix { inherit pkgs; };
 
@@ -20,30 +19,12 @@ let
     ];
   };
 
-  # All gotk4 sub-packages that use cgo.
-  gotk4CgoPkgs = [
-    "core/gbox"
-    "core/intern"
-    "core/glib"
-    "cairo"
-    "core/gerror"
-    "core/gextras"
-    "core/gcancel"
-    "glib/v2"
-    "gio/v2"
-    "gdkpixbuf/v2"
-    "pango"
-    "gdk/v3"
-    "atk"
-    "gtk/v3"
-  ];
-
-  gotk4Overrides = builtins.listToAttrs (map (sub: {
-    name = "github.com/diamondburned/gotk4/pkg/${sub}";
-    value = gtkDeps;
-  }) gotk4CgoPkgs);
+  goEnv = import ../../nix/mk-go-env.nix {
+    inherit go go2nix;
+    inherit (pkgs) callPackage;
+  };
 in
-go2nixLib.buildGoBinary {
+goEnv.buildGoApplication {
   src = pkgs.fetchFromGitHub {
     owner = "nwg-piotr";
     repo = "nwg-drawer";
@@ -53,8 +34,8 @@ go2nixLib.buildGoBinary {
   goLock = ./go2nix.toml;
   pname = "nwg-drawer";
   version = "0.7.4";
-  inherit go go2nix pkgs;
-  packageOverrides = gotk4Overrides // {
-    "github.com/diamondburned/gotk4-layer-shell/pkg/gtklayershell" = gtkDeps;
+  packageOverrides = {
+    "github.com/diamondburned/gotk4/pkg" = gtkDeps;
+    "github.com/diamondburned/gotk4-layer-shell/pkg" = gtkDeps;
   };
 }
