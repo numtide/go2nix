@@ -202,6 +202,11 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	cgoCflags = append(cgoCflags, pkgCflags...)
 	cgoLdflags = append(cgoLdflags, pkgLdflags...)
 
+	// Filter C++ standard library flags when no C++ sources are present.
+	if len(files.CXXFiles) == 0 {
+		cgoLdflags = filterCppFlags(cgoLdflags)
+	}
+
 	// Copy headers.
 	for _, h := range files.HFiles {
 		data, err := os.ReadFile(filepath.Join(opts.SrcDir, h))
@@ -416,6 +421,18 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 }
 
 // --- helpers ---
+
+// filterCppFlags removes -lc++ and -lstdc++ from flags when no C++ sources
+// are present, avoiding unnecessary C++ standard library dependencies.
+func filterCppFlags(flags []string) []string {
+	out := make([]string, 0, len(flags))
+	for _, f := range flags {
+		if f != "-lc++" && f != "-lstdc++" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
 
 func runIn(dir, name string, args ...string) error {
 	slog.Debug("exec", "cmd", name, "args", args, "dir", dir)
