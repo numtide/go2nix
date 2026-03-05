@@ -10,7 +10,7 @@
   goLock ? "${src}/go2nix.toml",
   moduleDir ? ".", # relative path from src to directory containing go.mod
   go,
-  go2nix,
+  go2nix, # go2nix binary (for list-files, list-local-packages, compile-package)
   pkgs,
   subPackages ? [ "." ],
   pname ? "go-binary",
@@ -23,14 +23,18 @@
   ...
 }@args:
 let
+  inherit (builtins) attrNames filter hasAttr concatStringsSep;
   helpers = import ./helpers.nix;
-  compile = import ./compile.nix { };
+  parseGoMod = import ./go-mod-parser.nix;
 
   # Parse lockfile once; share with mkGoPackageSet to avoid double fromTOML.
   lockfile = builtins.fromTOML (builtins.readFile goLock);
 
-  # Build tag flag for go tool compile and go2nix list-files.
-  tagFlag = if tags == [ ] then "" else "-tags=${builtins.concatStringsSep "," tags}";
+  # Build tag flag for go2nix subcommands.
+  tagFlag = if tags == [ ] then "" else builtins.concatStringsSep "," tags;
+  tagShellArg = if tagFlag == "" then "" else "-tags ${tagFlag}";
+
+  compile = import ./compile.nix { go2nixBin = go2nix; inherit tagFlag; };
 
   # Linker flags string.
   ldflagsStr = builtins.concatStringsSep " " ldflags;
@@ -46,6 +50,46 @@ let
       );
     in
     builtins.substring 7 (builtins.stringLength moduleLine - 7) moduleLine;
+
+  # --- Eval-time mvscheck ---
+  # Verify go.mod is consistent with the lockfile before building anything.
+  # For each non-local-replaced module in go.mod's require block, check that
+  # module@version exists in the lockfile. Catches stale lockfiles and untidy
+  # go.mod at eval time with a clear error message.
+  goMod = parseGoMod goModContent;
+  mvscheck =
+    let
+      # For a remotely replaced module, the effective version is the replace's
+      # version. Local replaces (path only, no version) are skipped.
+      effectiveVersion = path:
+        let repl = goMod.replace.${path} or null;
+        in
+        if repl != null && repl ? version then repl.version
+        else goMod.require.${path};
+
+      localReplacePaths = attrNames (
+        builtins.removeAttrs goMod.replace (
+          filter (p: (goMod.replace.${p}) ? version) (attrNames goMod.replace)
+        )
+      );
+
+      missing = filter (path:
+        let
+          isLocal = builtins.elem path localReplacePaths;
+          key = "${path}@${effectiveVersion path}";
+        in
+        !isLocal && !(hasAttr key lockfile.mod)
+      ) (attrNames goMod.require);
+    in
+    if missing == [ ] then true
+    else throw ''
+
+      go2nix lockfile is stale — go.mod requires modules not in lockfile:
+
+        ${concatStringsSep "\n    " (map (p: "${p}@${effectiveVersion p}") missing)}
+
+      Run: go mod tidy && go2nix generate
+    '';
 
   # Metadata for each sub-package to build.
   subPackageMeta = map (sp: {
@@ -104,13 +148,12 @@ let
   ];
 
 in
+assert mvscheck;
 pkgs.stdenv.mkDerivation (extraArgs // {
   inherit pname version src meta;
 
   nativeBuildInputs = [
     go
-    go2nix
-    pkgs.jq
   ] ++ nativeBuildInputs;
 
   # --- configurePhase ---
@@ -121,10 +164,7 @@ pkgs.stdenv.mkDerivation (extraArgs // {
     export HOME=$NIX_BUILD_TOP
     ${if CGO_ENABLED != null then "export CGO_ENABLED=${CGO_ENABLED}" else ""}
 
-    go_os=$(go env GOOS)
-    go_arch=$(go env GOARCH)
-
-    # Define the compile_go_pkg shell function.
+    # Define the compile_go_pkg shell function (delegates to go2nix compile-package).
     ${compile.compileGoPackageFn}
 
     # Build importcfg with ALL packages (stdlib + third-party).
@@ -143,18 +183,18 @@ pkgs.stdenv.mkDerivation (extraArgs // {
     mkdir -p "$localdir"
 
     # Get all local packages in dependency order.
-    localjson=$(go2nix list-local-packages ${tagFlag} "${moduleRoot}")
+    localjson=$(${go2nix}/bin/go2nix list-local-packages ${tagShellArg} "${moduleRoot}")
 
     # Pass 1: compile library packages (in topological order).
     while read -r pkgentry; do
-      importpath=$(echo "$pkgentry" | jq -r '.import_path')
-      srcdir=$(echo "$pkgentry" | jq -r '.src_dir')
+      importpath=$(echo "$pkgentry" | ${pkgs.jq}/bin/jq -r '.import_path')
+      srcdir=$(echo "$pkgentry" | ${pkgs.jq}/bin/jq -r '.src_dir')
 
       echo "Compiling local library: $importpath ($srcdir)"
-      compile_go_pkg "$importpath" "$srcdir" "$localdir/$importpath.a" "$pkgentry"
+      compile_go_pkg "$importpath" "$srcdir" "$localdir/$importpath.a" "" ""
 
       echo "packagefile $importpath=$localdir/$importpath.a" >> "$NIX_BUILD_TOP/importcfg"
-    done < <(echo "$localjson" | jq -c '.[] | select(.is_command == false)')
+    done < <(echo "$localjson" | ${pkgs.jq}/bin/jq -c '.[] | select(.is_command == false)')
 
     # Pass 2: Compile main packages and link.
     mkdir -p "$NIX_BUILD_TOP/staging/bin"
@@ -162,9 +202,8 @@ pkgs.stdenv.mkDerivation (extraArgs // {
     ${builtins.concatStringsSep "\n" (
       map (meta: ''
         echo "Compiling main: ${meta.importPath} (${meta.srcDir})"
-        filesjson=$(go2nix list-files ${tagFlag} "${meta.srcDir}")
 
-        compile_go_pkg "main" "${meta.srcDir}" "$localdir/${meta.importPath}.a" "$filesjson" "main_${meta.binName}"
+        compile_go_pkg "main" "${meta.srcDir}" "$localdir/${meta.importPath}.a" "" "main_${meta.binName}"
 
         linkflags=""
         if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then

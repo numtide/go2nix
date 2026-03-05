@@ -1,7 +1,7 @@
 # go2nix/nix/mk-go-package-set.nix — per-package derivations from a lockfile.
 #
 # Reads a go2nix lockfile and produces one derivation per third-party Go
-# package.  Each derivation compiles a single package via `go tool compile`
+# package.  Each derivation compiles a single package via `go2nix compile-package`
 # and outputs $out/<importpath>.a.
 #
 # Returns an attrset: { "import/path" = <derivation>; ... }
@@ -9,7 +9,7 @@
   goLock ? null, # path to go2nix.toml lockfile (parsed if lockfileData not given)
   lockfileData ? builtins.fromTOML (builtins.readFile goLock), # pre-parsed lockfile
   go, # Go toolchain
-  go2nix, # go2nix binary (for list-files subcommand)
+  go2nix, # go2nix binary (for compile-package subcommand)
   pkgs, # nixpkgs
   tags ? [], # build tags
 }:
@@ -18,7 +18,7 @@ let
   inherit (helpers) parseModKey sanitizeName removePrefix escapeModPath;
 
   lockfile = lockfileData;
-  tagFlag = if tags == [ ] then "" else "-tags=${builtins.concatStringsSep "," tags}";
+  tagFlag = if tags == [ ] then "" else builtins.concatStringsSep "," tags;
 
   stdlib = import ./stdlib.nix {
     inherit go;
@@ -26,7 +26,7 @@ let
   };
 
   importcfgFor = import ./importcfg.nix;
-  compile = import ./compile.nix { };
+  compile = import ./compile.nix { go2nixBin = go2nix; inherit tagFlag; };
   fetchModule = import ./fetch-module.nix { inherit go pkgs helpers; };
 
   # One FOD per module.
@@ -56,17 +56,10 @@ let
       {
         nativeBuildInputs = [
           go
-          go2nix
-          pkgs.jq
         ];
       }
       ''
         export HOME=$NIX_BUILD_TOP
-        go_os=$(go env GOOS)
-        go_arch=$(go env GOARCH)
-
-        # Discover Go source files for this package (build-constraint filtered).
-        filesjson=$(go2nix list-files ${tagFlag} "${srcDir}")
 
         # Build importcfg: stdlib + direct dependencies.
         ${importcfgFor { inherit stdlib deps; }}
@@ -74,6 +67,7 @@ let
         # Create output directory.
         mkdir -p "$out/$(dirname "${importPath}")"
 
+        # Compile the package (go2nix discovers source files internally).
         ${compile.compileGoPackageInline { inherit importPath srcDir; }}
       '';
 

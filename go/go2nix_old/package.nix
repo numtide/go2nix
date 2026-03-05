@@ -4,7 +4,7 @@ buildGoModule {
   pname = "go2nix";
   version = "0-unstable";
 
-  src = ./go2nix;
+  src = ./.;
 
   subPackages = [ "." ];
 
