@@ -217,7 +217,7 @@ pkgs.stdenv.mkDerivation (extraArgs // {
 
         linkflags=""
         if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
-          linkflags="-extld gcc -linkmode external"
+          linkflags="-extld $CC -linkmode external"
         fi
 
         go tool link \
