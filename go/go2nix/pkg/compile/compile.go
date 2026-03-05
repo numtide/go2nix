@@ -207,6 +207,9 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		cgoLdflags = filterCppFlags(cgoLdflags)
 	}
 
+	// Ensure absolute build paths don't leak into debug info for reproducibility.
+	cgoCflags = append([]string{"-fdebug-prefix-map=" + opts.SrcDir + "=."}, cgoCflags...)
+
 	// Copy headers.
 	for _, h := range files.HFiles {
 		data, err := os.ReadFile(filepath.Join(opts.SrcDir, h))
