@@ -15,6 +15,7 @@ func runCompilePackageCmd(args []string) {
 	output := fs.String("output", "", "output .a archive path")
 	importCfg := fs.String("importcfg", "", "path to importcfg file")
 	tags := fs.String("tags", "", "comma-separated build tags")
+	gcflags := fs.String("gcflags", "", "extra flags for go tool compile (space-separated)")
 	trimPath := fs.String("trimpath", "", "path prefix to trim (default: $NIX_BUILD_TOP)")
 	pFlag := fs.String("p", "", "override -p flag (default: import-path)")
 	fs.Parse(args)
@@ -32,6 +33,7 @@ func runCompilePackageCmd(args []string) {
 		ImportCfg:  *importCfg,
 		TrimPath:   *trimPath,
 		Tags:       *tags,
+		GCFlags:    *gcflags,
 	}
 
 	if err := compile.CompilePackage(opts); err != nil {

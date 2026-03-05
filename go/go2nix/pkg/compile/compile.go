@@ -23,6 +23,7 @@ type Options struct {
 	ImportCfg  string // path to importcfg file
 	TrimPath   string // path prefix to trim (defaults to $NIX_BUILD_TOP)
 	Tags       string // comma-separated build tags
+	GCFlags    string // extra flags for go tool compile (space-separated, e.g. "-race")
 }
 
 // CompilePackage compiles a single Go package (pure Go, assembly, or cgo).
@@ -85,6 +86,7 @@ func compilePureGo(opts Options, files gofiles.PkgFiles, embedFlag string) error
 		"-pack",
 		"-o", opts.Output,
 	}
+	args = append(args, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		args = append(args, embedFlag)
 	}
@@ -94,6 +96,13 @@ func compilePureGo(opts Options, files gofiles.PkgFiles, embedFlag string) error
 }
 
 // --- helpers ---
+
+func extraGCFlags(opts Options) []string {
+	if opts.GCFlags == "" {
+		return nil
+	}
+	return strings.Fields(opts.GCFlags)
+}
 
 func runIn(dir, name string, args ...string) error {
 	slog.Debug("exec", "cmd", name, "args", args, "dir", dir)

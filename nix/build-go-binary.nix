@@ -17,6 +17,8 @@
   version ? "0-unstable",
   tags ? [],
   ldflags ? [],
+  gcflags ? [],
+  goInstallFlags ? [],
   CGO_ENABLED ? null,
   packageOverrides ? {},
   meta ? {},
@@ -35,7 +37,7 @@ let
   tagFlag = if tags == [ ] then "" else builtins.concatStringsSep "," tags;
   tagShellArg = if tagFlag == "" then "" else "-tags ${tagFlag}";
 
-  compile = import ./compile.nix { go2nixBin = go2nix; inherit tagFlag; };
+  compile = import ./compile.nix { go2nixBin = go2nix; inherit tagFlag gcflags; };
 
   # Linker flags string.
   ldflagsStr = builtins.concatStringsSep " " ldflags;
@@ -113,7 +115,7 @@ let
   };
 
   stdlib = import ./stdlib.nix {
-    inherit go;
+    inherit go goInstallFlags;
     inherit (pkgs) runCommandCC;
   };
 
@@ -151,6 +153,8 @@ let
     "version"
     "tags"
     "ldflags"
+    "gcflags"
+    "goInstallFlags"
     "CGO_ENABLED"
     "packageOverrides"
     "meta"

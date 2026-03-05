@@ -4,9 +4,10 @@
 # compilation internally, eliminating jq and shell control flow.
 #
 # go2nixBin: the go2nix derivation (must have bin/go2nix with compile-package subcommand)
-{ go2nixBin, tagFlag ? "" }:
+{ go2nixBin, tagFlag ? "", gcflags ? [] }:
 let
   tagArg = if tagFlag == "" then "" else "--tags ${tagFlag}";
+  gcflagsArg = if gcflags == [] then "" else "--gcflags ${builtins.concatStringsSep " " gcflags}";
 in
 {
   # Shell function definition for buildGoBinary.
@@ -20,7 +21,8 @@ in
         --src-dir "$2" \
         --output "$3" \
         --trimpath "$NIX_BUILD_TOP" \
-        ${tagArg}
+        ${tagArg} \
+        ${gcflagsArg}
     }
   '';
 
@@ -37,6 +39,7 @@ in
         --src-dir "${srcDir}" \
         --output "$out/${importPath}.a" \
         --trimpath "$NIX_BUILD_TOP" \
-        ${tagArg}
+        ${tagArg} \
+        ${gcflagsArg}
     '';
 }

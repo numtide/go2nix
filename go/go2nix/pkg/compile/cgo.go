@@ -148,6 +148,7 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		"-pack",
 		"-o", opts.Output,
 	}
+	compileArgs = append(compileArgs, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		compileArgs = append(compileArgs, embedFlag)
 	}
