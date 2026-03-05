@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -61,6 +62,9 @@ func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 	}
 
 	if len(pkg.EmbedPatterns) > 0 {
+		if !slices.Contains(pkg.Imports, "embed") {
+			return PkgFiles{}, fmt.Errorf("//go:embed used in %s but \"embed\" package not imported", dir)
+		}
 		cfg, err := ResolveEmbedCfg(dir, pkg.EmbedPatterns)
 		if err != nil {
 			return PkgFiles{}, fmt.Errorf("resolving embed patterns in %s: %w", dir, err)
