@@ -9,18 +9,18 @@ import (
 	"github.com/numtide/go2nix/pkg/localpkgs"
 )
 
-func runlistLocalPackagesCmd(args []string) {
-	fs := flag.NewFlagSet("list-local-packages", flag.ExitOnError)
+func runListPackagesCmd(args []string) {
+	fs := flag.NewFlagSet("list-packages", flag.ExitOnError)
 	tagsFlag := fs.String("tags", "", "comma-separated build tags")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
-		slog.Error("usage: gob list-local-packages [-tags=...] <module-root>")
+		slog.Error("usage: go2nix list-packages [-tags=...] <module-root>")
 		os.Exit(1)
 	}
 
 	pkgs, err := localpkgs.ListLocalPackages(fs.Arg(0), *tagsFlag)
 	if err != nil {
-		slog.Error("list-local-packages failed", "err", err)
+		slog.Error("list-packages failed", "err", err)
 		os.Exit(1)
 	}
 
