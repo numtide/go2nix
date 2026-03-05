@@ -8,8 +8,8 @@ import (
 	"github.com/numtide/go2nix/pkg/mvscheck"
 )
 
-func runMvscheckCmd(args []string) {
-	fs := flag.NewFlagSet("mvscheck", flag.ExitOnError)
+func runCheckLockfileCmd(args []string) {
+	fs := flag.NewFlagSet("check-lockfile", flag.ExitOnError)
 	lockfilePath := fs.String("lockfile", "", "path to go2nix.toml lockfile (lockfile consistency check)")
 	fs.Parse(args)
 
@@ -25,7 +25,7 @@ func runMvscheckCmd(args []string) {
 		err = mvscheck.Check(dir)
 	}
 	if err != nil {
-		slog.Error("mvscheck failed", "err", err)
+		slog.Error("check-lockfile failed", "err", err)
 		os.Exit(1)
 	}
 }
