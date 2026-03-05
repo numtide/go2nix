@@ -185,6 +185,14 @@ pkgs.stdenv.mkDerivation (extraArgs // {
     cat "${stdlib}/importcfg" > "$NIX_BUILD_TOP/importcfg"
     cat "${thirdPartyImportcfg}" >> "$NIX_BUILD_TOP/importcfg"
 
+    # Detect import path conflicts (e.g., third-party shadowing stdlib).
+    dupes=$(awk -F'[= ]' '/^packagefile /{print $2}' "$NIX_BUILD_TOP/importcfg" | sort | uniq -d)
+    if [ -n "$dupes" ]; then
+      echo "ERROR: duplicate import paths in importcfg:" >&2
+      echo "$dupes" >&2
+      exit 1
+    fi
+
     runHook postConfigure
   '';
 

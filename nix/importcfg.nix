@@ -18,4 +18,12 @@
       done >> importcfg
     '') deps
   )}
+
+  # Detect import path conflicts.
+  _dupes=$(awk -F'[= ]' '/^packagefile /{print $2}' importcfg | sort | uniq -d)
+  if [ -n "$_dupes" ]; then
+    echo "ERROR: duplicate import paths in importcfg:" >&2
+    echo "$_dupes" >&2
+    exit 1
+  fi
 ''
