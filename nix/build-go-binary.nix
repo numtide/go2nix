@@ -224,7 +224,8 @@ pkgs.stdenv.mkDerivation (extraArgs // {
           linkflags="-extld $CC -linkmode external"
         fi
 
-        go tool link \
+        # Set GOROOT to dummy value for reproducible builds (Go 1.23+).
+        GOROOT=GOROOT go tool link \
           -importcfg "$NIX_BUILD_TOP/importcfg" \
           ${ldflagsStr} \
           $linkflags \
