@@ -24,15 +24,17 @@ func main() {
 		runGenerateCmd(os.Args[2:])
 	case "list-files":
 		runlistFilesCmd(os.Args[2:])
-	case "list-local-packages":
-		runlistLocalPackagesCmd(os.Args[2:])
+	case "list-packages":
+		runListPackagesCmd(os.Args[2:])
 	case "compile-package":
 		runCompilePackageCmd(os.Args[2:])
-	case "mvscheck":
-		runMvscheckCmd(os.Args[2:])
+	case "compile-module":
+		runCompileModuleCmd(os.Args[2:])
+	case "check-lockfile":
+		runCheckLockfileCmd(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
-		fmt.Fprintf(os.Stderr, "usage: go2nix <generate|list-files|list-local-packages|compile-package|mvscheck> [flags]\n")
+		fmt.Fprintf(os.Stderr, "usage: go2nix <generate|list-files|list-packages|compile-package|compile-module|check-lockfile> [flags]\n")
 		os.Exit(1)
 	}
 }

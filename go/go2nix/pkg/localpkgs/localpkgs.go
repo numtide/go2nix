@@ -18,8 +18,9 @@ import (
 
 // LocalPkg describes a local package with its files and location.
 type LocalPkg struct {
-	ImportPath string `json:"import_path"`
-	SrcDir     string `json:"src_dir"`
+	ImportPath string   `json:"import_path"`
+	SrcDir     string   `json:"src_dir"`
+	LocalDeps  []string `json:"local_deps"` // local-to-local dependency import paths
 	gofiles.PkgFiles
 }
 
@@ -86,19 +87,20 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 				return fmt.Errorf("building pkg files for %s: %w", importPath, err)
 			}
 
-			localPkg := &LocalPkg{
-				ImportPath: importPath,
-				SrcDir:     path,
-				PkgFiles:   pf,
-			}
-			pkgs[importPath] = localPkg
-
 			var local []string
 			for _, imp := range pkg.Imports {
 				if isLocalImport(imp, localPrefixes) {
 					local = append(local, imp)
 				}
 			}
+
+			localPkg := &LocalPkg{
+				ImportPath: importPath,
+				SrcDir:     path,
+				LocalDeps:  local,
+				PkgFiles:   pf,
+			}
+			pkgs[importPath] = localPkg
 			localDeps[importPath] = local
 			return nil
 		})
