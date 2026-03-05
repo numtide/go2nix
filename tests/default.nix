@@ -8,6 +8,5 @@
   mkgopackageset = import ./mkgopackageset.nix;
   yubikey-agent = import ./yubikey-agent;
   dotool = import ./dotool;
-  skopeo = import ./skopeo;
   nwg-drawer = import ./nwg-drawer;
 }
