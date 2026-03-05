@@ -320,8 +320,22 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		linkArgs = append(linkArgs, cgoFlagsLDFLAGS...)
 		linkArgs = append(linkArgs, cgoLdflags...)
 		if err := run(cc, linkArgs...); err != nil {
-			slog.Debug("cgo test link failed (no dynamic imports)", "err", err)
-		} else if _, err := os.Stat(testLinkO); err == nil {
+			// Test link may fail due to unresolved external symbols.
+			// Retry allowing unresolved symbols since this binary is
+			// only used to extract dynamic imports.
+			goos, _ := goEnv()
+			var flag string
+			switch goos {
+			case "darwin", "ios":
+				flag = "-Wl,-undefined,dynamic_lookup"
+			default:
+				flag = "-Wl,--unresolved-symbols=ignore-all"
+			}
+			if err2 := run(cc, append(linkArgs, flag)...); err2 != nil {
+				slog.Debug("cgo test link failed (no dynamic imports)", "err", err)
+			}
+		}
+		if _, err := os.Stat(testLinkO); err == nil {
 			// Extract package name from generated Go file.
 			pkgName := extractPackageName(filepath.Join(cgowork, "_cgo_gotypes.go"))
 			dynOut := filepath.Join(cgowork, "_cgo_import_"+uid+".go")
