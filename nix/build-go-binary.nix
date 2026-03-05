@@ -18,6 +18,7 @@
   tags ? [],
   ldflags ? [],
   CGO_ENABLED ? null,
+  packageOverrides ? {},
   meta ? {},
   nativeBuildInputs ? [],
   ...
@@ -107,6 +108,7 @@ let
       go2nix
       pkgs
       tags
+      packageOverrides
       ;
   };
 
@@ -117,6 +119,13 @@ let
 
   # All third-party package derivations (used in importcfg for linking).
   allThirdPartyDeps = builtins.attrValues packageSet;
+
+  # Collect nativeBuildInputs from all packageOverrides so C libraries are
+  # available at link time (the final binary needs to link against them).
+  overrideNativeBuildInputs = builtins.concatLists (
+    map (attrs: attrs.nativeBuildInputs or [])
+    (builtins.attrValues packageOverrides)
+  );
 
   # Pre-generate importcfg entries at eval time to avoid inlining shell per dep
   # (which would exceed ARG_MAX with large dependency sets).
@@ -143,6 +152,7 @@ let
     "tags"
     "ldflags"
     "CGO_ENABLED"
+    "packageOverrides"
     "meta"
     "nativeBuildInputs"
   ];
@@ -154,7 +164,7 @@ pkgs.stdenv.mkDerivation (extraArgs // {
 
   nativeBuildInputs = [
     go
-  ] ++ nativeBuildInputs;
+  ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
 
   # --- configurePhase ---
   # Set up environment, build importcfg, define compile_go_pkg function.

@@ -185,6 +185,11 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	cc := envOrDefault("CC", "gcc")
 	cxx := envOrDefault("CXX", "g++")
 
+	// Read CGO flags from environment (Nix CC wrapper sets these when C libs are in nativeBuildInputs).
+	cgoCflags := strings.Fields(os.Getenv("CGO_CFLAGS"))
+	cgoCxxflags := strings.Fields(os.Getenv("CGO_CXXFLAGS"))
+	cgoLdflags := strings.Fields(os.Getenv("CGO_LDFLAGS"))
+
 	// Copy headers.
 	for _, h := range files.HFiles {
 		data, err := os.ReadFile(filepath.Join(opts.SrcDir, h))
@@ -209,6 +214,17 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		return fmt.Errorf("cgo: %w", err)
 	}
 
+	// Read _cgo_flags written by go tool cgo (contains LDFLAGS from #cgo directives and pkg-config).
+	var cgoFlagsLDFLAGS []string
+	cgoFlagsFile := filepath.Join(cgowork, "_cgo_flags")
+	if data, err := os.ReadFile(cgoFlagsFile); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if after, ok := strings.CutPrefix(line, "_CGO_LDFLAGS="); ok {
+				cgoFlagsLDFLAGS = strings.Fields(after)
+			}
+		}
+	}
+
 	// Step 2: compile C files.
 	var compiledOFiles []string
 
@@ -228,7 +244,10 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	for _, f := range ccFiles {
 		base := strings.TrimSuffix(filepath.Base(f), ".c")
 		oFile := filepath.Join(cgowork, base+"_"+uid+".o")
-		if err := run(cc, "-c", "-I", cgowork, "-I", opts.SrcDir, "-fPIC", "-pthread", f, "-o", oFile); err != nil {
+		ccArgs := []string{"-c", "-I", cgowork, "-I", opts.SrcDir, "-fPIC", "-pthread"}
+		ccArgs = append(ccArgs, cgoCflags...)
+		ccArgs = append(ccArgs, f, "-o", oFile)
+		if err := run(cc, ccArgs...); err != nil {
 			return fmt.Errorf("cc %s: %w", f, err)
 		}
 		compiledOFiles = append(compiledOFiles, oFile)
@@ -238,8 +257,10 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	for _, f := range files.SFiles {
 		base := strings.TrimSuffix(f, ".S")
 		oFile := filepath.Join(cgowork, base+"_asm_"+uid+".o")
-		if err := run(cc, "-c", "-I", cgowork, "-I", opts.SrcDir, "-fPIC", "-pthread",
-			filepath.Join(opts.SrcDir, f), "-o", oFile); err != nil {
+		sArgs := []string{"-c", "-I", cgowork, "-I", opts.SrcDir, "-fPIC", "-pthread"}
+		sArgs = append(sArgs, cgoCflags...)
+		sArgs = append(sArgs, filepath.Join(opts.SrcDir, f), "-o", oFile)
+		if err := run(cc, sArgs...); err != nil {
 			return fmt.Errorf("cc asm %s: %w", f, err)
 		}
 		compiledOFiles = append(compiledOFiles, oFile)
@@ -252,8 +273,10 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		base = strings.TrimSuffix(base, ".cpp")
 		base = strings.TrimSuffix(base, ".cxx")
 		oFile := filepath.Join(cgowork, base+"_cxx_"+uid+".o")
-		if err := run(cxx, "-c", "-I", cgowork, "-I", opts.SrcDir, "-fPIC", "-pthread",
-			filepath.Join(opts.SrcDir, f), "-o", oFile); err != nil {
+		cxxArgs := []string{"-c", "-I", cgowork, "-I", opts.SrcDir, "-fPIC", "-pthread"}
+		cxxArgs = append(cxxArgs, cgoCxxflags...)
+		cxxArgs = append(cxxArgs, filepath.Join(opts.SrcDir, f), "-o", oFile)
+		if err := run(cxx, cxxArgs...); err != nil {
 			return fmt.Errorf("cxx %s: %w", f, err)
 		}
 		compiledOFiles = append(compiledOFiles, oFile)
@@ -263,11 +286,16 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	cgoMainC := filepath.Join(cgowork, "_cgo_main.c")
 	if _, err := os.Stat(cgoMainC); err == nil {
 		mainO := filepath.Join(cgowork, "_cgo_main_"+uid+".o")
-		_ = run(cc, "-c", "-I", cgowork, "-I", opts.SrcDir, "-fPIC", "-pthread", cgoMainC, "-o", mainO)
+		mainArgs := []string{"-c", "-I", cgowork, "-I", opts.SrcDir, "-fPIC", "-pthread"}
+		mainArgs = append(mainArgs, cgoCflags...)
+		mainArgs = append(mainArgs, cgoMainC, "-o", mainO)
+		_ = run(cc, mainArgs...)
 
 		testLinkO := filepath.Join(cgowork, "_cgo__"+uid+".o")
 		linkArgs := append([]string{"-o", testLinkO, mainO}, compiledOFiles...)
 		linkArgs = append(linkArgs, "-lpthread")
+		linkArgs = append(linkArgs, cgoFlagsLDFLAGS...)
+		linkArgs = append(linkArgs, cgoLdflags...)
 		if err := run(cc, linkArgs...); err != nil {
 			slog.Debug("cgo test link failed (no dynamic imports)", "err", err)
 		} else if _, err := os.Stat(testLinkO); err == nil {
@@ -318,6 +346,13 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	packArgs := append([]string{"tool", "pack", "r", opts.Output}, compiledOFiles...)
 	if err := runIn(opts.SrcDir, "go", packArgs...); err != nil {
 		return fmt.Errorf("pack: %w", err)
+	}
+
+	// Pack _cgo_flags into archive so LDFLAGS propagate to the final link step.
+	if _, err := os.Stat(cgoFlagsFile); err == nil {
+		if err := runIn(opts.SrcDir, "go", "tool", "pack", "r", opts.Output, cgoFlagsFile); err != nil {
+			return fmt.Errorf("pack _cgo_flags: %w", err)
+		}
 	}
 
 	return nil

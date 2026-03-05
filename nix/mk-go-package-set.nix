@@ -12,6 +12,7 @@
   go2nix, # go2nix binary (for compile-package subcommand)
   pkgs, # nixpkgs
   tags ? [], # build tags
+  packageOverrides ? {}, # per-package overrides keyed by import path
 }:
 let
   helpers = import ./helpers.nix;
@@ -51,13 +52,18 @@ let
 
       # Direct dependency derivations (resolved lazily via Nix's laziness).
       deps = map (imp: packages.${imp}) (pkg.imports or [ ]);
+
+      # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
+      override = packageOverrides.${importPath} or {};
+      extraNativeBuildInputs = override.nativeBuildInputs or [];
+      extraEnv = builtins.removeAttrs override [ "nativeBuildInputs" ];
     in
     pkgs.runCommandCC "gopkg-${sanitizeName importPath}"
-      {
+      ({
         nativeBuildInputs = [
           go
-        ];
-      }
+        ] ++ extraNativeBuildInputs;
+      } // extraEnv)
       ''
         export HOME=$NIX_BUILD_TOP
 
