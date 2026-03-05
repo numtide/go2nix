@@ -33,27 +33,13 @@ linkGoBinaryBuildPhase() {
     local localdir="$NIX_BUILD_TOP/local-pkgs"
     mkdir -p "$localdir"
 
-    # Discover local packages in dependency order.
-    local localjson
-    localjson=$(@go2nix@ list-local-packages @tagArg@ "$goModuleRoot")
-
-    # Pass 1: compile library packages (topological order).
-    while IFS= read -r pkgentry; do
-        local importpath srcdir
-        importpath=$(echo "$pkgentry" | @jq@ -r '.import_path')
-        srcdir=$(echo "$pkgentry" | @jq@ -r '.src_dir')
-
-        echo "Compiling local library: $importpath"
-        @go2nix@ compile-package \
-            --importcfg "$NIX_BUILD_TOP/importcfg" \
-            --import-path "$importpath" \
-            --src-dir "$srcdir" \
-            --output "$localdir/$importpath.a" \
-            --trimpath "$NIX_BUILD_TOP" \
-            @tagArg@
-
-        echo "packagefile $importpath=$localdir/$importpath.a" >> "$NIX_BUILD_TOP/importcfg"
-    done < <(echo "$localjson" | @jq@ -c '.[] | select(.is_command == false)')
+    # Pass 1: compile library packages in parallel (DAG-aware).
+    @go2nix@ compile-module \
+        --importcfg "$NIX_BUILD_TOP/importcfg" \
+        --outdir "$localdir" \
+        --trimpath "$NIX_BUILD_TOP" \
+        @tagArg@ \
+        "$goModuleRoot"
 
     # Pass 2: compile main packages and link.
     mkdir -p "$NIX_BUILD_TOP/staging/bin"
@@ -86,6 +72,7 @@ linkGoBinaryBuildPhase() {
         fi
 
         @go@ tool link \
+            -buildid=redacted \
             -importcfg "$NIX_BUILD_TOP/importcfg" \
             ${goLdflags:-} \
             $linkflags \

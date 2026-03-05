@@ -4,7 +4,7 @@
 #   goModuleHook  — compile a third-party Go package
 #   goPackageHook — compile a local library package
 #   goAppHook     — compile local packages and link a binary
-{ go, go2nix, stdlib, lib, makeSetupHook, jq, tagFlag }:
+{ go, go2nix, stdlib, lib, makeSetupHook, tagFlag }:
 let
   tagArg = if tagFlag == "" then "" else "--tags ${tagFlag}";
 
@@ -57,7 +57,6 @@ in
       go = "${go}/bin/go";
       go2nix = "${go2nix}/bin/go2nix";
       stdlib = "${stdlib}";
-      jq = "${jq}/bin/jq";
       inherit tagArg;
     };
   } ./link-go-binary.sh;

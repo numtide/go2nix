@@ -10,7 +10,7 @@
   goLock ? "${src}/go2nix.toml",
   moduleDir ? ".", # relative path from src to directory containing go.mod
   go,
-  go2nix, # go2nix binary (for list-files, list-local-packages, compile-package)
+  go2nix, # go2nix binary (for list-files, list-packages, compile-package, compile-module)
   pkgs,
   subPackages ? [ "." ],
   pname ? "go-binary",
@@ -36,6 +36,9 @@ let
   # Build tag flag for go2nix subcommands.
   tagFlag = if tags == [ ] then "" else builtins.concatStringsSep "," tags;
   tagShellArg = if tagFlag == "" then "" else "-tags ${tagFlag}";
+  tagCLIArg = if tagFlag == "" then "" else "--tags ${tagFlag}";
+  gcflagsCLIArg = if gcflags == [] then "" else "--gcflags '${builtins.concatStringsSep " " gcflags}'";
+
 
   compile = import ./compile.nix { go2nixBin = go2nix; inherit tagFlag gcflags; };
 
@@ -204,19 +207,14 @@ pkgs.stdenv.mkDerivation (extraArgs // {
     localdir="$NIX_BUILD_TOP/local-pkgs"
     mkdir -p "$localdir"
 
-    # Get all local packages in dependency order.
-    localjson=$(${go2nix}/bin/go2nix list-local-packages ${tagShellArg} "${moduleRoot}")
-
-    # Pass 1: compile library packages (in topological order).
-    while read -r pkgentry; do
-      importpath=$(echo "$pkgentry" | ${pkgs.jq}/bin/jq -r '.import_path')
-      srcdir=$(echo "$pkgentry" | ${pkgs.jq}/bin/jq -r '.src_dir')
-
-      echo "Compiling local library: $importpath ($srcdir)"
-      compile_go_pkg "$importpath" "$srcdir" "$localdir/$importpath.a" "" ""
-
-      echo "packagefile $importpath=$localdir/$importpath.a" >> "$NIX_BUILD_TOP/importcfg"
-    done < <(echo "$localjson" | ${pkgs.jq}/bin/jq -c '.[] | select(.is_command == false)')
+    # Pass 1: compile library packages in parallel (DAG-aware).
+    ${go2nix}/bin/go2nix compile-module \
+      --importcfg "$NIX_BUILD_TOP/importcfg" \
+      --outdir "$localdir" \
+      --trimpath "$NIX_BUILD_TOP" \
+      ${tagCLIArg} \
+      ${gcflagsCLIArg} \
+      "${moduleRoot}"
 
     # Pass 2: Compile main packages and link.
     mkdir -p "$NIX_BUILD_TOP/staging/bin"
@@ -232,8 +230,8 @@ pkgs.stdenv.mkDerivation (extraArgs // {
           linkflags="-extld $CC -linkmode external"
         fi
 
-        # Set GOROOT to dummy value for reproducible builds (Go 1.23+).
-        GOROOT=GOROOT go tool link \
+        go tool link \
+          -buildid=redacted \
           -importcfg "$NIX_BUILD_TOP/importcfg" \
           ${ldflagsStr} \
           $linkflags \
