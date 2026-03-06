@@ -38,4 +38,18 @@ func TestMaxWorkers(t *testing.T) {
 	if got < 1 {
 		t.Errorf("invalid NIX_BUILD_CORES: got %d", got)
 	}
+
+	// NIX_BUILD_CORES=0 means "all cores" in Nix convention; falls back to NumCPU.
+	t.Setenv("NIX_BUILD_CORES", "0")
+	got = maxWorkers(1000)
+	if got < 1 {
+		t.Errorf("NIX_BUILD_CORES=0: got %d, want >= 1", got)
+	}
+
+	// Negative NIX_BUILD_CORES ignored, falls back to NumCPU.
+	t.Setenv("NIX_BUILD_CORES", "-1")
+	got = maxWorkers(1000)
+	if got < 1 {
+		t.Errorf("NIX_BUILD_CORES=-1: got %d, want >= 1", got)
+	}
 }

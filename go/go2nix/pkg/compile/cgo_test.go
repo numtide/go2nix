@@ -53,6 +53,7 @@ func TestMatchesCgoConstraint(t *testing.T) {
 		{"negated os mismatch", "!linux", "linux", "amd64", false},
 		{"negated arch", "!arm64", "linux", "amd64", true},
 		{"combined negated", "!windows,amd64", "linux", "amd64", true},
+		{"empty constraint", "", "linux", "amd64", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,6 +90,11 @@ func TestCgoPreamble(t *testing.T) {
 		{
 			"no import C",
 			"package foo\n\nimport \"fmt\"\n",
+			"",
+		},
+		{
+			"garbage file",
+			"this is not valid go code at all {{{",
 			"",
 		},
 	}

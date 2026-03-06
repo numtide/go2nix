@@ -55,4 +55,11 @@ func TestExtractPackageName(t *testing.T) {
 	if got := extractPackageName(filepath.Join(dir, "nope.go")); got != "main" {
 		t.Errorf("missing: got %q, want %q", got, "main")
 	}
+
+	// Invalid syntax falls back to "main".
+	bad := filepath.Join(dir, "bad.go")
+	os.WriteFile(bad, []byte("not valid go {{{"), 0o644)
+	if got := extractPackageName(bad); got != "main" {
+		t.Errorf("invalid syntax: got %q, want %q", got, "main")
+	}
 }
