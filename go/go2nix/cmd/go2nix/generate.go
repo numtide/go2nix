@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/numtide/go2nix/pkg/generate"
+	"github.com/numtide/go2nix/pkg/lockfilegen"
 )
 
 func runGenerateCmd(args []string) {
@@ -20,7 +20,7 @@ func runGenerateCmd(args []string) {
 		dirs = []string{"."}
 	}
 
-	if err := generate.Generate(dirs, *output, *jobs); err != nil {
+	if err := lockfilegen.Generate(dirs, *output, *jobs); err != nil {
 		slog.Error("generate failed", "err", err)
 		os.Exit(1)
 	}

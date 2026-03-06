@@ -1,5 +1,5 @@
-// Package generate produces go2nix lockfiles from Go projects.
-package generate
+// Package lockfilegen produces go2nix lockfiles from Go projects.
+package lockfilegen
 
 import (
 	"bytes"
@@ -242,7 +242,7 @@ func collectModulesFromPackages(pkgs []goListPkg) []modInfo {
 }
 
 func modCacheHash(fetchPath, version string) (string, error) {
-	tmpdir, err := os.MkdirTemp("", "gob-hash-")
+	tmpdir, err := os.MkdirTemp("", "go2nix-hash-")
 	if err != nil {
 		return "", err
 	}
