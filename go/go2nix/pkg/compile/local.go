@@ -55,7 +55,7 @@ func CompileLocalPackages(opts CompileLocalOptions) error {
 	// go tool compile reads importcfg at startup but only opens .a files
 	// when resolving an import. Since we respect DAG ordering, a dep's
 	// .a file will exist by the time any dependent package needs it.
-	f, err := os.OpenFile(opts.ImportCfg, os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(opts.ImportCfg, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("opening importcfg: %w", err)
 	}

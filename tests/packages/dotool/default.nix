@@ -1,7 +1,7 @@
 # Test: buildGoApplication with local cgo package (xkbcommon via pkg-config).
 let
   pkgs = import <nixpkgs> { };
-  go = pkgs.go;
+  inherit (pkgs) go;
   go2nix = import ../../../go/go2nix/package.nix { inherit pkgs; };
   goEnv = import ../../../nix/mk-go-env.nix {
     inherit go go2nix;
@@ -17,5 +17,8 @@ goEnv.buildGoApplication {
   goLock = ./go2nix.toml;
   pname = "dotool";
   version = "1.6";
-  nativeBuildInputs = [ pkgs.pkg-config pkgs.libxkbcommon ];
+  nativeBuildInputs = [
+    pkgs.pkg-config
+    pkgs.libxkbcommon
+  ];
 }

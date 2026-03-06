@@ -7,9 +7,8 @@ import (
 	"go/build"
 	"io/fs"
 	"os"
-	"path/filepath"
 	pathpkg "path"
-
+	"path/filepath"
 	"sort"
 	"strings"
 

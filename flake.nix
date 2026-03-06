@@ -26,7 +26,8 @@
         nixpkgs.config.allowUnfree = true;
       };
     in
-    blueprintOutputs // {
+    blueprintOutputs
+    // {
       lib = import ./lib.nix { };
     };
 }

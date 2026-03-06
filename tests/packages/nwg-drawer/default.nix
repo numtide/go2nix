@@ -1,7 +1,7 @@
 # Test: buildGoApplication with many GTK cgo deps (15 packages using pkg-config).
 let
   pkgs = import <nixpkgs> { };
-  go = pkgs.go;
+  inherit (pkgs) go;
   go2nix = import ../../../go/go2nix/package.nix { inherit pkgs; };
 
   # All GTK-related nativeBuildInputs needed by gotk4 cgo packages.

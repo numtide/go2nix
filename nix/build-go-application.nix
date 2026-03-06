@@ -1,4 +1,4 @@
-# go2nix/nixv2/build-go-application.nix — build a Go binary from source + lockfile.
+# go2nix/nix/build-go-application.nix — build a Go binary from source + lockfile.
 #
 # Usage:
 #   goEnv.buildGoApplication {
@@ -13,8 +13,6 @@
 #     };
 #   }
 {
-  go,
-  go2nix,
   stdenv,
   hooks,
   helpers,
@@ -58,7 +56,7 @@ let
     let
       modPath = modKeyPath modKey mod.version;
       modSrc = moduleSrcs.${modKey};
-      fetchPath = if mod ? replaced then mod.replaced else modPath;
+      fetchPath = mod.replaced or modPath;
     in
     {
       path = modPath;

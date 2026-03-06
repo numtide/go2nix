@@ -28,8 +28,6 @@ go2nix is a Go module → Nix lockfile generator + builder. It's a fork of
 [gomod2nix] with one material change: the lockfile is keyed by
 `module_path@version` instead of bare `module_path`.
 
-[gomod2nix]: https://github.com/nix-community/gomod2nix
-
 That single change has two downstream effects:
 
 1. **Staleness becomes a build failure.** In upstream gomod2nix, the lockfile
@@ -39,7 +37,7 @@ That single change has two downstream effects:
    version. With composite keys, the builder filters by `path@version` from
    `go.mod` — a mismatched version simply isn't found, and Nix errors out.
 
-2. **One lockfile for N projects.** Multiple versions of the same module can
+1. **One lockfile for N projects.** Multiple versions of the same module can
    coexist in the lockfile. A monorepo with 10 Go projects can share one
    `go2nix.toml` at the root; each project's build filters it to just that
    project's requires. De-duplication is automatic.
@@ -55,21 +53,22 @@ Fork point: [`47d628dc`](https://github.com/nix-community/gomod2nix/commit/47d62
 because we don't use them, not because they're incompatible.
 
 **What we kept** from upstream:
+
 - `buildGoApplication` / `mkGoEnv` / `mkVendorEnv` / `fetchGoModule` signatures
   and phases (we have the older inline-heredoc `buildPhase`, not the hooks)
 - `parser.nix` (with one bugfix — see below)
 - `symlink.go` / `install.go` / `fetch.sh` — unchanged or minimally modified
 
 **What we added**:
+
 - Composite-key filter in `mkVendorEnv` (~40 lines)
 - `netrcFile` parameter for private module auth (same as upstream [PR #243])
 - `goModFile` parameter to avoid IFD (same as upstream [PR #243])
 - `parser.nix` fix for mixed single-line + parenthesized `require` blocks
 
 **What we removed**:
-- `hooks/`, `mkGoCacheEnv`, `cachegen/`, `updateScript`
 
-[PR #243]: https://github.com/nix-community/gomod2nix/pull/243
+- `hooks/`, `mkGoCacheEnv`, `cachegen/`, `updateScript`
 
 ## The core idea: composite keys
 
@@ -110,11 +109,11 @@ build sees `v1.75.1`.
 At eval time, `mkVendorEnv`:
 
 1. Parses `go.mod`: `goMod.require = { "google.golang.org/grpc" = "v1.76.0"; ... }`
-2. Builds a set of required keys: `{ "google.golang.org/grpc@v1.76.0" = true; ... }`
-3. Filters `modulesStruct.mod` to only keys present in that set
-4. **Checks** that every required non-local-replace module survived the filter;
+1. Builds a set of required keys: `{ "google.golang.org/grpc@v1.76.0" = true; ... }`
+1. Filters `modulesStruct.mod` to only keys present in that set
+1. **Checks** that every required non-local-replace module survived the filter;
    throws a clear error if not
-5. Re-keys the result to bare module paths for `symlink.go`
+1. Re-keys the result to bare module paths for `symlink.go`
 
 Step 4 is how a stale lockfile or untidy `go.mod` becomes a **clear eval-time
 error** instead of an opaque `go build` failure about missing packages:
@@ -229,9 +228,9 @@ For each project directory:
 1. Parse `go.mod` with `golang.org/x/mod/modfile` to find replace directives.
    Classify each as **local** (`replace foo => ../foo`, `New.Version == ""`) or
    **remote** (`replace foo => bar vX`, `New.Version != ""`).
-2. Run `go mod download -json` in the project directory. This emits one JSON
+1. Run `go mod download -json` in the project directory. This emits one JSON
    record per module, including the local cache directory where Go unpacked it.
-3. For each record:
+1. For each record:
    - If the module is a local replace, skip it (go mod download skips these too,
      so we won't see them in practice, but the guard is explicit).
    - If it's a remote replace, the record's `Path` is the *replacement* path.
@@ -286,6 +285,7 @@ known suffix than to regex-parse the key in Nix.
 
 The extraction is safe for all Go module path forms because Go module versions
 always start with `v` and module paths never contain `@`:
+
 - `github.com/foo/bar@v1.2.3` → `github.com/foo/bar`
 - `github.com/foo/bar/v2@v2.1.0` → `github.com/foo/bar/v2` (vN-in-path convention)
 - `github.com/foo/bar@v0.0.0-20240101000000-abcdef` → `github.com/foo/bar` (pseudo-version)
@@ -382,6 +382,10 @@ Four independent changes vs upstream; two are already upstream PRs:
 | Shared-lockfile CLI | Depends on composite keys |
 
 Relevant upstream issues composite keys address:
+
 - [#119](https://github.com/nix-community/gomod2nix/issues/119) — check for changed replace path
 - [#169](https://github.com/nix-community/gomod2nix/issues/169) — subcommand to detect stale lockfile
 - [#108](https://github.com/nix-community/gomod2nix/issues/108) — avoid unrelated deps with go.work
+
+[gomod2nix]: https://github.com/nix-community/gomod2nix
+[pr #243]: https://github.com/nix-community/gomod2nix/pull/243

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Atomic hook: compile local packages and link Go binaries.
 #
 # Expected environment variables (set via derivation `env`):
@@ -9,94 +10,105 @@
 #
 # Third-party dependencies are discovered from $buildInputs at build time.
 
+# Variables set by Nix stdenv / derivation env, not by this script.
+# shellcheck disable=SC2154
 linkGoBinaryConfigurePhase() {
-    runHook preConfigure
+  runHook preConfigure
 
-    # Validate lockfile consistency with go.mod.
-    @go2nix@ check-lockfile --lockfile "$goLockfile" "$goModuleRoot"
+  # Validate lockfile consistency with go.mod.
+  @go2nix@ check-lockfile --lockfile "$goLockfile" "$goModuleRoot"
 
-    # Extract module path from go.mod at build time (avoids Nix eval-time parsing).
-    goModulePath=$(awk '/^module /{print $2; exit}' "$goModuleRoot/go.mod")
-    export goModulePath
+  # Extract module path from go.mod at build time (avoids Nix eval-time parsing).
+  goModulePath=$(awk '/^module /{print $2; exit}' "$goModuleRoot/go.mod")
+  export goModulePath
 
-    # Build importcfg: stdlib + all third-party deps.
-    cat "@stdlib@/importcfg" > "$NIX_BUILD_TOP/importcfg"
-    for dep in $buildInputs; do
-        if [ -f "$dep/importcfg" ]; then
-            cat "$dep/importcfg" >> "$NIX_BUILD_TOP/importcfg"
-        fi
-    done
+  # Build importcfg: stdlib + all third-party deps.
+  cat "@stdlib@/importcfg" >"$NIX_BUILD_TOP/importcfg"
+  for dep in $buildInputs; do
+    if [ -f "$dep/importcfg" ]; then
+      cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
+    fi
+  done
 
-    runHook postConfigure
+  runHook postConfigure
 }
 
 linkGoBinaryBuildPhase() {
-    runHook preBuild
+  runHook preBuild
 
-    local localdir="$NIX_BUILD_TOP/local-pkgs"
-    mkdir -p "$localdir"
+  local localdir="$NIX_BUILD_TOP/local-pkgs"
+  mkdir -p "$localdir"
 
-    # Pass 1: compile library packages in parallel (DAG-aware).
-    @go2nix@ compile-module \
-        --importcfg "$NIX_BUILD_TOP/importcfg" \
-        --outdir "$localdir" \
-        --trimpath "$NIX_BUILD_TOP" \
-        @tagArg@ \
-        "$goModuleRoot"
+  # Pass 1: compile library packages in parallel (DAG-aware).
+  @go2nix@ compile-module \
+    --importcfg "$NIX_BUILD_TOP/importcfg" \
+    --outdir "$localdir" \
+    --trimpath "$NIX_BUILD_TOP" \
+    @tagArg@ \
+    "$goModuleRoot"
 
-    # Pass 2: compile main packages and link.
-    mkdir -p "$NIX_BUILD_TOP/staging/bin"
+  # Pass 2: compile main packages and link.
+  mkdir -p "$NIX_BUILD_TOP/staging/bin"
 
-    for sp in ${goSubPackages:-.}; do
-        local importpath srcdir binname
+  for sp in ${goSubPackages:-.}; do
+    local importpath srcdir binname
 
-        if [ "$sp" = "." ]; then
-            importpath="$goModulePath"
-            srcdir="$goModuleRoot"
-            binname="${goPname:-$(basename "$goModulePath")}"
-        else
-            importpath="$goModulePath/$sp"
-            srcdir="$goModuleRoot/$sp"
-            binname="$(basename "$sp")"
-        fi
+    if [ "$sp" = "." ]; then
+      importpath="$goModulePath"
+      srcdir="$goModuleRoot"
+      binname="${goPname:-$(basename "$goModulePath")}"
+    else
+      importpath="$goModulePath/$sp"
+      srcdir="$goModuleRoot/$sp"
+      binname="$(basename "$sp")"
+    fi
 
-        echo "Compiling main: $importpath"
-        @go2nix@ compile-package \
-            --importcfg "$NIX_BUILD_TOP/importcfg" \
-            --import-path "main" \
-            --src-dir "$srcdir" \
-            --output "$localdir/$importpath.a" \
-            --trimpath "$NIX_BUILD_TOP" \
-            @tagArg@
+    echo "Compiling main: $importpath"
+    @go2nix@ compile-package \
+      --importcfg "$NIX_BUILD_TOP/importcfg" \
+      --import-path "main" \
+      --src-dir "$srcdir" \
+      --output "$localdir/$importpath.a" \
+      --trimpath "$NIX_BUILD_TOP" \
+      @tagArg@
 
-        local linkflags=""
-        if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
-            linkflags="-extld $CC -linkmode external"
-        fi
+    local linkflags=""
+    if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
+      linkflags="-extld $CC -linkmode external"
+    fi
 
-        @go@ tool link \
-            -buildid=redacted \
-            -importcfg "$NIX_BUILD_TOP/importcfg" \
-            ${goLdflags:-} \
-            $linkflags \
-            -o "$NIX_BUILD_TOP/staging/bin/$binname" \
-            "$localdir/$importpath.a"
-    done
+    # Word splitting is intentional: goLdflags and linkflags contain
+    # multiple space-separated flags.
+    # shellcheck disable=SC2086
+    @go@ tool link \
+      -buildid=redacted \
+      -importcfg "$NIX_BUILD_TOP/importcfg" \
+      ${goLdflags:-} \
+      $linkflags \
+      -o "$NIX_BUILD_TOP/staging/bin/$binname" \
+      "$localdir/$importpath.a"
+  done
 
-    runHook postBuild
+  runHook postBuild
 }
 
 linkGoBinaryInstallPhase() {
-    runHook preInstall
+  runHook preInstall
 
-    mkdir -p "$out/bin"
-    cp "$NIX_BUILD_TOP/staging/bin/"* "$out/bin/"
+  mkdir -p "$out/bin"
+  cp "$NIX_BUILD_TOP/staging/bin/"* "$out/bin/"
 
-    runHook postInstall
+  runHook postInstall
 }
 
+# Consumed by Nix stdenv, not by this script.
+# shellcheck disable=SC2034
 configurePhase=linkGoBinaryConfigurePhase
+# shellcheck disable=SC2034
 buildPhase=linkGoBinaryBuildPhase
+# shellcheck disable=SC2034
 installPhase=linkGoBinaryInstallPhase
+# shellcheck disable=SC2034
 dontUnpack=1
+# shellcheck disable=SC2034
 dontFixup=1

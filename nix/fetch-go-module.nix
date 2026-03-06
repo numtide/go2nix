@@ -1,4 +1,4 @@
-# go2nix/nix2/fetch-module.nix — fixed-output derivation to fetch a Go module.
+# go2nix/nix/fetch-module.nix — fixed-output derivation to fetch a Go module.
 #
 # Downloads a module via the Go module proxy and produces the GOMODCACHE
 # directory structure as output.
@@ -14,7 +14,7 @@ in
 modKey: mod:
 let
   modPath = modKeyPath modKey mod.version;
-  fetchPath = if mod ? replaced then mod.replaced else modPath;
+  fetchPath = mod.replaced or modPath;
 in
 stdenvNoCC.mkDerivation {
   name = "gomod-${sanitizeName modKey}";

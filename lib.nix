@@ -5,8 +5,7 @@
 #   importcfgFor  { stdlib, deps }
 #   mkGoPackageSet { goLock, go, go2nix, pkgs, ... }
 #   buildGoBinary  { src, go, go2nix, pkgs, ... }
-{ }:
-{
+_: {
   buildGoStdlib = args: import ./nix/stdlib.nix args;
   importcfgFor = args: import ./nix/importcfg.nix args;
   mkGoPackageSet = args: import ./nix/mk-go-package-set.nix args;

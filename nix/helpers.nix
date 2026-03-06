@@ -2,7 +2,8 @@
 {
   # Strip @version suffix from a module key to get the module path.
   # Cheaper than regex: version is already a field, so just truncate.
-  modKeyPath = key: version:
+  modKeyPath =
+    key: version:
     builtins.substring 0 (builtins.stringLength key - builtins.stringLength version - 1) key;
 
   # Make a string safe for use as a Nix derivation name.

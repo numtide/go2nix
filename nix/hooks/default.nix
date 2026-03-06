@@ -3,7 +3,13 @@
 # Two composite hooks:
 #   goModuleHook  — compile a third-party Go package
 #   goAppHook     — compile local packages and link a binary
-{ go, go2nix, stdlib, makeSetupHook, tagFlag }:
+{
+  go,
+  go2nix,
+  stdlib,
+  makeSetupHook,
+  tagFlag,
+}:
 let
   tagArg = if tagFlag == "" then "" else "--tags ${tagFlag}";
 
@@ -21,7 +27,10 @@ in
   #   buildInputs         — dependency package derivations
   goModuleHook = makeSetupHook {
     name = "go2nix-module-hook";
-    propagatedBuildInputs = [ go setupGoEnv ];
+    propagatedBuildInputs = [
+      go
+      setupGoEnv
+    ];
     substitutions = {
       go2nix = "${go2nix}/bin/go2nix";
       stdlib = "${stdlib}";
@@ -39,7 +48,10 @@ in
   #   buildInputs       — all third-party package derivations
   goAppHook = makeSetupHook {
     name = "go2nix-app-hook";
-    propagatedBuildInputs = [ go setupGoEnv ];
+    propagatedBuildInputs = [
+      go
+      setupGoEnv
+    ];
     substitutions = {
       go = "${go}/bin/go";
       go2nix = "${go2nix}/bin/go2nix";

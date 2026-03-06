@@ -1,4 +1,4 @@
-# go2nix/nixv2/mk-go-env.nix — creates a reusable Go toolchain scope.
+# go2nix/nix/mk-go-env.nix — creates a reusable Go toolchain scope.
 #
 # Returns a scope with:
 #   goEnv.buildGoApplication { ... }   — build a Go binary (99% of use cases)
