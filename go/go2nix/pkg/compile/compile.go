@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -24,16 +23,31 @@ type Options struct {
 	TrimPath   string // path prefix to trim (defaults to $NIX_BUILD_TOP)
 	Tags       string // comma-separated build tags
 	GCFlags    string // extra flags for go tool compile (space-separated, e.g. "-race")
+
+	// Resolved once by CompilePackage; avoids repeated go env subprocesses.
+	goroot      string
+	goos        string
+	goarch      string
+	asmArchDefs []string // arch-specific -D flags for go tool asm
 }
 
-// CompilePackage compiles a single Go package (pure Go, assembly, or cgo).
-func CompilePackage(opts Options) error {
+// CompileGoPackage compiles a single Go package (pure Go, assembly, or cgo).
+func CompileGoPackage(opts Options) error {
 	if opts.PFlag == "" {
 		opts.PFlag = opts.ImportPath
 	}
 	if opts.TrimPath == "" {
 		opts.TrimPath = os.Getenv("NIX_BUILD_TOP")
 	}
+
+	// Resolve Go environment once to avoid repeated subprocesses.
+	var err error
+	opts.goroot, err = goRoot()
+	if err != nil {
+		return err
+	}
+	opts.goos, opts.goarch = goEnv()
+	opts.asmArchDefs = asmArchDefines(opts.goarch)
 
 	slog.Debug("compile-package", "import-path", opts.ImportPath, "src", opts.SrcDir)
 
@@ -74,91 +88,5 @@ func CompilePackage(opts Options) error {
 	if len(files.SFiles) > 0 {
 		return compileWithAsm(opts, files, embedFlag)
 	}
-	return compilePureGo(opts, files, embedFlag)
-}
-
-func compilePureGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
-	args := []string{
-		"tool", "compile",
-		"-importcfg", opts.ImportCfg,
-		"-p", opts.PFlag,
-		"-trimpath=" + opts.TrimPath,
-		"-pack",
-		"-o", opts.Output,
-	}
-	args = append(args, extraGCFlags(opts)...)
-	if embedFlag != "" {
-		args = append(args, embedFlag)
-	}
-	args = append(args, files.GoFiles...)
-
-	return runIn(opts.SrcDir, "go", args...)
-}
-
-// --- helpers ---
-
-func extraGCFlags(opts Options) []string {
-	if opts.GCFlags == "" {
-		return nil
-	}
-	return strings.Fields(opts.GCFlags)
-}
-
-func runIn(dir, name string, args ...string) error {
-	slog.Debug("exec", "cmd", name, "args", args, "dir", dir)
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func run(name string, args ...string) error {
-	slog.Debug("exec", "cmd", name, "args", args)
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func goRoot() (string, error) {
-	out, err := exec.Command("go", "env", "GOROOT").Output()
-	if err != nil {
-		return "", fmt.Errorf("go env GOROOT: %w", err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func goEnv() (goos, goarch string) {
-	goos = os.Getenv("GOOS")
-	if goos == "" {
-		out, _ := exec.Command("go", "env", "GOOS").Output()
-		goos = strings.TrimSpace(string(out))
-	}
-	goarch = os.Getenv("GOARCH")
-	if goarch == "" {
-		out, _ := exec.Command("go", "env", "GOARCH").Output()
-		goarch = strings.TrimSpace(string(out))
-	}
-	return
-}
-
-func extractPackageName(goFile string) string {
-	data, err := os.ReadFile(goFile)
-	if err != nil {
-		return "main"
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if after, ok := strings.CutPrefix(line, "package "); ok {
-			return strings.TrimSpace(after)
-		}
-	}
-	return "main"
+	return compileGo(opts, files, embedFlag)
 }

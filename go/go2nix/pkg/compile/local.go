@@ -1,6 +1,7 @@
 package compile
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/numtide/go2nix/pkg/localpkgs"
+	"golang.org/x/sync/errgroup"
 )
 
 // CompileLocalOptions configures parallel compilation of local packages.
@@ -31,11 +33,9 @@ func CompileLocalPackages(opts CompileLocalOptions) error {
 
 	// Filter to library packages only.
 	var libs []*localpkgs.LocalPkg
-	pkgMap := map[string]*localpkgs.LocalPkg{}
 	for _, p := range pkgs {
 		if !p.IsCommand {
 			libs = append(libs, p)
-			pkgMap[p.ImportPath] = p
 		}
 	}
 
@@ -61,94 +61,60 @@ func CompileLocalPackages(opts CompileLocalOptions) error {
 	}
 	for _, p := range libs {
 		outPath := filepath.Join(opts.OutDir, p.ImportPath+".a")
-		fmt.Fprintf(f, "packagefile %s=%s\n", p.ImportPath, outPath)
+		if _, err := fmt.Fprintf(f, "packagefile %s=%s\n", p.ImportPath, outPath); err != nil {
+			f.Close()
+			return fmt.Errorf("writing importcfg: %w", err)
+		}
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("writing importcfg: %w", err)
 	}
 
-	// Build reverse-dependency map for scheduling.
-	revDeps := map[string][]string{}
-	inDeg := map[string]int{}
+	// DAG-aware parallel compilation using errgroup.
+	// Each goroutine waits for its local library deps to finish (via done
+	// channels) before compiling, so DAG order is naturally respected.
+	done := make(map[string]chan struct{}, len(libs))
 	for _, p := range libs {
-		count := 0
-		for _, dep := range p.LocalDeps {
-			if _, isLib := pkgMap[dep]; isLib {
-				count++
-				revDeps[dep] = append(revDeps[dep], p.ImportPath)
+		done[p.ImportPath] = make(chan struct{})
+	}
+
+	g, ctx := errgroup.WithContext(context.Background())
+	g.SetLimit(maxWorkers(len(libs)))
+
+	for _, p := range libs {
+		g.Go(func() error {
+			// Wait for local library deps to finish.
+			for _, dep := range p.LocalDeps {
+				if ch, ok := done[dep]; ok {
+					select {
+					case <-ch:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
 			}
-		}
-		inDeg[p.ImportPath] = count
-	}
 
-	// Determine worker count: respect NIX_BUILD_CORES, fall back to NumCPU.
-	workers := maxWorkers(len(libs))
-
-	// DAG-aware parallel compilation.
-	// The main goroutine acts as scheduler: it collects results and
-	// dispatches newly-ready packages to the worker pool.
-	type result struct {
-		importPath string
-		err        error
-	}
-
-	results := make(chan result)
-	sem := make(chan struct{}, workers)
-	inFlight := 0
-
-	compileOne := func(pkg *localpkgs.LocalPkg) {
-		inFlight++
-		go func() {
-			sem <- struct{}{} // acquire worker slot
-			outPath := filepath.Join(opts.OutDir, pkg.ImportPath+".a")
-			slog.Info("compiling local library", "pkg", pkg.ImportPath)
-			err := CompilePackage(Options{
-				ImportPath: pkg.ImportPath,
-				SrcDir:     pkg.SrcDir,
+			outPath := filepath.Join(opts.OutDir, p.ImportPath+".a")
+			slog.Info("compiling local library", "pkg", p.ImportPath)
+			err := CompileGoPackage(Options{
+				ImportPath: p.ImportPath,
+				SrcDir:     p.SrcDir,
 				Output:     outPath,
 				ImportCfg:  opts.ImportCfg,
 				TrimPath:   opts.TrimPath,
 				Tags:       opts.Tags,
 				GCFlags:    opts.GCFlags,
 			})
-			<-sem // release worker slot
-			results <- result{pkg.ImportPath, err}
-		}()
-	}
-
-	// Seed: launch all packages with no local library deps.
-	for _, p := range libs {
-		if inDeg[p.ImportPath] == 0 {
-			compileOne(p)
-		}
-	}
-
-	// Process results and schedule dependents.
-	compiled := 0
-	for inFlight > 0 {
-		r := <-results
-		inFlight--
-		if r.err != nil {
-			// Drain in-flight goroutines to avoid leak.
-			for inFlight > 0 {
-				<-results
-				inFlight--
+			if err != nil {
+				return fmt.Errorf("compiling %s: %w", p.ImportPath, err)
 			}
-			return fmt.Errorf("compiling %s: %w", r.importPath, r.err)
-		}
-		compiled++
-		slog.Debug("compiled", "pkg", r.importPath, "progress", fmt.Sprintf("%d/%d", compiled, len(libs)))
 
-		// Schedule dependents whose deps are now all compiled.
-		for _, depIP := range revDeps[r.importPath] {
-			inDeg[depIP]--
-			if inDeg[depIP] == 0 {
-				compileOne(pkgMap[depIP])
-			}
-		}
+			close(done[p.ImportPath]) // signal dependents
+			return nil
+		})
 	}
 
-	return nil
+	return g.Wait()
 }
 
 // maxWorkers returns the parallelism limit, respecting NIX_BUILD_CORES.
