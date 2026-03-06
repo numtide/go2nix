@@ -2,8 +2,8 @@
 let
   pkgs = import <nixpkgs> { };
   go = pkgs.go;
-  go2nix = import ../../go/go2nix/package.nix { inherit pkgs; };
-  goEnv = import ../../nix/mk-go-env.nix {
+  go2nix = import ../../../go/go2nix/package.nix { inherit pkgs; };
+  goEnv = import ../../../nix/mk-go-env.nix {
     inherit go go2nix;
     inherit (pkgs) callPackage;
   };

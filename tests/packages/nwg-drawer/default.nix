@@ -2,7 +2,7 @@
 let
   pkgs = import <nixpkgs> { };
   go = pkgs.go;
-  go2nix = import ../../go/go2nix/package.nix { inherit pkgs; };
+  go2nix = import ../../../go/go2nix/package.nix { inherit pkgs; };
 
   # All GTK-related nativeBuildInputs needed by gotk4 cgo packages.
   gtkDeps = {
@@ -19,7 +19,7 @@ let
     ];
   };
 
-  goEnv = import ../../nix/mk-go-env.nix {
+  goEnv = import ../../../nix/mk-go-env.nix {
     inherit go go2nix;
     inherit (pkgs) callPackage;
   };
