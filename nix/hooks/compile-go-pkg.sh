@@ -24,11 +24,11 @@ compileGoPkgBuildPhase() {
   mkdir -p "$out/$(dirname "$goPackagePath")"
 
   @go2nix@ compile-package \
-    --importcfg "$NIX_BUILD_TOP/importcfg" \
+    --import-cfg "$NIX_BUILD_TOP/importcfg" \
     --import-path "$goPackagePath" \
     --src-dir "$goPackageSrcDir" \
     --output "$out/$goPackagePath.a" \
-    --trimpath "$NIX_BUILD_TOP" \
+    --trim-path "$NIX_BUILD_TOP" \
     @tagArg@
 
   # Write importcfg entry for consumers of this package.

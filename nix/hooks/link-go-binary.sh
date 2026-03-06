@@ -17,7 +17,7 @@ linkGoBinaryConfigurePhase() {
   runHook preConfigure
 
   # Validate lockfile consistency with go.mod.
-  @go2nix@ check-lockfile --lockfile "$goLockfile" "$goModuleRoot"
+  @go2nix@ check --lockfile "$goLockfile" "$goModuleRoot"
 
   # Extract module path from go.mod at build time (avoids Nix eval-time parsing).
   goModulePath=$(awk '/^module /{print $2; exit}' "$goModuleRoot/go.mod")
@@ -43,14 +43,14 @@ linkGoBinaryBuildPhase() {
   # Build gcflags argument array (empty if unset, avoids quoting issues).
   local -a gcflagArgs=()
   if [ -n "${goGcflags:-}" ]; then
-    gcflagArgs=(--gcflags "$goGcflags")
+    gcflagArgs=(--gc-flags "$goGcflags")
   fi
 
   # Pass 1: compile library packages in parallel (DAG-aware).
-  @go2nix@ compile-module \
-    --importcfg "$NIX_BUILD_TOP/importcfg" \
-    --outdir "$localdir" \
-    --trimpath "$NIX_BUILD_TOP" \
+  @go2nix@ compile-packages \
+    --import-cfg "$NIX_BUILD_TOP/importcfg" \
+    --out-dir "$localdir" \
+    --trim-path "$NIX_BUILD_TOP" \
     @tagArg@ \
     "${gcflagArgs[@]}" \
     "$goModuleRoot"
@@ -73,11 +73,11 @@ linkGoBinaryBuildPhase() {
 
     echo "Compiling main: $importpath"
     @go2nix@ compile-package \
-      --importcfg "$NIX_BUILD_TOP/importcfg" \
+      --import-cfg "$NIX_BUILD_TOP/importcfg" \
       --import-path "main" \
       --src-dir "$srcdir" \
       --output "$localdir/$importpath.a" \
-      --trimpath "$NIX_BUILD_TOP" \
+      --trim-path "$NIX_BUILD_TOP" \
       @tagArg@ \
       "${gcflagArgs[@]}"
 

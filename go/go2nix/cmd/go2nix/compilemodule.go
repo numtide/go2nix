@@ -9,16 +9,16 @@ import (
 )
 
 func runCompileModuleCmd(args []string) {
-	fs := flag.NewFlagSet("compile-module", flag.ExitOnError)
-	importCfg := fs.String("importcfg", "", "path to importcfg file (will be appended to)")
-	outDir := fs.String("outdir", "", "output directory for .a files")
+	fs := flag.NewFlagSet("compile-packages", flag.ExitOnError)
+	importCfg := fs.String("import-cfg", "", "path to importcfg file (will be appended to)")
+	outDir := fs.String("out-dir", "", "output directory for .a files")
 	tags := fs.String("tags", "", "comma-separated build tags")
-	gcflags := fs.String("gcflags", "", "extra flags for go tool compile (space-separated)")
-	trimPath := fs.String("trimpath", "", "path prefix to trim (default: $NIX_BUILD_TOP)")
+	gcflags := fs.String("gc-flags", "", "extra flags for go tool compile (space-separated)")
+	trimPath := fs.String("trim-path", "", "path prefix to trim (default: $NIX_BUILD_TOP)")
 	fs.Parse(args)
 
 	if fs.NArg() != 1 || *importCfg == "" || *outDir == "" {
-		slog.Error("usage: go2nix compile-module --importcfg FILE --outdir DIR [--tags TAGS] [--gcflags FLAGS] [--trimpath PATH] <module-root>")
+		slog.Error("usage: go2nix compile-packages --import-cfg FILE --out-dir DIR [--tags TAGS] [--gc-flags FLAGS] [--trim-path PATH] <module-root>")
 		os.Exit(1)
 	}
 
@@ -32,7 +32,7 @@ func runCompileModuleCmd(args []string) {
 	}
 
 	if err := compile.CompileLocalPackages(opts); err != nil {
-		slog.Error("compile-module failed", "err", err)
+		slog.Error("compile-packages failed", "err", err)
 		os.Exit(1)
 	}
 }

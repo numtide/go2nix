@@ -9,7 +9,7 @@ import (
 	"github.com/numtide/go2nix/pkg/gofiles"
 )
 
-func runlistFilesCmd(args []string) {
+func runListFilesCmd(args []string) {
 	fs := flag.NewFlagSet("list-files", flag.ExitOnError)
 	tagsFlag := fs.String("tags", "", "comma-separated build tags")
 	fs.Parse(args)

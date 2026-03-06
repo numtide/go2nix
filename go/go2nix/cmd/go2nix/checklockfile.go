@@ -9,7 +9,7 @@ import (
 )
 
 func runCheckLockfileCmd(args []string) {
-	fs := flag.NewFlagSet("check-lockfile", flag.ExitOnError)
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	lockfilePath := fs.String("lockfile", "", "path to go2nix.toml lockfile (lockfile consistency check)")
 	fs.Parse(args)
 
@@ -25,7 +25,7 @@ func runCheckLockfileCmd(args []string) {
 		err = mvscheck.Check(dir)
 	}
 	if err != nil {
-		slog.Error("check-lockfile failed", "err", err)
+		slog.Error("check failed", "err", err)
 		os.Exit(1)
 	}
 }
