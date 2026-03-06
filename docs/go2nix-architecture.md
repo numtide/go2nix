@@ -1,391 +1,500 @@
-# go2nix Internals
+# go2nix Architecture
 
-Technical reference for [`go2nix/`](../go2nix/) — a composite-key variant of
-gomod2nix developed at Anthropic for monorepo use, staged here as a benchmark
-case and potential upstream contribution.
+Technical reference for the go2nix build system — a package-level Go builder
+for Nix that replaces `go build` with direct `go tool compile`/`asm`/`link`
+invocations.
 
 ## Table of contents
 
 - [Project overview](#project-overview)
-- [Relationship to gomod2nix](#relationship-to-gomod2nix)
-- [The core idea: composite keys](#the-core-idea-composite-keys)
+- [Design goals](#design-goals)
+- [The lockfile](#the-lockfile)
+  - [Format](#format)
+  - [Composite keys](#composite-keys)
+  - [The tidiness invariant](#the-tidiness-invariant)
+  - [Monorepo sharing](#monorepo-sharing)
 - [The Go CLI](#the-go-cli)
-  - [Module collection](#module-collection)
-  - [Caching](#caching)
-  - [NAR hashing](#nar-hashing)
+  - [generate](#generate)
+  - [list-files](#list-files)
+  - [list-packages](#list-packages)
+  - [compile-package](#compile-package)
+  - [compile-packages](#compile-packages)
+  - [check](#check)
 - [The Nix builder](#the-nix-builder)
-  - [Per-project filtering](#per-project-filtering)
-  - [Key → path extraction](#key--path-extraction)
-  - [Replace handling](#replace-handling)
-- [Lockfile format](#lockfile-format)
-- [Performance characteristics](#performance-characteristics)
+  - [Entry point: mk-go-env.nix](#entry-point-mk-go-envnix)
+  - [Package scope: scope.nix](#package-scope-scopenix)
+  - [Standard library: stdlib.nix](#standard-library-stdlibnix)
+  - [Module fetching: fetch-go-module.nix](#module-fetching-fetch-go-modulenix)
+  - [Application build: build-go-application.nix](#application-build-build-go-applicationnix)
+  - [Setup hooks](#setup-hooks)
+  - [Helpers](#helpers)
+- [Compilation pipeline](#compilation-pipeline)
+  - [Third-party packages](#third-party-packages)
+  - [Local packages](#local-packages)
+  - [Linking](#linking)
+  - [Cgo](#cgo)
+  - [Assembly](#assembly)
+- [Staleness detection](#staleness-detection)
 - [Known limitations](#known-limitations)
-- [Upstreaming status](#upstreaming-status)
 
 ## Project overview
 
-go2nix is a Go module → Nix lockfile generator + builder. It's a fork of
-[gomod2nix] with one material change: the lockfile is keyed by
-`module_path@version` instead of bare `module_path`.
+go2nix builds Go applications in Nix by calling `go tool compile`, `go tool asm`,
+and `go tool link` directly — bypassing `go build` entirely. This gives Nix
+full control over the dependency graph at **package granularity**: each Go
+package becomes its own Nix derivation, with dependencies expressed as
+`buildInputs`.
 
-That single change has two downstream effects:
+The system has two components:
 
-1. **Staleness becomes a build failure.** In upstream gomod2nix, the lockfile
-   key is `module_path`; the Nix builder looks up the module by path, finds an
-   entry, and vendors whatever version is recorded there. If you've bumped
-   `go.mod` but not regenerated the lockfile, you silently vendor the old
-   version. With composite keys, the builder filters by `path@version` from
-   `go.mod` — a mismatched version simply isn't found, and Nix errors out.
+1. **A Go CLI** (`go2nix`) that generates lockfiles, discovers packages and
+   files, compiles packages, and validates lockfile consistency.
+1. **A Nix library** that reads the lockfile, fetches modules, creates
+   per-package derivations, and links binaries.
 
-1. **One lockfile for N projects.** Multiple versions of the same module can
-   coexist in the lockfile. A monorepo with 10 Go projects can share one
-   `go2nix.toml` at the root; each project's build filters it to just that
-   project's requires. De-duplication is automatic.
+## Design goals
 
-The builder is a modified fork of gomod2nix's builder; the CLI is a from-scratch
-rewrite (the upstream CLI has a different feature set and a different schema).
+**Package-level granularity.** Each third-party Go package is its own Nix
+derivation. When a module has 50 packages but your project only imports 3,
+only those 3 are compiled. When a dependency changes, only affected packages
+rebuild.
 
-## Relationship to gomod2nix
+**No `go build` at build time.** The Nix sandbox has no network access and no
+GOMODCACHE. go2nix calls `go tool compile` and `go tool link` directly,
+assembling the importcfg from Nix derivation outputs. This eliminates Go's
+build cache, module resolution, and vendoring — Nix handles all of that.
 
-Fork point: [`47d628dc`](https://github.com/nix-community/gomod2nix/commit/47d628dc3b506bd28632e47280c6b89d3496909d)
-(Aug 2025). Since then, upstream added build hooks (`makeSetupHook`-based),
-`mkGoCacheEnv` (build cache pre-warming), and `cachegen`; we have none of these
-because we don't use them, not because they're incompatible.
+**Staleness as a build failure.** The lockfile uses composite keys
+(`module@version`) so a version mismatch between `go.mod` and the lockfile
+is caught at eval time, not silently vendored.
 
-**What we kept** from upstream:
+**Monorepo support.** Multiple projects can share one lockfile. Each project's
+build filters it to just that project's dependencies.
 
-- `buildGoApplication` / `mkGoEnv` / `mkVendorEnv` / `fetchGoModule` signatures
-  and phases (we have the older inline-heredoc `buildPhase`, not the hooks)
-- `parser.nix` (with one bugfix — see below)
-- `symlink.go` / `install.go` / `fetch.sh` — unchanged or minimally modified
+## The lockfile
 
-**What we added**:
+### Format
 
-- Composite-key filter in `mkVendorEnv` (~40 lines)
-- `netrcFile` parameter for private module auth (same as upstream [PR #243])
-- `goModFile` parameter to avoid IFD (same as upstream [PR #243])
-- `parser.nix` fix for mixed single-line + parenthesized `require` blocks
-
-**What we removed**:
-
-- `hooks/`, `mkGoCacheEnv`, `cachegen/`, `updateScript`
-
-## The core idea: composite keys
-
-### Problem: silent staleness
-
-gomod2nix's lockfile looks like this:
+Plain TOML with two sections:
 
 ```toml
-schema = 3
-[mod]
-  [mod."google.golang.org/grpc"]
-    version = "v1.75.1"
-    hash = "sha256-..."
-```
-
-`mkVendorEnv` reads every entry and fetches it. The project's `go.mod` isn't
-consulted — whatever's in `gomod2nix.toml`, that's what gets vendored.
-
-Now suppose a developer runs `go get google.golang.org/grpc@v1.76.0`. `go.mod`
-and `go.sum` update. They forget to run `gomod2nix generate`. CI vendors
-`grpc@v1.75.1`, the Go build succeeds (both are API-compatible), and the
-production binary ships with an outdated gRPC. Every tool that reads `go.mod` —
-`gopls`, `golangci-lint`, dependency scanners — sees `v1.76.0`. Only the Nix
-build sees `v1.75.1`.
-
-### Solution: key by `path@version`, filter by go.mod
-
-```toml
-[mod]
-  [mod."google.golang.org/grpc@v1.75.1"]
-    version = "v1.75.1"
-    hash = "sha256-..."
-  [mod."google.golang.org/grpc@v1.76.0"]
-    version = "v1.76.0"
-    hash = "sha256-..."
-```
-
-At eval time, `mkVendorEnv`:
-
-1. Parses `go.mod`: `goMod.require = { "google.golang.org/grpc" = "v1.76.0"; ... }`
-1. Builds a set of required keys: `{ "google.golang.org/grpc@v1.76.0" = true; ... }`
-1. Filters `modulesStruct.mod` to only keys present in that set
-1. **Checks** that every required non-local-replace module survived the filter;
-   throws a clear error if not
-1. Re-keys the result to bare module paths for `symlink.go`
-
-Step 4 is how a stale lockfile or untidy `go.mod` becomes a **clear eval-time
-error** instead of an opaque `go build` failure about missing packages:
-
-```
-error: go2nix lockfile is missing required module(s):
-  google.golang.org/grpc@v1.76.0
-
-Either go.mod is not tidy (require versions don't match MVS-resolved
-versions), or the lockfile is stale. Run:
-  go mod tidy
-  <regenerate lockfile>
-```
-
-### The tidiness invariant
-
-The filter reads versions from `go.mod`'s `require` directive. The CLI records
-versions from `go mod download -json`, which are **MVS-resolved** — the
-versions Go actually uses in the build list. These match **iff `go.mod` is
-tidy**.
-
-An untidy `go.mod` has `require` entries that are lower than what MVS picks at
-build time (some transitive dependency requires a higher version). Example:
-
-```
-# go.mod (untidy)
-require golang.org/x/mod v0.20.0 // indirect
-
-# but golang.org/x/tools@v0.30.0 (a direct dep) requires x/mod v0.23.0
-# so MVS picks v0.23.0, and `go mod download` records v0.23.0
-```
-
-After `go mod tidy`, the `require` directive is updated to `v0.23.0` and the
-filter finds the lockfile entry.
-
-#### Where this is enforced
-
-**At generation time** (CLI): `collectModules` compares each
-`go mod download`-resolved version against the `require` version and errors if
-they differ. This is the primary check — you cannot generate an untidy
-lockfile.
-
-**At eval time** (Nix builder): if a required module has no entry in the
-filtered lockfile, the builder throws a clear error naming the missing
-`path@version`. This catches the case where `go.mod` was edited *after*
-generation and the new version isn't in the lockfile.
-
-**At build time** (`mvscheck` in `configurePhase`): after the vendor tree is
-in place, [`mvscheck`](../go2nix/builder/mvscheck/mvscheck.go) constructs a
-minimal GOMODCACHE from the vendored modules' `go.mod` files and runs
-`go mod graph`. The trick:
-
-> A tidy `go.mod`'s require block is **exactly** the set of MVS-selected
-> versions (that's what `go mod tidy` writes). So a GOMODCACHE populated with
-> `.mod` files for exactly those versions is **sufficient** for
-> `go mod graph` to walk the full module graph — iff go.mod is tidy.
-> If go.mod is untidy, the walk reaches a version not in the cache, and Go
-> fails cleanly naming the missing `module@version`.
-
-This catches the case the other checks miss: `go.mod` edited after generation
-to an untidy version that *happens to exist* in the shared lockfile. Example:
-
-- Project go.mod (edited, untidy): `require x/mod v0.20.0`
-- Shared lockfile has `x/mod@v0.20.0` (project A uses it) AND `@v0.23.0`
-  (this project when it was tidy)
-- Filter picks `v0.20.0` (matches go.mod), eval check passes (entry found)
-- `mvscheck` populates GOMODCACHE with `x/mod@v0.20.0.mod`, `x/tools@v0.30.0.mod`
-- `go mod graph` reads `x/tools@v0.30.0.mod`, sees `require x/mod v0.23.0`,
-  tries to look up `v0.23.0.mod`, fails: **"golang.org/x/mod@v0.23.0: module
-  lookup disabled by GOPROXY=off"**
-
-The check uses **Go's own MVS implementation** (`go mod graph`), not a
-reimplementation. mvscheck does only: go.mod parsing, directory creation, and
-exit-code interpretation. This matters because MVS has edge cases (module
-graph pruning, `retract` directives, `+incompatible`, go-version selection)
-that a hand-rolled checker would get wrong.
-
-**Why this works offline**: the gomod2nix-style vendor tree preserves each
-module's `go.mod` file (unlike `go mod vendor`, which strips them), and
-`go mod graph` only needs `.mod` + `.info` files in GOMODCACHE — not sources
-or zips.
-
-`go mod tidy -diff` as a standalone CI check is still recommended (catches
-tidiness before anything else), but `mvscheck` is the build-time backstop
-that makes the shared lockfile safe against post-generation drift.
-
-### Bonus: monorepo sharing
-
-Because the filter is per-project, one `go2nix.toml` at the repo root can
-contain the union of all modules across all projects, and each project's build
-picks out exactly its subset.
-
-```
-monorepo/
-  go2nix.toml              # 400 entries, union of all projects
-  service-a/
-    go.mod                  # requires 60 modules
-    default.nix             # modules = ../go2nix.toml; filters to 60
-  service-b/
-    go.mod                  # requires 80 modules, 50 shared with service-a
-    default.nix             # modules = ../go2nix.toml; filters to 80
-```
-
-## The Go CLI
-
-[`go2nix/main.go`](../go2nix/main.go) — ~300 lines, 3 dependencies.
-
-### Module collection
-
-For each project directory:
-
-1. Parse `go.mod` with `golang.org/x/mod/modfile` to find replace directives.
-   Classify each as **local** (`replace foo => ../foo`, `New.Version == ""`) or
-   **remote** (`replace foo => bar vX`, `New.Version != ""`).
-1. Run `go mod download -json` in the project directory. This emits one JSON
-   record per module, including the local cache directory where Go unpacked it.
-1. For each record:
-   - If the module is a local replace, skip it (go mod download skips these too,
-     so we won't see them in practice, but the guard is explicit).
-   - If it's a remote replace, the record's `Path` is the *replacement* path.
-     Remap to the *original* path so the lockfile key matches the `require`
-     directive.
-   - Record `(origPath@version, fetchPath, localCacheDir)`.
-
-The result across all projects is deduplicated by `origPath@version`.
-
-### Caching
-
-The existing `go2nix.toml` is read as a cache. A cache entry is reused only if
-**both** the key matches **and** the recorded `Replaced` value matches the
-current `fetchPath` — so a changed `replace` directive forces re-hash.
-
-Entries not present in the current module set are dropped (the lockfile is the
-exact union of currently-required modules, not an append-only log).
-
-### NAR hashing
-
-`nix hash path <dir>` on each module's local cache directory, in parallel
-(`errgroup` bounded by `-j`, default `runtime.NumCPU()`).
-
-`go mod download`'s cache directory layout is already Nix-friendly:
-content-addressed, no non-reproducible metadata (the CLI strips `.DS_Store`
-in [`fetch.sh`](../go2nix/builder/fetch.sh) at fetch time to match).
-
-## The Nix builder
-
-[`go2nix/builder/default.nix`](../go2nix/builder/default.nix). Mostly
-gomod2nix's builder with the composite-key filter inserted.
-
-### Per-project filtering
-
-The filter runs inside `mkVendorEnv`, which is the derivation that produces
-the vendor tree. See the Nix snippet above. The filtered set then flows through
-the rest of gomod2nix's machinery unchanged: `fetchGoModule` for each entry,
-`symlink.go` to build the vendor tree, `buildGoApplication` to run `go build`
-with `-mod=vendor`.
-
-### Key → path extraction
-
-`symlink.go` (unchanged from upstream) expects a JSON map keyed by *bare module
-path*. After filtering by composite key, we strip the version:
-
-```nix
-extractPath = key: removeSuffix "@${filteredMods.${key}.version}" key;
-```
-
-This is why `version` is redundant with the key suffix: it's cheaper to strip a
-known suffix than to regex-parse the key in Nix.
-
-The extraction is safe for all Go module path forms because Go module versions
-always start with `v` and module paths never contain `@`:
-
-- `github.com/foo/bar@v1.2.3` → `github.com/foo/bar`
-- `github.com/foo/bar/v2@v2.1.0` → `github.com/foo/bar/v2` (vN-in-path convention)
-- `github.com/foo/bar@v0.0.0-20240101000000-abcdef` → `github.com/foo/bar` (pseudo-version)
-
-### Replace handling
-
-**Local replaces** (`replace foo => ../foo`): not in the lockfile at all. The
-builder's `localReplaceCommands` creates symlinks directly into the source tree.
-The filter naturally excludes them because `go.mod`'s `require` for a local
-replace points to a pseudo-version like `v0.0.0-00010101000000-000000000000`
-that won't exist in the lockfile.
-
-**Remote replaces** (`replace foo => bar vX`): the lockfile entry is keyed by
-the *original* path and the *replacement's* version (`foo@vX`) with
-`replaced = "bar"`. The filter computes the effective version by consulting
-`goMod.replace`:
-
-```nix
-effectiveVersion = path:
-  let repl = goMod.replace.${path} or null;
-  in if repl != null && repl ? version  # remote replace (local replaces have .path, not .version)
-     then repl.version
-     else goMod.require.${path};
-```
-
-`fetchGoModule` then fetches `bar@vX` instead of `foo@vX` via `meta.replaced`.
-
-## Lockfile format
-
-Plain TOML, no schema version marker (the key format is self-identifying:
-upstream keys don't contain `@`):
-
-```toml
-# go2nix lockfile: module@version -> NAR hash.
+# go2nix lockfile — package-level build graph.
+# [mod.*]: module@version -> NAR hash (for fetchModuleProxy FODs)
+# [pkg.*]: import path -> module + direct imports (for per-package derivations)
+# Generated by go2nix. Do not edit.
 
 [mod]
-  [mod."github.com/BurntSushi/toml@v1.5.0"]
-    version = "v1.5.0"
-    hash = "sha256-wX8bEVo7swuuAlm0awTIiV1KNCAXnm7Epzwl+wzyqhw="
+  [mod."golang.org/x/crypto@v0.4.0"]
+    version = "v0.4.0"
+    hash = "sha256-OPSQQFtv0bgAwk/M7ahMqjhFmLga7ODvstwt7xiyOmk="
+    num_pkgs = 11
   [mod."github.com/original/pkg@v2.0.0"]
     version = "v2.0.0"
     hash = "sha256-..."
     replaced = "github.com/fork/pkg"
+
+[pkg]
+  [pkg."golang.org/x/crypto/ssh"]
+    module = "golang.org/x/crypto@v0.4.0"
+    imports = ["golang.org/x/crypto/internal/poly1305", "golang.org/x/crypto/chacha20"]
+  [pkg."golang.org/x/crypto/chacha20"]
+    module = "golang.org/x/crypto@v0.4.0"
+    imports = ["golang.org/x/crypto/internal/alias"]
 ```
 
-Keys are sorted (BurntSushi/toml sorts map keys). Output is byte-deterministic:
-running the generator twice produces identical bytes. This matters for merge
-conflicts — concurrent edits to different entries produce clean diffs.
+**`[mod.*]`** — One entry per module+version. Keyed by `path@version`.
+Fields: `version`, `hash` (NAR hash for the FOD), `replaced` (original fetch
+path if a `replace` directive applies), `num_pkgs` (count of packages from
+this module in the dependency graph).
 
-## Performance characteristics
+**`[pkg.*]`** — One entry per package. Keyed by import path. Fields: `module`
+(back-reference to the `[mod]` key), `imports` (direct third-party imports,
+omitted if empty).
 
-**Generator**: dominated by `go mod download` (one invocation per project,
-serial) and `nix hash path` (parallel). Hashing ~300 modules with a warm
-`GOMODCACHE` takes ~5s on a homespace VM with `-j 64`.
+Keys are sorted (BurntSushi/toml sorts map keys). Output is byte-deterministic.
 
-**Nix eval**: this is the benchmark dimension this repo cares about. The filter
-is `O(R * M)` where R = `require` entries, M = lockfile entries (`filterAttrs`
-walks M, each `hasAttr` on the R-sized set is O(1)). For the torture test
-(~1200 modules), expected to be marginally slower than gomod2nix's unfiltered
-`mapAttrs` since we do more work per entry — but we're filtering from a
-*single-project* lockfile here, so R ≈ M and the filter keeps everything. The
-monorepo scenario is where it pays off: M = 400 (union), R = 60 (one project),
-and gomod2nix would need a 60-entry per-project lockfile anyway.
+### Composite keys
 
-**Nix build**: identical to gomod2nix — same vendored `go build`.
+The lockfile is keyed by `module_path@version` instead of bare `module_path`.
+This has two consequences:
+
+1. **Staleness becomes a build failure.** The Nix builder looks up
+   `path@version` from `go.mod`. A mismatched version simply isn't found, and
+   Nix errors out with a clear message naming the missing module.
+
+1. **One lockfile for N projects.** Multiple versions of the same module can
+   coexist. A monorepo with 10 Go projects can share one `go2nix.toml` at
+   the root; each project's build filters it to just that project's requires.
+
+### The tidiness invariant
+
+The lockfile records versions from `go list -json -deps`, which are
+MVS-resolved — the versions Go actually uses. The Nix builder reads versions
+from `go.mod`'s `require` directive. These match **if `go.mod` is tidy**.
+
+This is enforced at three levels:
+
+**At generation time** (CLI): `go list -json` resolves versions via MVS.
+The lockfile records these resolved versions. If `go.mod` is untidy, the
+recorded version won't match what `go.mod` says, and `check` will
+catch it.
+
+**At eval time** (Nix): when the builder reads the lockfile, it constructs
+package derivations from `[pkg]` entries. If a required package isn't in the
+lockfile, the build fails.
+
+**At build time** (`check` in configure phase): `mvscheck` constructs
+a minimal GOMODCACHE from the vendor tree's `go.mod` files and runs
+`go mod graph` with `GOPROXY=off`. A tidy `go.mod`'s require block is exactly
+the set of MVS-selected versions, so a GOMODCACHE populated with `.mod` files
+for exactly those versions is sufficient for the walk. An untidy `go.mod`
+reaches a version not in the cache, and Go fails naming the missing module.
+
+This uses **Go's own MVS implementation** (`go mod graph`), not a
+reimplementation.
+
+### Monorepo sharing
+
+Because the `[pkg]` section maps import paths to modules, and each project
+only references its own packages, one `go2nix.toml` at the repo root can
+contain the union of all modules across all projects:
+
+```
+monorepo/
+  go2nix.toml              # union of all dependencies
+  service-a/
+    go.mod                  # requires 60 modules
+    default.nix             # goLock = ../go2nix.toml
+  service-b/
+    go.mod                  # requires 80 modules, 50 shared with service-a
+    default.nix             # goLock = ../go2nix.toml
+```
+
+## The Go CLI
+
+[`cmd/go2nix/main.go`](../go/go2nix/cmd/go2nix/main.go) — dispatches to
+subcommands. Default command (no args) is `generate`.
+
+Debug logging: set `GO2NIX_DEBUG=1`.
+
+### generate
+
+```
+go2nix generate [-o go2nix.toml] [-j N] [dirs...]
+```
+
+Produces a `go2nix.toml` from one or more Go project directories.
+
+1. Reads existing lockfile as a cache (reuses hashes for unchanged modules).
+1. Runs `go list -json -deps ./...` in each directory. Filters out stdlib
+   and local packages.
+1. Deduplicates packages across all directories.
+1. Extracts unique modules. For each new/changed module, downloads it to
+   a temporary GOMODCACHE and computes a NAR hash (SHA256, base64).
+   Hashing runs in parallel via `errgroup` bounded by `-j` (default:
+   `runtime.NumCPU()`).
+1. Collects per-package third-party imports.
+1. Writes the lockfile.
+
+Cache invalidation: a cached entry is reused only if both the key matches
+and the recorded `replaced` value matches. A changed `replace` directive
+forces re-hash.
+
+Implementation: [`pkg/lockfilegen/generate.go`](../go/go2nix/pkg/lockfilegen/generate.go).
+Dependencies: `go-nix/pkg/nar` for NAR hashing, `x/sync/errgroup` for
+parallelism.
+
+### list-files
+
+```
+go2nix list-files [-tags=...] <package-dir>
+```
+
+Lists Go source files in a package directory with build constraints resolved.
+Outputs JSON with fields: `go_files`, `cgo_files`, `s_files`, `c_files`,
+`cxx_files`, `h_files`, `embed_files`.
+
+Resolves `//go:embed` patterns to concrete file paths, producing an `embedcfg`
+suitable for `go tool compile -embedcfg`.
+
+Implementation: [`pkg/gofiles/gofiles.go`](../go/go2nix/pkg/gofiles/gofiles.go).
+
+### list-packages
+
+```
+go2nix list-packages [-tags=...] <module-root>
+```
+
+Discovers all local packages in a module. Returns a JSON array of packages in
+**topological order** (dependencies before dependents). Each entry includes
+`import_path`, `src_dir`, `local_deps` (intra-module dependencies), and the
+file listing from `list-files`.
+
+Handles local `replace` directives by including replaced module directories in
+the package scan. Detects cycles and returns an error.
+
+Implementation: [`pkg/localpkgs/localpkgs.go`](../go/go2nix/pkg/localpkgs/localpkgs.go).
+
+### compile-package
+
+```
+go2nix compile-package --import-path PATH --src-dir DIR --output FILE \
+    --import-cfg FILE [--tags TAGS] [--trim-path PATH] [--gc-flags FLAGS]
+```
+
+Compiles a single Go package to a `.a` archive. This is the core compilation
+command, called by both Nix hooks.
+
+The compiler dispatches based on file types:
+
+| Files present | Dispatch |
+|---------------------|------------------------------|
+| `.go` only | `compileGo` — `go tool compile` |
+| `.go` + `.s` | `compileWithAsm` — symabis → compile → assemble → pack |
+| cgo files | `compileCgo` — cgo → gcc → compile → pack |
+
+Implementation: [`pkg/compile/`](../go/go2nix/pkg/compile/) — split across
+`compile.go` (dispatcher), `go.go` (pure Go), `asm.go` (assembly),
+`cgo.go` (cgo pipeline), `util.go` (helpers).
+
+### compile-packages
+
+```
+go2nix compile-packages --import-cfg FILE --out-dir DIR [--tags TAGS] \
+    [--gc-flags FLAGS] [--trim-path PATH] <module-root>
+```
+
+Compiles all **library** packages (non-main) in a module with DAG-aware
+parallel scheduling. Uses `errgroup.WithContext` + `SetLimit` with per-package
+done channels so goroutines wait only for their direct dependencies.
+
+Appends compiled package entries to the provided importcfg file so the
+subsequent link step can find them.
+
+Implementation: [`pkg/compile/local.go`](../go/go2nix/pkg/compile/local.go).
+
+### check
+
+```
+go2nix check [--lockfile PATH] [dir]
+```
+
+Two modes:
+
+- **With `--lockfile`**: Checks that every non-local-replaced module in
+  `go.mod`'s require block has a matching `module@version` entry in the
+  lockfile. Reports missing modules.
+- **Without `--lockfile`**: Constructs a fake GOMODCACHE from `vendor/` and
+  runs `go mod graph` to verify `go.mod` is tidy.
+
+Implementation: [`pkg/mvscheck/mvscheck.go`](../go/go2nix/pkg/mvscheck/mvscheck.go).
+
+## The Nix builder
+
+### Entry point: mk-go-env.nix
+
+```nix
+goEnv = import ./nix/mk-go-env.nix {
+  inherit go go2nix;
+  inherit (pkgs) callPackage;
+  tags = [ "nethttpomithttp2" ];  # optional build tags
+};
+
+goEnv.buildGoApplication {
+  src = ./.;
+  goLock = ./go2nix.toml;
+  pname = "my-app";
+  version = "0.1.0";
+}
+```
+
+[`mk-go-env.nix`](../nix/mk-go-env.nix) creates a scope via
+[`scope.nix`](../nix/scope.nix) containing: `go`, `go2nix`, `stdlib`,
+`hooks`, `fetchers`, `helpers`, and `buildGoApplication`.
+
+### Package scope: scope.nix
+
+Uses `lib.makeScope newScope` to create a self-referential package set.
+Everything within the scope shares the same Go version, build tags, and
+go2nix binary.
+
+### Standard library: stdlib.nix
+
+A single derivation that compiles the entire Go standard library:
+
+```
+GODEBUG=installgoroot=all GOROOT=. go install -v --trimpath std
+```
+
+Output: `$out/<pkg>.a` for each stdlib package + `$out/importcfg` mapping
+import paths to `.a` files. Shared by all builds using the same Go version.
+
+### Module fetching: fetch-go-module.nix
+
+Fixed-output derivation (FOD) that downloads a Go module via the Go module
+proxy:
+
+```
+go mod download "path@version"
+```
+
+Content-addressed by the NAR hash recorded in the lockfile. The output is a
+GOMODCACHE directory structure. Each unique `module@version` is fetched once
+and cached by Nix.
+
+### Application build: build-go-application.nix
+
+The main build function. Parameters:
+
+| Parameter | Description |
+|-------------------|---------------------------------------------------|
+| `src` | Source directory |
+| `goLock` | Path to `go2nix.toml` |
+| `pname` | Package/binary name |
+| `version` | Version string |
+| `subPackages` | List of sub-packages to build (default: `["."]`) |
+| `ldflags` | Linker flags |
+| `CGO_ENABLED` | Override cgo detection (optional) |
+| `moduleDir` | Module directory within src (default: `"."`) |
+| `packageOverrides`| Per-package overrides (e.g., cgo `nativeBuildInputs`) |
+| `nativeBuildInputs` | Extra build inputs for the final binary |
+
+The function:
+
+1. Reads the lockfile via `builtins.fromTOML`.
+1. Fetches each module as a FOD (`fetchGoModule`).
+1. Creates a **per-package derivation** for each `[pkg]` entry. Each
+   derivation uses `goModuleHook` and takes its direct import dependencies as
+   `buildInputs`. Dependencies are resolved lazily via Nix's thunk evaluation.
+1. Applies `packageOverrides` per import path or module path (for cgo
+   libraries that need `pkg-config`, `libfoo`, etc.).
+1. Creates the final binary derivation using `goAppHook`, with all third-party
+   package derivations as `buildInputs`.
+
+### Setup hooks
+
+Three shell scripts in [`nix/hooks/`](../nix/hooks/), wired via
+`makeSetupHook`:
+
+**`setup-go-env.sh`** — Sets `HOME`, `GOPROXY=off`, `GOSUMDB=off`,
+`GONOSUMCHECK='*'`. Registered as a `preConfigureHook`.
+
+**`compile-go-pkg.sh`** — Build phase for third-party packages. Assembles
+an importcfg from stdlib + `buildInputs`, then calls
+`go2nix compile-package`. Writes an importcfg entry for consumers.
+
+**`link-go-binary.sh`** — Three-phase build for applications:
+
+1. **Configure**: Validate lockfile (`go2nix check`), extract module
+   path from `go.mod`, assemble importcfg from stdlib + all third-party deps.
+1. **Build**: Compile local libraries (`go2nix compile-packages`), then for each
+   sub-package: compile main package (`go2nix compile-package`) and link
+   (`go tool link`). If cgo was detected (`.has_cgo` marker), uses external
+   linker (`-extld $CC -linkmode external`).
+1. **Install**: Copy binaries to `$out/bin`.
+
+### Helpers
+
+[`helpers.nix`](../nix/helpers.nix) — Pure Nix utility functions:
+
+- `modKeyPath key version` — Strip `@version` suffix from a composite key.
+  Uses `builtins.substring` (cheaper than regex since version is already known).
+- `sanitizeName` — Replace `/` → `-`, `+` → `_` for derivation names.
+- `removePrefix` — Substring after a known prefix.
+- `escapeModPath` — Go module case-escaping (`A` → `!a`) matching
+  `golang.org/x/mod/module.EscapePath()` for GOMODCACHE paths.
+
+## Compilation pipeline
+
+### Third-party packages
+
+Each third-party package is a Nix derivation:
+
+```
+[module FOD] ──fetch──> GOMODCACHE dir
+                            │
+[dep pkg derivation] ──────>│
+[dep pkg derivation] ──────>│──importcfg──> go2nix compile-package ──> $out/importpath.a
+[stdlib derivation]  ──────>│                                          $out/importcfg
+```
+
+The `compile-go-pkg.sh` hook:
+
+1. Concatenates `stdlib/importcfg` + all dependency `importcfg` files.
+1. Calls `go2nix compile-package` with the package's import path and source dir.
+1. Writes `$out/importcfg` with a single `packagefile` entry for consumers.
+
+### Local packages
+
+Local (same-module) packages are compiled inside the application derivation,
+not as separate derivations. `compile-packages` handles this:
+
+1. Discovers library packages via `list-packages` (topologically sorted).
+1. Pre-populates importcfg with entries for all local packages.
+1. Compiles in parallel using `errgroup` with per-package done channels.
+   Each goroutine waits for its `local_deps` to complete before compiling.
+1. Concurrency is bounded by `NIX_BUILD_CORES` (default: `runtime.NumCPU()`).
+
+### Linking
+
+After local libraries and main packages are compiled:
+
+```
+go tool link -buildid=redacted -importcfg FILE [ldflags] -o bin/name main.a
+```
+
+If cgo was used (`.has_cgo` marker exists), the linker runs with
+`-extld $CC -linkmode external` for external linking.
+
+### Cgo
+
+`compileCgo` implements the 5-step cgo pipeline (matching `cmd/go`'s approach):
+
+1. **`go tool cgo`**: Parse `import "C"` preambles (extracted via `go/parser`
+   with `ImportsOnly`), resolve `#cgo` directives and `pkg-config`, generate
+   C wrappers and Go bindings.
+1. **Compile C/C++/asm**: Invoke `$CC`/`$CXX` on generated and user C/C++
+   files, and `.s` files (C compiler, not `go tool asm`, in cgo mode).
+1. **Test link + dynimport**: Link a test binary to extract dynamic symbols.
+   Writes `_cgo_import.go` with `//go:cgo_import_dynamic` directives.
+1. **`go tool compile`**: Compile all Go sources (user + cgo-generated).
+1. **`go tool pack`**: Embed `.o` object files and `_cgo_flags` into the
+   `.a` archive.
+
+### Assembly
+
+`compileWithAsm` handles packages with `.s` files:
+
+1. **Generate symabis**: `go tool asm -gensymabis` on all `.s` files.
+1. **Compile Go**: `go tool compile -symabis symabis -asmhdr go_asm.h` —
+   generates assembly header with Go type offsets.
+1. **Assemble**: `go tool asm` on each `.s` file with platform-specific
+   `-D` flags (GOOS, GOARCH, plus arch variants like GOAMD64, GOARM, etc.).
+1. **Pack**: `go tool pack` to add `.o` files into the archive.
+
+## Staleness detection
+
+Three layers ensure the lockfile matches `go.mod`:
+
+| When | What | How |
+|------|------|-----|
+| Generation | MVS consistency | `go list -json -deps` resolves actual versions |
+| Nix eval | Missing packages | Package not in `[pkg]` → derivation doesn't exist |
+| Build time | Lockfile consistency | `go2nix check --lockfile` verifies every `go.mod` require has a matching lockfile entry |
+| Build time | Tidiness | `go2nix check` (no `--lockfile`) runs `go mod graph` against a GOMODCACHE built from vendor tree |
 
 ## Known limitations
 
-- **Version-qualified replaces** (`replace foo v1.0.0 => bar v2.0.0`): the
-  go.mod parser keys this by `"foo v1.0.0"` (path + old-version), but the
-  filter's `effectiveVersion` only looks up by bare path. Fixable by also
-  probing `goMod.replace."${path} ${requireVersion}"`. Uncommon in practice.
-
 - **No `go.work` support**: the CLI takes project directories, not a workspace
-  file. Workspaces with `replace` directives across workspace modules would
-  need additional handling.
+  file.
 
-- **Serial `go mod download`**: per project directory. Trivially parallelizable
-  if needed.
+- **No test compilation**: `go2nix compile-package` does not compile `_test.go`
+  files or build test binaries.
 
-- **Builder is pre-hooks**: forked before upstream's `makeSetupHook` refactor.
-  Using the upstream `goBuildHook`/`goCheckHook` would allow cleaner
-  `buildPhase`/`checkPhase` overrides.
+- **Version-qualified replaces** (`replace foo v1.0.0 => bar v2.0.0`): the
+  `go.mod` parser keys by `"foo v1.0.0"` (path + old-version), but the
+  check only looks up by bare path. Uncommon in practice.
 
-## Upstreaming status
-
-Four independent changes vs upstream; two are already upstream PRs:
-
-| Change | Status |
-|---|---|
-| `netrcFile` + `goModFile` | [PR #243](https://github.com/nix-community/gomod2nix/pull/243) open since Dec 2025, awaiting review |
-| `parser.nix` mixed-require fix | Not yet submitted; trivial standalone bugfix |
-| **Composite keys** | Not yet submitted; schema-breaking, needs issue-first discussion |
-| Shared-lockfile CLI | Depends on composite keys |
-
-Relevant upstream issues composite keys address:
-
-- [#119](https://github.com/nix-community/gomod2nix/issues/119) — check for changed replace path
-- [#169](https://github.com/nix-community/gomod2nix/issues/169) — subcommand to detect stale lockfile
-- [#108](https://github.com/nix-community/gomod2nix/issues/108) — avoid unrelated deps with go.work
-
-[gomod2nix]: https://github.com/nix-community/gomod2nix
-[pr #243]: https://github.com/nix-community/gomod2nix/pull/243
+- **Local packages are not derivations**: Local (same-module) packages are
+  compiled inside the application derivation, not as separate cacheable
+  derivations. A change to any local package recompiles all local packages.

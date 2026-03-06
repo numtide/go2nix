@@ -1,8 +1,9 @@
 # go2nix
 
-Nix-native Go builder that compiles at **package granularity**. Instead of
-calling `go build`, go2nix invokes `go tool compile`, `go tool asm`, and
-`go tool link` directly, giving Nix full control over the dependency graph.
+Nix-native Go builder that compiles at **package granularity** — the Nix
+equivalent of [rules_go](https://github.com/bazel-contrib/rules_go) for Bazel.
+Instead of calling `go build`, go2nix invokes `go tool compile`, `go tool asm`,
+and `go tool link` directly, giving Nix full control over the dependency graph.
 
 Each third-party Go package becomes its own Nix derivation. When a module has
 50 packages but your project only imports 3, only those 3 are compiled. When a
@@ -13,7 +14,7 @@ dependency changes, only affected packages rebuild.
 ### 1. Generate a lockfile
 
 ```bash
-go2nix generate ./path/to/project
+go2nix generate .
 ```
 
 This produces `go2nix.toml` — a lockfile with two sections:
@@ -21,29 +22,41 @@ This produces `go2nix.toml` — a lockfile with two sections:
 - `[mod]`: module-level NAR hashes (for fixed-output fetching)
 - `[pkg]`: package-level import graphs (for per-package derivations)
 
-### 2. Write your Nix expression
+### 2. Add go2nix to your flake
 
 ```nix
-let
-  pkgs = import <nixpkgs> { };
-  go2nix = import ./go/go2nix/package.nix { inherit pkgs; };
-  goEnv = import ./nix/mk-go-env.nix {
-    inherit (pkgs) go callPackage;
-    inherit go2nix;
+{
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    go2nix = {
+      url = "github:numtide/go2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
-in
-goEnv.buildGoApplication {
-  src = ./.;
-  goLock = ./go2nix.toml;
-  pname = "my-app";
-  version = "0.1.0";
+
+  outputs = { nixpkgs, go2nix, ... }:
+  let
+    system = "x86_64-linux";
+    pkgs = nixpkgs.legacyPackages.${system};
+    goEnv = go2nix.lib.mkGoEnv {
+      inherit (pkgs) go callPackage;
+      go2nix = go2nix.packages.${system}.go2nix;
+    };
+  in {
+    packages.${system}.default = goEnv.buildGoApplication {
+      src = ./.;
+      goLock = ./go2nix.toml;
+      pname = "my-app";
+      version = "0.1.0";
+    };
+  };
 }
 ```
 
 ### 3. Build
 
 ```bash
-nix-build
+nix build
 ```
 
 ## Usage
@@ -58,23 +71,52 @@ nix-build
 | `version` | Version string | (required) |
 | `subPackages` | List of sub-packages to build | `["."]` |
 | `ldflags` | Linker flags | `[]` |
+| `gcflags` | Compiler flags (e.g., `["-N" "-l"]` for debug) | `[]` |
 | `CGO_ENABLED` | Override cgo detection | auto |
+| `allowGoReference` | Allow Go SDK in output closure | `false` |
 | `moduleDir` | Module directory within src | `"."` |
 | `packageOverrides` | Per-package overrides (cgo deps, etc.) | `{}` |
 | `nativeBuildInputs` | Extra build inputs for the final binary | `[]` |
 | `meta` | Derivation metadata | `{}` |
+
+### `mkGoEnv` parameters
+
+| Parameter | Description | Default |
+|--------------|-------------------------------------------|---------|
+| `go` | Go compiler package | (required) |
+| `go2nix` | go2nix CLI package | (required) |
+| `callPackage`| `pkgs.callPackage` | (required) |
+| `tags` | Build tags (applied to all compilations) | `[]` |
+| `netrcFile` | Path to `.netrc` for private modules | `null` |
 
 ### Build tags
 
 Pass build tags when creating the Go environment:
 
 ```nix
-goEnv = import ./nix/mk-go-env.nix {
+goEnv = go2nix.lib.mkGoEnv {
   inherit (pkgs) go callPackage;
-  inherit go2nix;
+  go2nix = go2nix.packages.${system}.go2nix;
   tags = [ "nethttpomithttp2" "custom_tag" ];
 };
 ```
+
+### Private modules
+
+For private modules that require authentication, provide a `.netrc` file:
+
+```nix
+goEnv = go2nix.lib.mkGoEnv {
+  inherit (pkgs) go callPackage;
+  go2nix = go2nix.packages.${system}.go2nix;
+  netrcFile = ./secrets/netrc;
+};
+```
+
+Go's default `GOPROXY` (`https://proxy.golang.org,direct`) falls back to
+direct VCS access when the proxy returns 404, so `netrcFile` is sufficient
+for most private module setups. The file is copied to `$HOME/.netrc` inside
+each module fetch derivation.
 
 ### Cgo and `packageOverrides`
 
@@ -125,7 +167,6 @@ go2nix generate ./service-a ./service-b ./service-c
 Each project references the same lockfile:
 
 ```nix
-# service-a/default.nix
 goEnv.buildGoApplication {
   src = ./service-a;
   goLock = ../go2nix.toml;   # shared
@@ -145,8 +186,8 @@ can depend on different versions of the same module without conflict.
 | `go2nix list-files` | List source files in a package (with build constraints) |
 | `go2nix list-packages` | Discover local packages in topological order |
 | `go2nix compile-package` | Compile a single Go package to `.a` archive |
-| `go2nix compile-module` | Compile all local library packages (DAG-aware parallel) |
-| `go2nix check-lockfile` | Validate lockfile consistency with `go.mod` |
+| `go2nix compile-packages` | Compile all local library packages (DAG-aware parallel) |
+| `go2nix check` | Validate lockfile consistency with `go.mod` |
 
 Run `go2nix generate -h` etc. for flags.
 
@@ -210,7 +251,7 @@ go2nix is bootstrapped with `buildGoModule` (it can't use `buildGoApplication`
 since that depends on go2nix):
 
 ```bash
-nix-build go/go2nix/package.nix
+nix build .#go2nix
 ```
 
 ### Running Go tests
@@ -279,7 +320,7 @@ go2nix.toml ──(Nix eval)──> per-package derivations
                               per-package .a archives
                                     │
                               [link-go-binary.sh]
-                                    │  go2nix compile-module  (local libs, parallel)
+                                    │  go2nix compile-packages (local libs, parallel)
                                     │  go2nix compile-package (main package)
                                     │  go tool link
                                     v
