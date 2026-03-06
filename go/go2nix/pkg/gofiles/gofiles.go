@@ -8,8 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
+	pathpkg "path"
+
+	"sort"
 	"strings"
+
+	"golang.org/x/mod/module"
 )
 
 // PkgFiles describes the files in a Go package, resolved for the current
@@ -62,9 +66,6 @@ func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 	}
 
 	if len(pkg.EmbedPatterns) > 0 {
-		if !slices.Contains(pkg.Imports, "embed") {
-			return PkgFiles{}, fmt.Errorf("//go:embed used in %s but \"embed\" package not imported", dir)
-		}
 		cfg, err := ResolveEmbedCfg(dir, pkg.EmbedPatterns)
 		if err != nil {
 			return PkgFiles{}, fmt.Errorf("resolving embed patterns in %s: %w", dir, err)
@@ -87,81 +88,162 @@ func ListFiles(dir string, tags string) (PkgFiles, error) {
 
 // ResolveEmbedCfg resolves embed patterns to file paths relative to dir,
 // producing the JSON structure expected by go tool compile -embedcfg.
+//
+// Ported from cmd/go/internal/load.resolveEmbed, using os/filepath instead
+// of the internal fsys/str packages. We omit the GODEBUG embedfollowsymlinks
+// knob since it's a niche opt-in that doesn't affect Nix sandbox builds.
 func ResolveEmbedCfg(dir string, patterns []string) (*EmbedCfg, error) {
 	cfg := &EmbedCfg{
 		Patterns: make(map[string][]string),
 		Files:    make(map[string]string),
 	}
 
+	have := make(map[string]int)
+	dirOK := make(map[string]bool)
+	pid := 0
+
 	for _, pattern := range patterns {
-		includeHidden := false
-		matchPattern := pattern
-		if strings.HasPrefix(pattern, "all:") {
-			includeHidden = true
-			matchPattern = strings.TrimPrefix(pattern, "all:")
+		pid++
+		glob, all := strings.CutPrefix(pattern, "all:")
+
+		if _, err := pathpkg.Match(glob, ""); err != nil || !validEmbedPattern(glob) {
+			return nil, fmt.Errorf("pattern %q: invalid pattern syntax", pattern)
 		}
 
-		var matched []string
+		match, err := filepath.Glob(filepath.Join(dir, filepath.FromSlash(glob)))
+		if err != nil {
+			return nil, fmt.Errorf("pattern %q: %w", pattern, err)
+		}
 
-		info, err := os.Stat(filepath.Join(dir, matchPattern))
-		if err == nil && info.IsDir() {
-			err := filepath.WalkDir(filepath.Join(dir, matchPattern), func(path string, d fs.DirEntry, err error) error {
+		var list []string
+		for _, file := range match {
+			rel, _ := filepath.Rel(dir, file)
+			rel = filepath.ToSlash(rel)
+
+			info, err := os.Lstat(file)
+			if err != nil {
+				return nil, fmt.Errorf("pattern %q: %w", pattern, err)
+			}
+
+			what := "file"
+			if info.IsDir() {
+				what = "directory"
+			}
+
+			// Check parent directories for module boundaries and bad names.
+			for d := file; len(d) > len(dir)+1 && !dirOK[d]; d = filepath.Dir(d) {
+				if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+					return nil, fmt.Errorf("cannot embed %s %s: in different module", what, rel)
+				}
+				if d != file {
+					if di, err := os.Lstat(d); err == nil && !di.IsDir() {
+						return nil, fmt.Errorf("cannot embed %s %s: in non-directory %s",
+							what, rel, d[len(dir)+1:])
+					}
+				}
+				dirOK[d] = true
+				if elem := filepath.Base(d); isBadEmbedName(elem) {
+					if d == file {
+						return nil, fmt.Errorf("cannot embed %s %s: invalid name %s", what, rel, elem)
+					}
+					return nil, fmt.Errorf("cannot embed %s %s: in invalid directory %s", what, rel, elem)
+				}
+			}
+
+			switch {
+			case info.Mode().IsRegular():
+				if have[rel] != pid {
+					have[rel] = pid
+					list = append(list, rel)
+				}
+
+			case info.IsDir():
+				count := 0
+				err := filepath.WalkDir(file, func(path string, d fs.DirEntry, err error) error {
+					if err != nil {
+						return err
+					}
+					rel := filepath.ToSlash(mustRel(dir, path))
+					name := d.Name()
+
+					if path != file && (isBadEmbedName(name) || ((name[0] == '.' || name[0] == '_') && !all)) {
+						if d.IsDir() {
+							return fs.SkipDir
+						}
+						if name[0] == '.' || name[0] == '_' {
+							return nil
+						}
+						if isBadEmbedName(name) {
+							return fmt.Errorf("cannot embed file %s: invalid name %s", rel, name)
+						}
+						return nil
+					}
+					if d.IsDir() {
+						if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+					if !d.Type().IsRegular() {
+						return nil
+					}
+					count++
+					if have[rel] != pid {
+						have[rel] = pid
+						list = append(list, rel)
+					}
+					return nil
+				})
 				if err != nil {
-					return err
+					return nil, fmt.Errorf("pattern %q: %w", pattern, err)
 				}
-				rel, _ := filepath.Rel(dir, path)
-				name := d.Name()
-				if !includeHidden && strings.HasPrefix(name, ".") {
-					if d.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
+				if count == 0 {
+					return nil, fmt.Errorf("cannot embed directory %s: contains no embeddable files", rel)
 				}
-				if !includeHidden && strings.HasPrefix(name, "_") {
-					if d.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-				if !d.IsDir() {
-					matched = append(matched, rel)
-					cfg.Files[rel] = filepath.Join(dir, rel)
-				}
-				return nil
-			})
-			if err != nil {
-				return nil, fmt.Errorf("walking %s for pattern %q: %w", matchPattern, pattern, err)
-			}
-		} else {
-			matches, err := filepath.Glob(filepath.Join(dir, matchPattern))
-			if err != nil {
-				return nil, fmt.Errorf("glob %q: %w", pattern, err)
-			}
-			patBase := filepath.Base(matchPattern)
-			patAllowsDot := strings.HasPrefix(patBase, ".")
-			patAllowsUnderscore := strings.HasPrefix(patBase, "_")
-			for _, m := range matches {
-				rel, _ := filepath.Rel(dir, m)
-				name := filepath.Base(rel)
-				if !includeHidden && !patAllowsDot && strings.HasPrefix(name, ".") {
-					continue
-				}
-				if !includeHidden && !patAllowsUnderscore && strings.HasPrefix(name, "_") {
-					continue
-				}
-				fi, err := os.Stat(m)
-				if err != nil || fi.IsDir() {
-					continue
-				}
-				matched = append(matched, rel)
-				cfg.Files[rel] = filepath.Join(dir, rel)
+
+			default:
+				return nil, fmt.Errorf("cannot embed irregular file %s", rel)
 			}
 		}
 
-		cfg.Patterns[pattern] = matched
+		if len(list) == 0 {
+			return nil, fmt.Errorf("pattern %q: no matching files found", pattern)
+		}
+		sort.Strings(list)
+		cfg.Patterns[pattern] = list
+	}
+
+	for file := range have {
+		cfg.Files[file] = filepath.Join(dir, filepath.FromSlash(file))
 	}
 
 	return cfg, nil
+}
+
+// validEmbedPattern reports whether pattern is a valid //go:embed pattern.
+func validEmbedPattern(pattern string) bool {
+	return pattern != "." && fs.ValidPath(pattern)
+}
+
+// isBadEmbedName reports whether name is a file/directory name that can't
+// or won't be included in modules and therefore shouldn't be embedded.
+func isBadEmbedName(name string) bool {
+	if err := module.CheckFilePath(name); err != nil {
+		return true
+	}
+	switch name {
+	case "", ".bzr", ".hg", ".git", ".svn":
+		return true
+	}
+	return false
+}
+
+func mustRel(base, target string) string {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		panic(err)
+	}
+	return rel
 }
 
 func nonNil(s []string) []string {
