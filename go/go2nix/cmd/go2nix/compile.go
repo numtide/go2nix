@@ -36,7 +36,7 @@ func runCompilePackageCmd(args []string) {
 		GCFlags:    *gcflags,
 	}
 
-	if err := compile.CompilePackage(opts); err != nil {
+	if err := compile.CompileGoPackage(opts); err != nil {
 		slog.Error("compile-package failed", "err", err, "pkg", *importPath)
 		os.Exit(1)
 	}
