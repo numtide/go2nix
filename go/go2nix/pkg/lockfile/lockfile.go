@@ -41,8 +41,12 @@ func Read(path string) (*Lockfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := toml.Decode(string(data), lf); err != nil {
+	md, err := toml.Decode(string(data), lf)
+	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		return nil, fmt.Errorf("parsing %s: unknown keys: %v", path, undecoded)
 	}
 	return lf, nil
 }
