@@ -146,7 +146,12 @@ stdenv.mkDerivation (
     disallowedReferences = lib.optional (!allowGoReference) go;
 
     passthru = {
-      inherit go go2nix goLock packages;
+      inherit
+        go
+        go2nix
+        goLock
+        packages
+        ;
     };
 
     env = {

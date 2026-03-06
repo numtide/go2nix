@@ -12,4 +12,11 @@
   tags ? [ ],
   netrcFile ? null,
 }:
-callPackage ./scope.nix { inherit go go2nix tags netrcFile; }
+callPackage ./scope.nix {
+  inherit
+    go
+    go2nix
+    tags
+    netrcFile
+    ;
+}

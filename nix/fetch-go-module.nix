@@ -43,10 +43,15 @@ stdenvNoCC.mkDerivation {
     export GOMODCACHE=$out
     export GOSUMDB=off
     export GONOSUMCHECK='*'
-    ${if netrcFile != null then ''
-      cp ${netrcFile} $HOME/.netrc
-      chmod 600 $HOME/.netrc
-    '' else ""}
+    ${
+      if netrcFile != null then
+        ''
+          cp ${netrcFile} $HOME/.netrc
+          chmod 600 $HOME/.netrc
+        ''
+      else
+        ""
+    }
     go mod download "${fetchPath}@${mod.version}"
   '';
 
