@@ -13,7 +13,6 @@
 package mvscheck
 
 import (
-	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/lockfile"
+	"golang.org/x/mod/modfile"
 )
 
 // Check verifies that go.mod in dir is tidy with respect to vendor/.
@@ -33,6 +33,10 @@ func Check(dir string) error {
 	if err != nil {
 		return fmt.Errorf("reading go.mod: %w", err)
 	}
+	mf, err := modfile.Parse("go.mod", goModData, nil)
+	if err != nil {
+		return fmt.Errorf("parsing go.mod: %w", err)
+	}
 
 	cache, err := os.MkdirTemp("", "mvscheck-gomodcache-")
 	if err != nil {
@@ -41,7 +45,7 @@ func Check(dir string) error {
 	defer os.RemoveAll(cache)
 
 	vendorDir := filepath.Join(dir, "vendor")
-	if err := buildModCache(cache, vendorDir, goModData); err != nil {
+	if err := buildModCache(cache, vendorDir, mf); err != nil {
 		return fmt.Errorf("building GOMODCACHE from vendor tree: %w", err)
 	}
 
@@ -70,19 +74,23 @@ func Check(dir string) error {
 // buildModCache constructs a minimal GOMODCACHE from the vendor tree.
 // For each required (path, version), it reads vendor/<path>/go.mod and
 // writes cache/download/<path>/@v/<version>.mod + .info.
-func buildModCache(cache, vendorDir string, goModData []byte) error {
-	replaced := ReplacedPaths(goModData)
-	for modPath, version := range RequireVersions(goModData) {
+func buildModCache(cache, vendorDir string, mf *modfile.File) error {
+	replaced := make(map[string]bool, len(mf.Replace))
+	for _, r := range mf.Replace {
+		replaced[r.Old.Path] = true
+	}
+
+	for _, req := range mf.Require {
+		modPath := req.Mod.Path
+		version := req.Mod.Version
 		if replaced[modPath] {
 			continue
 		}
+
 		goModPath := filepath.Join(vendorDir, modPath, "go.mod")
 		data, err := os.ReadFile(goModPath)
-		if os.IsNotExist(err) {
-			continue
-		}
 		if err != nil {
-			return err
+			return fmt.Errorf("vendor tree missing go.mod for required module %s@%s: %w", modPath, version, err)
 		}
 
 		dldir := filepath.Join(cache, "cache", "download", modPath, "@v")
@@ -100,112 +108,6 @@ func buildModCache(cache, vendorDir string, goModData []byte) error {
 	return nil
 }
 
-// RequireVersions parses go.mod bytes into module path -> required version.
-func RequireVersions(goMod []byte) map[string]string {
-	out := make(map[string]string)
-	var inRequire bool
-	for _, line := range bytes.Split(goMod, []byte("\n")) {
-		l := stripComment(string(line))
-		switch {
-		case l == "require (":
-			inRequire = true
-		case l == ")" && inRequire:
-			inRequire = false
-		case inRequire:
-			if p, v, ok := pathVersion(l); ok {
-				out[p] = v
-			}
-		case strings.HasPrefix(l, "require "):
-			if p, v, ok := pathVersion(strings.TrimPrefix(l, "require ")); ok {
-				out[p] = v
-			}
-		}
-	}
-	return out
-}
-
-// ReplacedPaths returns the set of module paths on the LHS of replace
-// directives — these bypass MVS and are exempt from the check.
-func ReplacedPaths(goMod []byte) map[string]bool {
-	out := make(map[string]bool)
-	var inReplace bool
-	for _, line := range bytes.Split(goMod, []byte("\n")) {
-		l := stripComment(string(line))
-		switch {
-		case l == "replace (":
-			inReplace = true
-		case l == ")" && inReplace:
-			inReplace = false
-		case inReplace, strings.HasPrefix(l, "replace "):
-			l = strings.TrimPrefix(l, "replace ")
-			if i := strings.Index(l, "=>"); i > 0 {
-				if fields := strings.Fields(l[:i]); len(fields) > 0 {
-					out[fields[0]] = true
-				}
-			}
-		}
-	}
-	return out
-}
-
-func stripComment(line string) string {
-	if i := strings.Index(line, "//"); i >= 0 {
-		line = line[:i]
-	}
-	return strings.TrimSpace(line)
-}
-
-func pathVersion(l string) (path, version string, ok bool) {
-	fields := strings.Fields(l)
-	if len(fields) < 2 || !strings.HasPrefix(fields[1], "v") {
-		return "", "", false
-	}
-	return fields[0], fields[1], true
-}
-
-// Replace describes a go.mod replace directive.
-type Replace struct {
-	Path    string // target module path (or local directory)
-	Version string // target version (empty for local replaces)
-}
-
-// ParseReplaces parses replace directives from go.mod, returning
-// the full replace info (not just which paths are replaced).
-func ParseReplaces(goMod []byte) map[string]Replace {
-	out := make(map[string]Replace)
-	var inReplace bool
-	for _, line := range bytes.Split(goMod, []byte("\n")) {
-		l := stripComment(string(line))
-		switch {
-		case l == "replace (":
-			inReplace = true
-		case l == ")" && inReplace:
-			inReplace = false
-		case inReplace, strings.HasPrefix(l, "replace "):
-			l = strings.TrimPrefix(l, "replace ")
-			if i := strings.Index(l, "=>"); i > 0 {
-				lhs := strings.TrimSpace(l[:i])
-				rhs := strings.TrimSpace(l[i+2:])
-				lhsFields := strings.Fields(lhs)
-				if len(lhsFields) == 0 {
-					continue
-				}
-				modPath := lhsFields[0]
-				rhsFields := strings.Fields(rhs)
-				if len(rhsFields) == 0 {
-					continue
-				}
-				r := Replace{Path: rhsFields[0]}
-				if len(rhsFields) >= 2 {
-					r.Version = rhsFields[1]
-				}
-				out[modPath] = r
-			}
-		}
-	}
-	return out
-}
-
 // CheckLockfile verifies that go.mod in dir is consistent with the go2nix
 // lockfile. Every non-local-replaced module in go.mod's require block must
 // have a matching module@version entry in the lockfile.
@@ -214,29 +116,35 @@ func CheckLockfile(dir string, lockfilePath string) error {
 	if err != nil {
 		return fmt.Errorf("reading go.mod: %w", err)
 	}
+	mf, err := modfile.Parse("go.mod", goModData, nil)
+	if err != nil {
+		return fmt.Errorf("parsing go.mod: %w", err)
+	}
 
 	lf, err := lockfile.Read(lockfilePath)
 	if err != nil {
 		return err
 	}
 
-	requires := RequireVersions(goModData)
-	replaces := ParseReplaces(goModData)
+	replaces := make(map[string]*modfile.Replace, len(mf.Replace))
+	for _, r := range mf.Replace {
+		replaces[r.Old.Path] = r
+	}
 
 	var missing []string
-	for modPath, reqVersion := range requires {
-		repl, isReplaced := replaces[modPath]
-		if isReplaced && repl.Version == "" {
-			// Local replace (directory path, no version) — not in lockfile.
-			continue
+	for _, req := range mf.Require {
+		modPath := req.Mod.Path
+		version := req.Mod.Version
+
+		if r, ok := replaces[modPath]; ok {
+			if r.New.Version == "" {
+				// Local replace (directory path, no version) — not in lockfile.
+				continue
+			}
+			version = r.New.Version
 		}
 
-		effectiveVersion := reqVersion
-		if isReplaced && repl.Version != "" {
-			effectiveVersion = repl.Version
-		}
-
-		key := modPath + "@" + effectiveVersion
+		key := modPath + "@" + version
 		if _, ok := lf.Mod[key]; !ok {
 			missing = append(missing, key)
 		}
@@ -246,7 +154,7 @@ func CheckLockfile(dir string, lockfilePath string) error {
 		sort.Strings(missing)
 		return fmt.Errorf(
 			"go.mod requires modules not found in lockfile %s:\n  %s\n\n"+
-				"The lockfile is stale. Run `go mod tidy && gob generate` to update it.",
+				"The lockfile is stale. Run `go mod tidy && go2nix generate` to update it.",
 			lockfilePath,
 			strings.Join(missing, "\n  "),
 		)
@@ -257,7 +165,7 @@ func CheckLockfile(dir string, lockfilePath string) error {
 
 func indent(s string) string {
 	var b strings.Builder
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		b.WriteString("  ")
 		b.WriteString(line)
 		b.WriteByte('\n')

@@ -6,54 +6,123 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/mod/modfile"
 )
 
-func TestRequireVersions(t *testing.T) {
-	fixture := `module test
+func TestCheckLockfile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile := func(name, content string) {
+		t.Helper()
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lockfileTOML := `
+[mod."github.com/foo/bar@v1.0.0"]
+version = "v1.0.0"
+hash = "sha256-aaa"
+num_pkgs = 1
+
+[mod."github.com/baz/qux/v2@v2.0.0"]
+version = "v2.0.0"
+hash = "sha256-bbb"
+num_pkgs = 1
+
+[mod."github.com/remote/replace@v3.0.0"]
+version = "v3.0.0"
+hash = "sha256-ccc"
+num_pkgs = 1
+`
+	lockfilePath := filepath.Join(dir, "go2nix.lock")
+	writeFile("go2nix.lock", lockfileTOML)
+
+	t.Run("all present", func(t *testing.T) {
+		writeFile("go.mod", `module example.com/test
 go 1.23
-require github.com/single/line v1.0.0
 require (
-	github.com/in/paren v2.0.0
-	github.com/with/comment v3.0.0 // indirect
+	github.com/foo/bar v1.0.0
+	github.com/baz/qux/v2 v2.0.0
 )
-replace github.com/replaced => ../local
-`
-	got := RequireVersions([]byte(fixture))
-	want := map[string]string{
-		"github.com/single/line":  "v1.0.0",
-		"github.com/in/paren":     "v2.0.0",
-		"github.com/with/comment": "v3.0.0",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("got %d entries, want %d: %v", len(got), len(want), got)
-	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("path %q: got %q, want %q", k, got[k], v)
+`)
+		if err := CheckLockfile(dir, lockfilePath); err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-	}
-}
+	})
 
-func TestReplacedPaths(t *testing.T) {
-	fixture := `module test
+	t.Run("missing module", func(t *testing.T) {
+		writeFile("go.mod", `module example.com/test
 go 1.23
-require github.com/foo/bar v1.0.0
-replace github.com/single => ../local
-replace (
-	github.com/in/paren => github.com/fork v2.0.0
-	github.com/with/version v1.0.0 => ../another
+require (
+	github.com/foo/bar v1.0.0
+	github.com/not/inlock v0.5.0
 )
-`
-	got := ReplacedPaths([]byte(fixture))
-	want := []string{"github.com/single", "github.com/in/paren", "github.com/with/version"}
-	if len(got) != len(want) {
-		t.Fatalf("got %d entries, want %d: %v", len(got), len(want), got)
-	}
-	for _, p := range want {
-		if !got[p] {
-			t.Errorf("path %q: not in replaced set", p)
+`)
+		err := CheckLockfile(dir, lockfilePath)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
-	}
+		if !strings.Contains(err.Error(), "github.com/not/inlock@v0.5.0") {
+			t.Errorf("error should mention missing module:\n%s", err)
+		}
+	})
+
+	t.Run("local replace skipped", func(t *testing.T) {
+		writeFile("go.mod", `module example.com/test
+go 1.23
+require (
+	github.com/foo/bar v1.0.0
+	github.com/local/mod v0.0.0
+)
+replace github.com/local/mod => ../localdir
+`)
+		if err := CheckLockfile(dir, lockfilePath); err != nil {
+			t.Fatalf("local replace should be skipped: %v", err)
+		}
+	})
+
+	t.Run("versioned replace uses replacement version", func(t *testing.T) {
+		writeFile("go.mod", `module example.com/test
+go 1.23
+require (
+	github.com/foo/bar v1.0.0
+	github.com/remote/replace v1.0.0
+)
+replace github.com/remote/replace v1.0.0 => github.com/remote/replace v3.0.0
+`)
+		// Lockfile has github.com/remote/replace@v3.0.0 but not @v1.0.0.
+		if err := CheckLockfile(dir, lockfilePath); err != nil {
+			t.Fatalf("versioned replace should use effective version v3.0.0: %v", err)
+		}
+	})
+
+	t.Run("multiple missing sorted", func(t *testing.T) {
+		writeFile("go.mod", `module example.com/test
+go 1.23
+require (
+	github.com/zzz/last v1.0.0
+	github.com/aaa/first v1.0.0
+)
+`)
+		err := CheckLockfile(dir, lockfilePath)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		msg := err.Error()
+		idxA := strings.Index(msg, "github.com/aaa/first@v1.0.0")
+		idxZ := strings.Index(msg, "github.com/zzz/last@v1.0.0")
+		if idxA < 0 || idxZ < 0 {
+			t.Fatalf("error should list both missing modules:\n%s", msg)
+		}
+		if idxA > idxZ {
+			t.Errorf("missing modules should be sorted, got aaa at %d, zzz at %d:\n%s", idxA, idxZ, msg)
+		}
+	})
 }
 
 // TestCheck exercises Check() against a real vendor tree and the real `go`
@@ -77,7 +146,7 @@ func TestCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", `module mvscheck-test
+	write("go.mod", `module example.com/mvscheck-test
 go 1.23
 require golang.org/x/tools v0.30.0
 `)
@@ -109,9 +178,12 @@ func main() {}
 	}
 
 	goModTidy, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-	tidyReq := RequireVersions(goModTidy)
-	for modPath, version := range tidyReq {
-		symlink(modPath, version)
+	mf, err := modfile.Parse("go.mod", goModTidy, nil)
+	if err != nil {
+		t.Fatalf("parsing tidied go.mod: %v", err)
+	}
+	for _, req := range mf.Require {
+		symlink(req.Mod.Path, req.Mod.Version)
 	}
 
 	// Tidy go.mod should pass.
@@ -120,8 +192,14 @@ func main() {}
 	}
 
 	// Untidy: lower x/mod version to trigger MVS mismatch.
-	xmodTidy, ok := tidyReq["golang.org/x/mod"]
-	if !ok || xmodTidy == "v0.20.0" {
+	var xmodTidy string
+	for _, req := range mf.Require {
+		if req.Mod.Path == "golang.org/x/mod" {
+			xmodTidy = req.Mod.Version
+			break
+		}
+	}
+	if xmodTidy == "" || xmodTidy == "v0.20.0" {
 		t.Skipf("test module doesn't have the expected x/mod edge (got %q)", xmodTidy)
 	}
 	untidy := strings.Replace(string(goModTidy),
@@ -138,7 +216,7 @@ func main() {}
 	}
 	symlink("golang.org/x/mod", "v0.20.0")
 
-	err := Check(dir)
+	err = Check(dir)
 	if err == nil {
 		t.Fatalf("Check() on untidy module: want error, got nil")
 	}
