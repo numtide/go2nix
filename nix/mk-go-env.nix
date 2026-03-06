@@ -10,5 +10,6 @@
   go2nix,
   callPackage,
   tags ? [ ],
+  netrcFile ? null,
 }:
-callPackage ./scope.nix { inherit go go2nix tags; }
+callPackage ./scope.nix { inherit go go2nix tags netrcFile; }

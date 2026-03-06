@@ -5,6 +5,7 @@
 #   goModuleRoot    — absolute path to module root (containing go.mod)
 #   goSubPackages   — space-separated list of sub-packages (default: ".")
 #   goLdflags       — extra linker flags (optional)
+#   goGcflags       — extra compiler flags (optional)
 #   goLockfile      — path to go2nix.toml lockfile
 #   goPname         — binary name for "." package (optional)
 #
@@ -39,12 +40,19 @@ linkGoBinaryBuildPhase() {
   local localdir="$NIX_BUILD_TOP/local-pkgs"
   mkdir -p "$localdir"
 
+  # Build gcflags argument array (empty if unset, avoids quoting issues).
+  local -a gcflagArgs=()
+  if [ -n "${goGcflags:-}" ]; then
+    gcflagArgs=(--gcflags "$goGcflags")
+  fi
+
   # Pass 1: compile library packages in parallel (DAG-aware).
   @go2nix@ compile-module \
     --importcfg "$NIX_BUILD_TOP/importcfg" \
     --outdir "$localdir" \
     --trimpath "$NIX_BUILD_TOP" \
     @tagArg@ \
+    "${gcflagArgs[@]}" \
     "$goModuleRoot"
 
   # Pass 2: compile main packages and link.
@@ -70,7 +78,8 @@ linkGoBinaryBuildPhase() {
       --src-dir "$srcdir" \
       --output "$localdir/$importpath.a" \
       --trimpath "$NIX_BUILD_TOP" \
-      @tagArg@
+      @tagArg@ \
+      "${gcflagArgs[@]}"
 
     local linkflags=""
     if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
@@ -110,5 +119,3 @@ buildPhase=linkGoBinaryBuildPhase
 installPhase=linkGoBinaryInstallPhase
 # shellcheck disable=SC2034
 dontUnpack=1
-# shellcheck disable=SC2034
-dontFixup=1

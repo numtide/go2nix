@@ -8,6 +8,7 @@
   lib,
   newScope,
   tags ? [ ],
+  netrcFile ? null,
 }:
 let
   tagFlag = if tags == [ ] then "" else builtins.concatStringsSep "," tags;
@@ -24,6 +25,7 @@ lib.makeScope newScope (
       lib
       tags
       tagFlag
+      netrcFile
       ;
 
     helpers = import ./helpers.nix;

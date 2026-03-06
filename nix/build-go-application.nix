@@ -14,6 +14,9 @@
 #   }
 {
   stdenv,
+  go,
+  go2nix,
+  lib,
   hooks,
   helpers,
   fetchers,
@@ -27,7 +30,9 @@
   version,
   subPackages ? [ "." ],
   ldflags ? [ ],
+  gcflags ? [ ],
   CGO_ENABLED ? null,
+  allowGoReference ? false,
   meta ? { },
   nativeBuildInputs ? [ ],
   moduleDir ? ".",
@@ -105,6 +110,7 @@ let
 
   moduleRoot = if moduleDir == "." then "${src}" else "${src}/${moduleDir}";
   ldflagsStr = concatStringsSep " " ldflags;
+  gcflagsStr = concatStringsSep " " gcflags;
 
   # Filter out known args so extra attrs pass through to mkDerivation.
   extraArgs = builtins.removeAttrs args [
@@ -114,7 +120,9 @@ let
     "version"
     "subPackages"
     "ldflags"
+    "gcflags"
     "CGO_ENABLED"
+    "allowGoReference"
     "meta"
     "nativeBuildInputs"
     "moduleDir"
@@ -135,10 +143,17 @@ stdenv.mkDerivation (
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
     buildInputs = require;
 
+    disallowedReferences = lib.optional (!allowGoReference) go;
+
+    passthru = {
+      inherit go go2nix goLock packages;
+    };
+
     env = {
       goModuleRoot = moduleRoot;
       goSubPackages = concatStringsSep " " subPackages;
       goLdflags = ldflagsStr;
+      goGcflags = gcflagsStr;
       goLockfile = "${goLock}";
       goPname = pname;
     }
