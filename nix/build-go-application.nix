@@ -40,7 +40,7 @@
 let
   inherit (builtins) concatStringsSep;
   inherit (helpers)
-    parseModKey
+    modKeyPath
     sanitizeName
     removePrefix
     escapeModPath
@@ -56,13 +56,14 @@ let
   moduleInfo = builtins.mapAttrs (
     modKey: mod:
     let
-      parsed = parseModKey modKey;
+      modPath = modKeyPath modKey mod.version;
       modSrc = moduleSrcs.${modKey};
-      fetchPath = if mod ? replaced then mod.replaced else parsed.path;
+      fetchPath = if mod ? replaced then mod.replaced else modPath;
     in
     {
-      inherit (parsed) path version;
-      dir = "${modSrc}/${escapeModPath fetchPath}@${parsed.version}";
+      path = modPath;
+      inherit (mod) version;
+      dir = "${modSrc}/${escapeModPath fetchPath}@${mod.version}";
     }
   ) lockfile.mod;
 

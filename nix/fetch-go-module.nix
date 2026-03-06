@@ -9,12 +9,12 @@
   helpers,
 }:
 let
-  inherit (helpers) parseModKey sanitizeName;
+  inherit (helpers) modKeyPath sanitizeName;
 in
 modKey: mod:
 let
-  parsed = parseModKey modKey;
-  fetchPath = if mod ? replaced then mod.replaced else parsed.path;
+  modPath = modKeyPath modKey mod.version;
+  fetchPath = if mod ? replaced then mod.replaced else modPath;
 in
 stdenvNoCC.mkDerivation {
   name = "gomod-${sanitizeName modKey}";

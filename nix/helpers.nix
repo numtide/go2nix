@@ -1,17 +1,9 @@
 # go2nix/nix/helpers.nix — shared utility functions.
 {
-  # Parse a module key like "github.com/foo/bar@v1.2.3" into { path, version }.
-  # Uses match instead of split: avoids regex iterator allocation and
-  # the 2*m+1 intermediate list that split produces (see primops.cc:4820).
-  parseModKey =
-    key:
-    let
-      m = builtins.match "(.+)@(.+)" key;
-    in
-    {
-      path = builtins.elemAt m 0;
-      version = builtins.elemAt m 1;
-    };
+  # Strip @version suffix from a module key to get the module path.
+  # Cheaper than regex: version is already a field, so just truncate.
+  modKeyPath = key: version:
+    builtins.substring 0 (builtins.stringLength key - builtins.stringLength version - 1) key;
 
   # Make a string safe for use as a Nix derivation name.
   sanitizeName = builtins.replaceStrings [ "/" "+" ] [ "-" "_" ];
