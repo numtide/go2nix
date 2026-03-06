@@ -14,7 +14,7 @@ func runlistFilesCmd(args []string) {
 	tagsFlag := fs.String("tags", "", "comma-separated build tags")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
-		slog.Error("usage: gob list-files [-tags=...] <package-dir>")
+		slog.Error("usage: go2nix list-files [-tags=...] <package-dir>")
 		os.Exit(1)
 	}
 
