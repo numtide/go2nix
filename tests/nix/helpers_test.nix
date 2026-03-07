@@ -5,7 +5,6 @@
 let
   helpers = import ../../nix/helpers.nix;
   inherit (helpers)
-    modKeyPath
     sanitizeName
     removePrefix
     escapeModPath
@@ -18,19 +17,6 @@ let
     else
       builtins.throw "${name}: got \"${actual}\", want \"${expected}\"";
 in
-
-# --- modKeyPath ---
-assert assertEq "modKeyPath basic" (modKeyPath "github.com/foo/bar@v1.2.3" "v1.2.3")
-  "github.com/foo/bar";
-
-assert assertEq "modKeyPath pre-release"
-  (modKeyPath "golang.org/x/net@v0.0.0-20231215" "v0.0.0-20231215")
-  "golang.org/x/net";
-
-assert assertEq "modKeyPath long path" (modKeyPath "github.com/a/b/c/d@v2.0.0" "v2.0.0")
-  "github.com/a/b/c/d";
-
-assert assertEq "modKeyPath v0" (modKeyPath "example.com/mod@v0.1.0" "v0.1.0") "example.com/mod";
 
 # --- sanitizeName ---
 assert assertEq "sanitizeName slashes" (sanitizeName "github.com/foo/bar") "github.com-foo-bar";

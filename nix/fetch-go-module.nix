@@ -15,12 +15,12 @@
   netrcFile,
 }:
 let
-  inherit (helpers) modKeyPath sanitizeName;
+  inherit (helpers) sanitizeName;
 in
-modKey: mod:
+modKey:
+{ hash, fetchPath }:
 let
-  modPath = modKeyPath modKey mod.version;
-  fetchPath = mod.replaced or modPath;
+  version = builtins.elemAt (builtins.match ".*@(.*)" modKey) 0;
 in
 stdenvNoCC.mkDerivation {
   name = "gomod-${sanitizeName modKey}";
@@ -28,7 +28,7 @@ stdenvNoCC.mkDerivation {
   # Fixed-output derivation: content-addressed by NAR hash.
   outputHashAlgo = "sha256";
   outputHashMode = "recursive";
-  outputHash = mod.hash;
+  outputHash = hash;
 
   nativeBuildInputs = [
     go
@@ -52,7 +52,7 @@ stdenvNoCC.mkDerivation {
       else
         ""
     }
-    go mod download "${fetchPath}@${mod.version}"
+    go mod download "${fetchPath}@${version}"
   '';
 
   # Skip other phases.

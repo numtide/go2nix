@@ -24,20 +24,10 @@ func TestCheckLockfile(t *testing.T) {
 	}
 
 	lockfileTOML := `
-[mod."github.com/foo/bar@v1.0.0"]
-version = "v1.0.0"
-hash = "sha256-aaa"
-num_pkgs = 1
-
-[mod."github.com/baz/qux/v2@v2.0.0"]
-version = "v2.0.0"
-hash = "sha256-bbb"
-num_pkgs = 1
-
-[mod."github.com/remote/replace@v3.0.0"]
-version = "v3.0.0"
-hash = "sha256-ccc"
-num_pkgs = 1
+[mod]
+"github.com/foo/bar@v1.0.0" = "sha256-aaa"
+"github.com/baz/qux/v2@v2.0.0" = "sha256-bbb"
+"github.com/remote/replace@v3.0.0" = "sha256-ccc"
 `
 	lockfilePath := filepath.Join(dir, "go2nix.lock")
 	writeFile("go2nix.lock", lockfileTOML)

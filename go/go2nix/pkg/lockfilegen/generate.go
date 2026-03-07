@@ -108,23 +108,15 @@ func Generate(dirs []string, output string, jobs int) error {
 	mods := collectModulesFromPackages(allPkgs)
 	slog.Info("modules found", "count", len(mods))
 
-	pkgsPerMod := map[string]int{}
-	for _, pkg := range allPkgs {
-		if pkg.Module != nil && pkg.Module.Version != "" {
-			v := pkg.Module.Version
-			if r := pkg.Module.Replace; r != nil && r.Version != "" {
-				v = r.Version
-			}
-			pkgsPerMod[pkg.Module.Path+"@"+v]++
-		}
-	}
-
 	var toHash []modInfo
-	resultMod := map[string]lockfile.ModEntry{}
+	resultMod := map[string]string{}
+	resultReplace := map[string]string{}
 	for _, m := range mods {
-		if cached, ok := cache.Mod[m.key]; ok && cached.Replaced == m.replaced() {
-			cached.NumPkgs = pkgsPerMod[m.key]
+		if cached, ok := cache.Mod[m.key]; ok && cache.Replace[m.key] == m.replaced() {
 			resultMod[m.key] = cached
+			if r := m.replaced(); r != "" {
+				resultReplace[m.key] = r
+			}
 		} else {
 			toHash = append(toHash, m)
 		}
@@ -143,11 +135,9 @@ func Generate(dirs []string, output string, jobs int) error {
 				return fmt.Errorf("hashing %s: %w", m.key, err)
 			}
 			mu.Lock()
-			resultMod[m.key] = lockfile.ModEntry{
-				Version:  m.version,
-				Hash:     h,
-				Replaced: m.replaced(),
-				NumPkgs:  pkgsPerMod[m.key],
+			resultMod[m.key] = h
+			if r := m.replaced(); r != "" {
+				resultReplace[m.key] = r
 			}
 			mu.Unlock()
 			return nil
@@ -157,7 +147,7 @@ func Generate(dirs []string, output string, jobs int) error {
 		return err
 	}
 
-	resultPkg := map[string]lockfile.PkgEntry{}
+	resultPkg := map[string]map[string][]string{}
 	for _, pkg := range allPkgs {
 		if pkg.Module == nil || pkg.Module.Version == "" {
 			continue
@@ -176,13 +166,18 @@ func Generate(dirs []string, output string, jobs int) error {
 		}
 		sort.Strings(imports)
 
-		resultPkg[pkg.ImportPath] = lockfile.PkgEntry{
-			Module:  modKey,
-			Imports: imports,
+		if resultPkg[modKey] == nil {
+			resultPkg[modKey] = map[string][]string{}
 		}
+		resultPkg[modKey][pkg.ImportPath] = imports
 	}
 
-	result := &lockfile.Lockfile{Mod: resultMod, Pkg: resultPkg}
+	// Omit replace if empty.
+	if len(resultReplace) == 0 {
+		resultReplace = nil
+	}
+
+	result := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace, Pkg: resultPkg}
 	slog.Info("writing lockfile", "mods", len(resultMod), "pkgs", len(resultPkg), "path", output)
 	return result.Write(output, lockfile.Header)
 }

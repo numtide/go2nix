@@ -12,10 +12,10 @@ func TestRoundtrip(t *testing.T) {
 	path := filepath.Join(dir, "lock.toml")
 
 	orig := &Lockfile{
-		Mod: map[string]ModEntry{
-			"github.com/foo/bar@v1.2.3": {Version: "v1.2.3", Hash: "sha256-aaa=", NumPkgs: 1},
+		Mod: map[string]string{
+			"github.com/foo/bar@v1.2.3": "sha256-aaa=",
 		},
-		Pkg: map[string]PkgEntry{},
+		Pkg: map[string]map[string][]string{},
 	}
 	if err := orig.Write(path, Header); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -25,7 +25,7 @@ func TestRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if got.Mod["github.com/foo/bar@v1.2.3"].Hash != "sha256-aaa=" {
+	if got.Mod["github.com/foo/bar@v1.2.3"] != "sha256-aaa=" {
 		t.Errorf("hash mismatch: %+v", got.Mod)
 	}
 }
@@ -35,18 +35,15 @@ func TestRoundtripAllFields(t *testing.T) {
 	path := filepath.Join(dir, "lock.toml")
 
 	orig := &Lockfile{
-		Mod: map[string]ModEntry{
-			"github.com/foo/bar@v1.2.3": {
-				Version:  "v1.2.3",
-				Hash:     "sha256-aaa=",
-				Replaced: "github.com/foo/bar-fork",
-				NumPkgs:  2,
-			},
+		Mod: map[string]string{
+			"github.com/foo/bar@v1.2.3": "sha256-aaa=",
 		},
-		Pkg: map[string]PkgEntry{
-			"github.com/foo/bar": {
-				Module:  "github.com/foo/bar@v1.2.3",
-				Imports: []string{"github.com/baz/qux", "github.com/x/y"},
+		Replace: map[string]string{
+			"github.com/foo/bar@v1.2.3": "github.com/foo/bar-fork",
+		},
+		Pkg: map[string]map[string][]string{
+			"github.com/foo/bar@v1.2.3": {
+				"github.com/foo/bar": {"github.com/baz/qux", "github.com/x/y"},
 			},
 		},
 	}
@@ -59,20 +56,40 @@ func TestRoundtripAllFields(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 
-	mod := got.Mod["github.com/foo/bar@v1.2.3"]
-	if mod.Replaced != "github.com/foo/bar-fork" {
-		t.Errorf("replaced: got %q, want %q", mod.Replaced, "github.com/foo/bar-fork")
-	}
-	if mod.NumPkgs != 2 {
-		t.Errorf("num_pkgs: got %d, want 2", mod.NumPkgs)
+	if got.Replace["github.com/foo/bar@v1.2.3"] != "github.com/foo/bar-fork" {
+		t.Errorf("replace: got %q, want %q", got.Replace["github.com/foo/bar@v1.2.3"], "github.com/foo/bar-fork")
 	}
 
-	pkg := got.Pkg["github.com/foo/bar"]
-	if pkg.Module != "github.com/foo/bar@v1.2.3" {
-		t.Errorf("module: got %q, want %q", pkg.Module, "github.com/foo/bar@v1.2.3")
+	pkgMap := got.Pkg["github.com/foo/bar@v1.2.3"]
+	if pkgMap == nil {
+		t.Fatal("expected pkg group for github.com/foo/bar@v1.2.3")
 	}
-	if len(pkg.Imports) != 2 || pkg.Imports[0] != "github.com/baz/qux" || pkg.Imports[1] != "github.com/x/y" {
-		t.Errorf("imports: got %v, want [github.com/baz/qux github.com/x/y]", pkg.Imports)
+	imports := pkgMap["github.com/foo/bar"]
+	if len(imports) != 2 || imports[0] != "github.com/baz/qux" || imports[1] != "github.com/x/y" {
+		t.Errorf("imports: got %v, want [github.com/baz/qux github.com/x/y]", imports)
+	}
+}
+
+func TestRoundtripOmitReplace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lock.toml")
+
+	orig := &Lockfile{
+		Mod: map[string]string{
+			"github.com/foo/bar@v1.0.0": "sha256-aaa=",
+		},
+		Pkg: map[string]map[string][]string{},
+	}
+	if err := orig.Write(path, Header); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "[replace]") {
+		t.Error("empty replace should be omitted from output")
 	}
 }
 
@@ -91,11 +108,11 @@ func TestReadUnknownKeys(t *testing.T) {
 	path := filepath.Join(dir, "lock.toml")
 
 	data := `
-[mod."github.com/foo/bar@v1.0.0"]
-  version = "v1.0.0"
-  hash = "sha256-aaa="
-  num_pkgs = 1
-  typo_field = "oops"
+[mod]
+"github.com/foo/bar@v1.0.0" = "sha256-aaa="
+
+[bogus]
+key = "oops"
 `
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
