@@ -9,6 +9,7 @@
   newScope,
   tags ? [ ],
   netrcFile ? null,
+  nixPackage ? null,
 }:
 let
   tagFlag = if tags == [ ] then "" else builtins.concatStringsSep "," tags;
@@ -26,6 +27,7 @@ lib.makeScope newScope (
       tags
       tagFlag
       netrcFile
+      nixPackage
       ;
 
     helpers = import ./helpers.nix;
@@ -39,5 +41,11 @@ lib.makeScope newScope (
     };
 
     buildGoApplication = callPackage ./build-go-application.nix { };
+
+    buildGoApplicationDynamic =
+      if nixPackage != null then
+        callPackage ./build-go-application-dynamic.nix { inherit nixPackage; }
+      else
+        throw "buildGoApplicationDynamic requires nixPackage to be set in mk-go-env";
   }
 )

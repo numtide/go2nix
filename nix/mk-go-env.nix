@@ -11,6 +11,7 @@
   callPackage,
   tags ? [ ],
   netrcFile ? null,
+  nixPackage ? null,
 }:
 callPackage ./scope.nix {
   inherit
@@ -18,5 +19,6 @@ callPackage ./scope.nix {
     go2nix
     tags
     netrcFile
+    nixPackage
     ;
 }
