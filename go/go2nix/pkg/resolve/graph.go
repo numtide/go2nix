@@ -1,12 +1,11 @@
 package resolve
 
 import (
-	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/nixdrv"
+	"github.com/numtide/go2nix/pkg/toposort"
 )
 
 // ResolvedPkg holds a resolved package with all info needed to create a derivation.
@@ -93,56 +92,11 @@ func buildPackageGraph(
 // topoSort returns packages in dependency order (leaves first).
 // Returns an error if cycles are detected.
 func topoSort(pkgs map[string]*ResolvedPkg) ([]*ResolvedPkg, error) {
-	const (
-		unvisited = 0
-		visiting  = 1
-		visited   = 2
-	)
-
-	state := make(map[string]int, len(pkgs))
-	var sorted []*ResolvedPkg
-
-	var visit func(string) error
-	visit = func(ip string) error {
-		switch state[ip] {
-		case visited:
-			return nil
-		case visiting:
-			return fmt.Errorf("import cycle detected involving %s", ip)
+	return toposort.Sort(pkgs, func(key string) []string {
+		if pkg, ok := pkgs[key]; ok {
+			return pkg.Imports
 		}
-		state[ip] = visiting
-
-		pkg, ok := pkgs[ip]
-		if !ok {
-			// External dependency not in our graph (e.g., stdlib) — skip
-			state[ip] = visited
-			return nil
-		}
-
-		for _, dep := range pkg.Imports {
-			if err := visit(dep); err != nil {
-				return err
-			}
-		}
-
-		state[ip] = visited
-		sorted = append(sorted, pkg)
 		return nil
-	}
-
-	// Visit all packages (deterministic order by sorting keys)
-	keys := make([]string, 0, len(pkgs))
-	for k := range pkgs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
-		if err := visit(k); err != nil {
-			return nil, err
-		}
-	}
-
-	return sorted, nil
+	})
 }
 

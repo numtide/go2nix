@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/numtide/go2nix/pkg/toposort"
 )
 
 func TestIsLocalImport(t *testing.T) {
@@ -31,7 +33,10 @@ func TestIsLocalImport(t *testing.T) {
 }
 
 func TestTopoSort_Empty(t *testing.T) {
-	result, err := topoSort(map[string]*LocalPkg{}, map[string][]string{})
+	deps := map[string][]string{}
+	result, err := toposort.Sort(map[string]*LocalPkg{}, func(key string) []string {
+		return deps[key]
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +57,9 @@ func TestTopoSort_Linear(t *testing.T) {
 		"b": {"a"},
 		"c": {"b"},
 	}
-	result, err := topoSort(pkgs, deps)
+	result, err := toposort.Sort(pkgs, func(key string) []string {
+		return deps[key]
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +88,9 @@ func TestTopoSort_Diamond(t *testing.T) {
 		"c": {"a"},
 		"d": {"b", "c"},
 	}
-	result, err := topoSort(pkgs, deps)
+	result, err := toposort.Sort(pkgs, func(key string) []string {
+		return deps[key]
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +115,9 @@ func TestTopoSort_Cycle(t *testing.T) {
 		"a": {"b"},
 		"b": {"a"},
 	}
-	_, err := topoSort(pkgs, deps)
+	_, err := toposort.Sort(pkgs, func(key string) []string {
+		return deps[key]
+	})
 	if err == nil {
 		t.Fatal("expected cycle error, got nil")
 	}
@@ -127,10 +138,12 @@ func TestTopoSort_Deterministic(t *testing.T) {
 		"z": {},
 	}
 	// Run multiple times — map iteration is non-deterministic, but output
-	// should be stable because topoSort sorts map keys.
+	// should be stable because toposort.Sort sorts map keys.
 	var first []string
 	for i := 0; i < 20; i++ {
-		result, err := topoSort(pkgs, deps)
+		result, err := toposort.Sort(pkgs, func(key string) []string {
+			return deps[key]
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

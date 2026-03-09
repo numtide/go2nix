@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/gofiles"
+	"github.com/numtide/go2nix/pkg/toposort"
 	"golang.org/x/mod/modfile"
 )
 
@@ -120,11 +121,9 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 		}
 	}
 
-	sorted, err := topoSort(pkgs, localDeps)
-	if err != nil {
-		return nil, err
-	}
-	return sorted, nil
+	return toposort.Sort(pkgs, func(key string) []string {
+		return localDeps[key]
+	})
 }
 
 func isLocalImport(imp string, prefixes []string) bool {
@@ -134,39 +133,4 @@ func isLocalImport(imp string, prefixes []string) bool {
 		}
 	}
 	return false
-}
-
-func topoSort(pkgs map[string]*LocalPkg, localDeps map[string][]string) ([]*LocalPkg, error) {
-	var result []*LocalPkg
-	visited := map[string]bool{}
-	inStack := map[string]bool{}
-
-	var visit func(string) error
-	visit = func(ip string) error {
-		if visited[ip] {
-			return nil
-		}
-		if inStack[ip] {
-			return fmt.Errorf("import cycle detected involving package %s", ip)
-		}
-		inStack[ip] = true
-		for _, dep := range localDeps[ip] {
-			if err := visit(dep); err != nil {
-				return err
-			}
-		}
-		delete(inStack, ip)
-		visited[ip] = true
-		if pkg, ok := pkgs[ip]; ok {
-			result = append(result, pkg)
-		}
-		return nil
-	}
-
-	for _, ip := range slices.Sorted(maps.Keys(pkgs)) {
-		if err := visit(ip); err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
 }
