@@ -34,6 +34,7 @@ type Config struct {
 	LDFlags     string // linker flags
 	Overrides   string // JSON-encoded packageOverrides
 	CACert      string // path to CA certificate bundle
+	NetrcFile   string // path to .netrc file for private module authentication
 	Output      string // $out path
 }
 

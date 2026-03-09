@@ -24,6 +24,7 @@
   bash,
   cacert,
   helpers,
+  netrcFile,
   stdlib,
 }:
 
@@ -107,6 +108,7 @@ let
         --ldflags ${lib.escapeShellArg (lib.concatStringsSep " " ldflags)} \
         --overrides ${lib.escapeShellArg overridesJSON} \
         --cacert ${cacert}/etc/ssl/certs/ca-bundle.crt \
+        ${lib.optionalString (netrcFile != null) "--netrc-file ${netrcFile}"} \
         --output $out
     '';
 

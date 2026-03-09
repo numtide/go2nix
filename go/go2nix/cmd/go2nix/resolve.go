@@ -24,6 +24,7 @@ func runResolveCmd(args []string) {
 	ldflags := fs.String("ldflags", "", "linker flags")
 	overrides := fs.String("overrides", "", "JSON-encoded packageOverrides")
 	cacert := fs.String("cacert", "", "path to CA certificate bundle")
+	netrcFile := fs.String("netrc-file", "", "path to .netrc file for private module authentication")
 	output := fs.String("output", "", "$out path")
 	fs.Parse(args)
 
@@ -65,6 +66,7 @@ func runResolveCmd(args []string) {
 		LDFlags:     *ldflags,
 		Overrides:   *overrides,
 		CACert:      *cacert,
+		NetrcFile:   *netrcFile,
 		Output:      *output,
 	}
 
