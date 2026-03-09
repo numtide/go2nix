@@ -6,9 +6,10 @@ package resolve
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -236,20 +237,50 @@ func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]nixdrv.StorePath) (ma
 }
 
 // setupGOMODCACHE creates a temporary GOMODCACHE by merging all FOD outputs
-// using recursive symlink copies.
+// into a single directory tree using symlinks.
+//
+// Each FOD output is a GOMODCACHE subtree (GOMODCACHE=$out). Multiple FODs
+// share directory prefixes (e.g., cache/download/golang.org/) but never share
+// leaf files since each FOD downloads a unique module@version. We walk each
+// FOD, create real directories for intermediate paths, and symlink leaf files.
 func setupGOMODCACHE(fodPaths map[string]nixdrv.StorePath) (string, error) {
 	gomodcache, err := os.MkdirTemp("", "gomodcache-")
 	if err != nil {
 		return "", err
 	}
 	for _, fodPath := range fodPaths {
-		cmd := exec.Command("cp", "-rs", fodPath.String()+"/.", gomodcache)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		src := fodPath.String()
+		if err := symlinkTree(src, gomodcache); err != nil {
 			os.RemoveAll(gomodcache)
-			return "", fmt.Errorf("merging FOD %s: %w\n%s", fodPath, err, out)
+			return "", fmt.Errorf("merging FOD %s: %w", fodPath, err)
 		}
 	}
 	return gomodcache, nil
+}
+
+// symlinkTree recursively walks src and mirrors its structure into dst.
+// Directories are created as real directories; files are symlinked.
+func symlinkTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		// Symlink leaf files. If it already exists (shouldn't happen since
+		// each FOD has unique module@version files), skip it.
+		if _, err := os.Lstat(target); err == nil {
+			return nil
+		}
+		return os.Symlink(path, target)
+	})
 }
 
 // createPackageDrv creates a CA derivation for a single package.
