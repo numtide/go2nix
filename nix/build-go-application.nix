@@ -42,91 +42,54 @@
 
 let
   inherit (builtins) concatStringsSep;
-  inherit (helpers)
-    sanitizeName
-    removePrefix
-    escapeModPath
-    ;
 
-  lockfile = builtins.fromTOML (builtins.readFile goLock);
-  replaces = lockfile.replace or { };
+  # --- Lockfile processing: WASM fast path with pure-Nix fallback ---
 
-  # builtins.match with 2 capture groups → ListBuilder(2) uses inline storage
-  # (no heap alloc), unlike builtins.split which allocates a 3-element list +
-  # inner capture-group lists.
-  splitModKey =
-    key:
-    let
-      m = builtins.match "(.*)@(.*)" key;
-    in
-    {
-      path = builtins.elemAt m 0;
-      version = builtins.elemAt m 1;
-    };
+  processLockfilePureNix = import ./process-lockfile.nix;
+
+  processed =
+    if builtins ? wasm then
+      builtins.wasm { path = ./go2nix-wasm.wasm; function = "process_lockfile"; } goLock
+    else
+      processLockfilePureNix goLock;
 
   # --- Third-party package set ---
   fetchModule = fetchers.fetchGoModule;
 
-  # Single mapAttrs over lockfile.hash: splitModKey is called once per module.
-  # The fetchModule call is lazy — only evaluated when dir is accessed.
   moduleInfo = builtins.mapAttrs (
-    modKey: hash:
+    modKey: mod:
     let
-      mk = splitModKey modKey;
-      fetchPath = replaces.${modKey} or mk.path;
-      src = fetchModule modKey { inherit hash fetchPath; };
+      src = fetchModule modKey { inherit (mod) hash fetchPath; };
     in
-    {
-      path = mk.path;
-      version = mk.version;
-      dir = "${src}/${escapeModPath fetchPath}@${mk.version}";
+    mod // { dir = "${src}/${mod.dirSuffix}"; }
+  ) processed.modules;
+
+  packages = builtins.mapAttrs (
+    importPath: pkg:
+    let
+      minfo = moduleInfo.${pkg.modKey};
+      srcDir = if pkg.subdir == "" then minfo.dir else "${minfo.dir}/${pkg.subdir}";
+
+      # Direct dependency derivations (resolved lazily via Nix's laziness).
+      deps = map (imp: packages.${imp}) pkg.imports;
+
+      # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
+      pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
+      extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
+      extraEnv = builtins.removeAttrs pkgOverride [ "nativeBuildInputs" ];
+    in
+    stdenv.mkDerivation {
+      name = pkg.drvName;
+
+      nativeBuildInputs = [ hooks.goModuleHook ] ++ extraNativeBuildInputs;
+      buildInputs = deps;
+
+      env = {
+        goPackagePath = importPath;
+        goPackageSrcDir = srcDir;
+      } // extraEnv;
     }
-  ) lockfile.hash;
-
-  packages = builtins.listToAttrs (
-    builtins.concatLists (
-      builtins.attrValues (
-        builtins.mapAttrs (
-          modKey: pkgMap:
-          let
-            minfo = moduleInfo.${modKey};
-          in
-          builtins.attrValues (
-            builtins.mapAttrs (
-              importPath: imports:
-              let
-                subdir =
-                  if importPath == minfo.path then "" else removePrefix "${minfo.path}/" importPath;
-                srcDir = if subdir == "" then minfo.dir else "${minfo.dir}/${subdir}";
-
-                # Direct dependency derivations (resolved lazily via Nix's laziness).
-                deps = map (imp: packages.${imp}) imports;
-
-                # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
-                pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
-                extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
-                extraEnv = builtins.removeAttrs pkgOverride [ "nativeBuildInputs" ];
-              in
-              {
-                name = importPath;
-                value = stdenv.mkDerivation {
-                  name = "gopkg-${sanitizeName importPath}";
-
-                  nativeBuildInputs = [ hooks.goModuleHook ] ++ extraNativeBuildInputs;
-                  buildInputs = deps;
-
-                  env = {
-                    goPackagePath = importPath;
-                    goPackageSrcDir = srcDir;
-                  } // extraEnv;
-                };
-              }
-            ) pkgMap
-          )
-        ) lockfile.pkg
-      )
-    )
-  );
+  ) processed.packages;
 
   require = builtins.attrValues packages;
 

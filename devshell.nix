@@ -2,6 +2,12 @@
 pkgs.mkShell {
   packages = [
     pkgs.go
+    pkgs.cargo
+    pkgs.rustc
+    pkgs.rustfmt
+    pkgs.binaryen
+    pkgs.lld
+    pkgs.time
   ];
 
   shellHook = ''
