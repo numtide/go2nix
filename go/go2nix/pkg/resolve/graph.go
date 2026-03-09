@@ -1,0 +1,164 @@
+package resolve
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/numtide/go2nix/pkg/golist"
+	"github.com/numtide/go2nix/pkg/nixdrv"
+)
+
+// ResolvedPkg holds a resolved package with all info needed to create a derivation.
+type ResolvedPkg struct {
+	ImportPath string
+	ModKey     string   // "" for local packages
+	GoFiles    []string // .go source files (basenames)
+	CgoFiles   []string
+	CFiles     []string
+	CXXFiles   []string
+	SFiles     []string
+	HFiles     []string
+	Imports    []string // non-stdlib import paths
+	IsLocal    bool
+	FodPath    nixdrv.StorePath // FOD output path (third-party only)
+	FetchPath  string           // module fetch path (for source lookup within FOD)
+	Version    string
+	Subdir     string // package path relative to module root
+	Name       string // Go package name (e.g., "main", "ssh")
+
+	// Set during derivation creation
+	DrvPath nixdrv.StorePath // .drv path after nix derivation add
+}
+
+// buildPackageGraph converts go list packages into ResolvedPkgs.
+// stdPkgs is the set of standard library import paths to exclude from imports.
+// fodPaths maps modKey → materialized FOD StorePath.
+func buildPackageGraph(
+	pkgs []golist.Pkg,
+	fodPaths map[string]nixdrv.StorePath,
+) map[string]*ResolvedPkg {
+	// Collect all non-stdlib import paths for filtering
+	knownPkgs := make(map[string]bool, len(pkgs))
+	for _, pkg := range pkgs {
+		if !pkg.Standard {
+			knownPkgs[pkg.ImportPath] = true
+		}
+	}
+
+	result := make(map[string]*ResolvedPkg, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg.Standard {
+			continue
+		}
+
+		rp := &ResolvedPkg{
+			ImportPath: pkg.ImportPath,
+			GoFiles:    pkg.GoFiles,
+			CgoFiles:   pkg.CgoFiles,
+			CFiles:     pkg.CFiles,
+			CXXFiles:   pkg.CXXFiles,
+			SFiles:     pkg.SFiles,
+			HFiles:     pkg.HFiles,
+			Name:       pkg.Name,
+		}
+
+		// Filter imports to non-stdlib only
+		for _, imp := range pkg.Imports {
+			if knownPkgs[imp] {
+				rp.Imports = append(rp.Imports, imp)
+			}
+		}
+
+		if pkg.Module != nil && !pkg.Module.IsLocal() {
+			// Third-party package
+			modKey := pkg.Module.ModKey()
+			rp.ModKey = modKey
+			rp.FetchPath = pkg.Module.FetchPath()
+			rp.Version = pkg.Module.Version
+			if r := pkg.Module.Replace; r != nil && r.Version != "" {
+				rp.Version = r.Version
+			}
+
+			// Compute subdir: package path relative to module root
+			modPath := pkg.Module.Path
+			if pkg.ImportPath == modPath {
+				rp.Subdir = ""
+			} else {
+				rp.Subdir = strings.TrimPrefix(pkg.ImportPath, modPath+"/")
+			}
+
+			if fp, ok := fodPaths[modKey]; ok {
+				rp.FodPath = fp
+			}
+		} else {
+			rp.IsLocal = true
+		}
+
+		result[pkg.ImportPath] = rp
+	}
+	return result
+}
+
+// topoSort returns packages in dependency order (leaves first).
+// Returns an error if cycles are detected.
+func topoSort(pkgs map[string]*ResolvedPkg) ([]*ResolvedPkg, error) {
+	const (
+		unvisited = 0
+		visiting  = 1
+		visited   = 2
+	)
+
+	state := make(map[string]int, len(pkgs))
+	var sorted []*ResolvedPkg
+
+	var visit func(string) error
+	visit = func(ip string) error {
+		switch state[ip] {
+		case visited:
+			return nil
+		case visiting:
+			return fmt.Errorf("import cycle detected involving %s", ip)
+		}
+		state[ip] = visiting
+
+		pkg, ok := pkgs[ip]
+		if !ok {
+			// External dependency not in our graph (e.g., stdlib) — skip
+			state[ip] = visited
+			return nil
+		}
+
+		for _, dep := range pkg.Imports {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+
+		state[ip] = visited
+		sorted = append(sorted, pkg)
+		return nil
+	}
+
+	// Visit all packages (deterministic order by sorting keys)
+	keys := make([]string, 0, len(pkgs))
+	for k := range pkgs {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+
+	for _, k := range keys {
+		if err := visit(k); err != nil {
+			return nil, err
+		}
+	}
+
+	return sorted, nil
+}
+
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
