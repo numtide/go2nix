@@ -122,7 +122,7 @@ func Resolve(cfg Config) error {
 	slog.Info("packages discovered", "count", len(pkgs))
 
 	// Step 6: Build and topo-sort package graph
-	graph := buildPackageGraph(pkgs, fodPaths)
+	graph := buildPackageGraph(pkgs, fodPaths, cfg.Src)
 	sorted, err := topoSort(graph)
 	if err != nil {
 		return fmt.Errorf("topological sort: %w", err)

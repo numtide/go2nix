@@ -110,6 +110,7 @@ func TestBuildPackageGraph(t *testing.T) {
 		{
 			ImportPath: "mymod/cmd/myapp",
 			Name:       "main",
+			Dir:        "/nix/store/src/cmd/myapp",
 			GoFiles:    []string{"main.go"},
 			Imports:    []string{"golang.org/x/crypto/ssh", "fmt"},
 			Module:     &golist.Module{Path: "mymod", Main: true},
@@ -120,7 +121,7 @@ func TestBuildPackageGraph(t *testing.T) {
 		"golang.org/x/crypto@v0.17.0": fodPath,
 	}
 
-	graph := buildPackageGraph(pkgs, fodPaths)
+	graph := buildPackageGraph(pkgs, fodPaths, "/nix/store/src")
 
 	// Check third-party package
 	ssh := graph["golang.org/x/crypto/ssh"]
@@ -155,8 +156,50 @@ func TestBuildPackageGraph(t *testing.T) {
 	if myapp.Name != "main" {
 		t.Errorf("myapp name = %q", myapp.Name)
 	}
-	// Local packages should have computed Subdir
+	// Local packages should have computed Subdir from Dir
 	if myapp.Subdir != "cmd/myapp" {
 		t.Errorf("myapp subdir = %q, want %q", myapp.Subdir, "cmd/myapp")
+	}
+}
+
+func TestBuildPackageGraph_LocalReplace(t *testing.T) {
+	// Simulate: replace example.com/shared => ./libs/shared
+	// Package example.com/shared/utils lives at /src/libs/shared/utils on disk.
+	pkgs := []golist.Pkg{
+		{
+			ImportPath: "example.com/shared/utils",
+			Name:       "utils",
+			Dir:        "/src/libs/shared/utils",
+			GoFiles:    []string{"utils.go"},
+			Imports:    []string{"fmt"},
+			Module: &golist.Module{
+				Path:    "example.com/shared",
+				Version: "v1.0.0",
+				Replace: &golist.Replace{Path: "./libs/shared"},
+			},
+		},
+		{
+			ImportPath: "mymod/main",
+			Name:       "main",
+			Dir:        "/src",
+			GoFiles:    []string{"main.go"},
+			Imports:    []string{"example.com/shared/utils"},
+			Module:     &golist.Module{Path: "mymod", Main: true},
+		},
+	}
+
+	graph := buildPackageGraph(pkgs, nil, "/src")
+
+	utils := graph["example.com/shared/utils"]
+	if utils == nil {
+		t.Fatal("missing utils package")
+	}
+	if !utils.IsLocal {
+		t.Error("utils should be local (local replace)")
+	}
+	// Subdir must be relative to srcRoot, reflecting the actual filesystem layout,
+	// NOT the import path structure.
+	if utils.Subdir != "libs/shared/utils" {
+		t.Errorf("utils subdir = %q, want %q", utils.Subdir, "libs/shared/utils")
 	}
 }

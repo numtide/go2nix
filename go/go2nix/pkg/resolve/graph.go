@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/golist"
@@ -31,11 +32,12 @@ type ResolvedPkg struct {
 }
 
 // buildPackageGraph converts go list packages into ResolvedPkgs.
-// stdPkgs is the set of standard library import paths to exclude from imports.
+// srcRoot is the source store path for computing local package subdirectories.
 // fodPaths maps modKey → materialized FOD StorePath.
 func buildPackageGraph(
 	pkgs []golist.Pkg,
 	fodPaths map[string]nixdrv.StorePath,
+	srcRoot string,
 ) map[string]*ResolvedPkg {
 	result := make(map[string]*ResolvedPkg, len(pkgs))
 	for _, pkg := range pkgs {
@@ -78,8 +80,16 @@ func buildPackageGraph(
 			}
 		} else {
 			rp.IsLocal = true
-			// Compute subdir for local packages (relative to module root)
-			if pkg.Module != nil && pkg.ImportPath != pkg.Module.Path {
+			// Compute subdir for local packages relative to source root.
+			// Use pkg.Dir from go list (the actual filesystem path) so that
+			// local replace directives (e.g., replace foo => ./libs/foo)
+			// resolve to the correct subdirectory.
+			if pkg.Dir != "" && srcRoot != "" {
+				if rel, err := filepath.Rel(srcRoot, pkg.Dir); err == nil {
+					rp.Subdir = rel
+				}
+			} else if pkg.Module != nil && pkg.ImportPath != pkg.Module.Path {
+				// Fallback when Dir is not available
 				rp.Subdir = strings.TrimPrefix(pkg.ImportPath, pkg.Module.Path+"/")
 			}
 		}
