@@ -6,9 +6,10 @@ import (
 )
 
 // SanitizeName converts a Go import path to a valid Nix derivation name component.
-// Matches helpers.nix sanitizeName: replace / → -, + → _, @ → -, . → -
+// Matches helpers.nix sanitizeName: replace / → -, + → _
+// Dots and @ are valid in Nix derivation names and are preserved.
 func SanitizeName(s string) string {
-	r := strings.NewReplacer("/", "-", "+", "_", "@", "-", ".", "-")
+	r := strings.NewReplacer("/", "-", "+", "_")
 	return r.Replace(s)
 }
 
