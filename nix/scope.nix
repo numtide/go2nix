@@ -13,11 +13,23 @@
 }:
 let
   tagFlag = if tags == [ ] then "" else builtins.concatStringsSep "," tags;
+
+  # Feature detection: dynamic derivations require builtins.outputOf
+  # (available when Nix has the dynamic-derivations experimental feature).
+  hasDynamicDerivations = builtins ? outputOf;
 in
 lib.makeScope newScope (
   self:
   let
     inherit (self) callPackage;
+
+    buildGoApplicationLockfile = callPackage ./build-go-application.nix { };
+
+    buildGoApplicationDynamic' =
+      if nixPackage != null then
+        callPackage ./build-go-application-dynamic.nix { inherit nixPackage; }
+      else
+        throw "buildGoApplicationDynamic requires nixPackage to be set in mk-go-env";
   in
   {
     inherit
@@ -28,6 +40,7 @@ lib.makeScope newScope (
       tagFlag
       netrcFile
       nixPackage
+      hasDynamicDerivations
       ;
 
     helpers = import ./helpers.nix;
@@ -40,12 +53,17 @@ lib.makeScope newScope (
       fetchGoModule = callPackage ./fetch-go-module.nix { };
     };
 
-    buildGoApplication = callPackage ./build-go-application.nix { };
-
-    buildGoApplicationDynamic =
-      if nixPackage != null then
-        callPackage ./build-go-application-dynamic.nix { inherit nixPackage; }
+    # When nixPackage is provided and Nix supports dynamic derivations,
+    # automatically use the dynamic path. Otherwise fall back to the
+    # lockfile-based builder.
+    buildGoApplication =
+      if hasDynamicDerivations && nixPackage != null then
+        buildGoApplicationDynamic'
       else
-        throw "buildGoApplicationDynamic requires nixPackage to be set in mk-go-env";
+        buildGoApplicationLockfile;
+
+    # Explicit access to each builder path.
+    inherit buildGoApplicationLockfile;
+    buildGoApplicationDynamic = buildGoApplicationDynamic';
   }
 )
