@@ -74,7 +74,8 @@ func (m modInfo) replaced() string {
 }
 
 // Generate creates a go2nix lockfile from the given project directories.
-func Generate(dirs []string, output string, jobs int) error {
+// If minimal is true, only module hashes are collected (no [pkg] section).
+func Generate(dirs []string, output string, jobs int, minimal bool) error {
 	cache, err := lockfile.Read(output)
 	if err != nil {
 		return fmt.Errorf("reading existing lockfile: %w", err)
@@ -147,29 +148,32 @@ func Generate(dirs []string, output string, jobs int) error {
 		return err
 	}
 
-	resultPkg := map[string]map[string][]string{}
-	for _, pkg := range allPkgs {
-		if pkg.Module == nil || pkg.Module.Version == "" {
-			continue
-		}
-		version := pkg.Module.Version
-		if r := pkg.Module.Replace; r != nil && r.Version != "" {
-			version = r.Version
-		}
-		modKey := pkg.Module.Path + "@" + version
-
-		var imports []string
-		for _, imp := range pkg.Imports {
-			if thirdPartyPkgs[imp] {
-				imports = append(imports, imp)
+	var resultPkg map[string]map[string][]string
+	if !minimal {
+		resultPkg = map[string]map[string][]string{}
+		for _, pkg := range allPkgs {
+			if pkg.Module == nil || pkg.Module.Version == "" {
+				continue
 			}
-		}
-		sort.Strings(imports)
+			version := pkg.Module.Version
+			if r := pkg.Module.Replace; r != nil && r.Version != "" {
+				version = r.Version
+			}
+			modKey := pkg.Module.Path + "@" + version
 
-		if resultPkg[modKey] == nil {
-			resultPkg[modKey] = map[string][]string{}
+			var imports []string
+			for _, imp := range pkg.Imports {
+				if thirdPartyPkgs[imp] {
+					imports = append(imports, imp)
+				}
+			}
+			sort.Strings(imports)
+
+			if resultPkg[modKey] == nil {
+				resultPkg[modKey] = map[string][]string{}
+			}
+			resultPkg[modKey][pkg.ImportPath] = imports
 		}
-		resultPkg[modKey][pkg.ImportPath] = imports
 	}
 
 	// Omit replace if empty.

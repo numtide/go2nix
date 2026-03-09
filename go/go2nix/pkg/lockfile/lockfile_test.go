@@ -127,6 +127,38 @@ key = "oops"
 	}
 }
 
+func TestMinimalLockfileOmitsPkg(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lock.toml")
+
+	// Minimal lockfile: Pkg is nil (not empty map)
+	orig := &Lockfile{
+		Mod: map[string]string{
+			"github.com/foo/bar@v1.0.0": "sha256-aaa=",
+		},
+	}
+	if err := orig.Write(path, Header); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "[pkg]") {
+		t.Error("nil Pkg should be omitted from output")
+	}
+
+	// Should still be readable
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Mod["github.com/foo/bar@v1.0.0"] != "sha256-aaa=" {
+		t.Errorf("hash mismatch: %+v", got.Mod)
+	}
+}
+
 func TestReadMalformedTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lock.toml")

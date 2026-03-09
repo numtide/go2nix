@@ -14,7 +14,7 @@ import (
 type Lockfile struct {
 	Mod     map[string]string              `toml:"mod"`
 	Replace map[string]string              `toml:"replace,omitempty"`
-	Pkg     map[string]map[string][]string `toml:"pkg"`
+	Pkg     map[string]map[string][]string `toml:"pkg,omitempty"`
 }
 
 // Read reads a lockfile from path. Returns an empty lockfile if the file
