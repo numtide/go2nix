@@ -107,6 +107,8 @@ let
         --tags ${lib.escapeShellArg (lib.concatStringsSep "," tags)} \
         --ldflags ${lib.escapeShellArg (lib.concatStringsSep " " ldflags)} \
         --overrides ${lib.escapeShellArg overridesJSON} \
+        ${lib.optionalString (CGO_ENABLED != null) "--cgo-enabled ${toString CGO_ENABLED}"} \
+        ${lib.optionalString (gcflags != [ ]) "--gcflags ${lib.escapeShellArg (lib.concatStringsSep " " gcflags)}"} \
         --cacert ${cacert}/etc/ssl/certs/ca-bundle.crt \
         ${lib.optionalString (netrcFile != null) "--netrc-file ${netrcFile}"} \
         --output $out

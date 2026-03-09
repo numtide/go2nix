@@ -9,13 +9,12 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
-	"sync"
 
 	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/lockfile"
 	"github.com/numtide/go2nix/pkg/nixdrv"
-	"golang.org/x/sync/errgroup"
 )
 
 // Config holds all configuration for the resolve flow.
@@ -32,6 +31,8 @@ type Config struct {
 	SubPackages string // comma-separated sub-packages (default "./...")
 	Tags        string // comma-separated build tags
 	LDFlags     string // linker flags
+	CGOEnabled  string // "0" or "1" to override cgo detection, empty for auto
+	GCFlags     string // extra flags for go tool compile
 	Overrides   string // JSON-encoded packageOverrides
 	CACert      string // path to CA certificate bundle
 	NetrcFile   string // path to .netrc file for private module authentication
@@ -96,17 +97,22 @@ func Resolve(cfg Config) error {
 		subPkgs = strings.Split(cfg.SubPackages, ",")
 	}
 
+	golistEnv := []string{
+		"GOMODCACHE=" + gomodcache,
+		"GONOSUMCHECK=*",
+		"GOPROXY=off",
+		"GOFLAGS=-mod=mod",
+	}
+	if cfg.CGOEnabled != "" {
+		golistEnv = append(golistEnv, "CGO_ENABLED="+cfg.CGOEnabled)
+	}
+
 	pkgs, err := golist.ListDeps(golist.ListDepsOptions{
-		Dir:    cfg.Src,
-		GoBin:  cfg.GoBin,
-		Tags:   cfg.Tags,
-		Patterns: subPkgs,
-		Env: []string{
-			"GOMODCACHE=" + gomodcache,
-			"GONOSUMCHECK=*",
-			"GOPROXY=off",
-			"GOFLAGS=-mod=mod",
-		},
+		Dir:       cfg.Src,
+		GoBin:     cfg.GoBin,
+		Tags:      cfg.Tags,
+		Patterns:  subPkgs,
+		Env:       golistEnv,
 		KeepLocal: true,
 	})
 	if err != nil {
@@ -165,7 +171,7 @@ func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) 
 		}
 
 		drvName := nixdrv.ModDrvName(modKey)
-		script := fodScript(cfg.GoBin, fetchPath, version, cfg.CACert)
+		script := fodScript(cfg.GoBin, fetchPath, version, cfg.CACert, cfg.NetrcFile)
 
 		drv := nixdrv.NewDerivation(drvName, cfg.System, bashStorePath+"/bin/bash")
 		drv.AddArg("-c")
@@ -175,11 +181,14 @@ func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) 
 		// Set env.out to standard placeholder
 		drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
 
-		// Input sources: go binary, cacert
+		// Input sources: go binary, cacert, netrc
 		goStoreDir := storeDirOf(cfg.GoBin)
 		drv.AddInputSrc(goStoreDir)
 		if cfg.CACert != "" {
 			drv.AddInputSrc(storeDirOf(cfg.CACert))
+		}
+		if cfg.NetrcFile != "" {
+			drv.AddInputSrc(storeDirOf(cfg.NetrcFile))
 		}
 
 		drvPath, err := nix.DerivationAdd(drv)
@@ -191,33 +200,37 @@ func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) 
 	return result, nil
 }
 
-// buildFODs materializes all FODs in parallel.
+// buildFODs materializes all FODs in a single batched nix build call.
 // Returns modKey → output StorePath.
 func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]nixdrv.StorePath) (map[string]nixdrv.StorePath, error) {
-	var mu sync.Mutex
-	var buildMu sync.Mutex // serialize nix build calls (nix-ninja pattern)
-	result := make(map[string]nixdrv.StorePath, len(fodDrvPaths))
-
-	var g errgroup.Group
-	for modKey, drvPath := range fodDrvPaths {
-		g.Go(func() error {
-			buildMu.Lock()
-			paths, err := nix.Build(drvPath.String() + "^out")
-			buildMu.Unlock()
-			if err != nil {
-				return fmt.Errorf("building FOD for %s: %w", modKey, err)
-			}
-			if len(paths) == 0 {
-				return fmt.Errorf("no output for FOD %s", modKey)
-			}
-			mu.Lock()
-			result[modKey] = paths[0]
-			mu.Unlock()
-			return nil
-		})
+	if len(fodDrvPaths) == 0 {
+		return map[string]nixdrv.StorePath{}, nil
 	}
-	if err := g.Wait(); err != nil {
-		return nil, err
+
+	// Build a deterministic ordered list of modKeys and installables
+	modKeys := make([]string, 0, len(fodDrvPaths))
+	for k := range fodDrvPaths {
+		modKeys = append(modKeys, k)
+	}
+	sort.Strings(modKeys)
+
+	installables := make([]string, len(modKeys))
+	for i, k := range modKeys {
+		installables[i] = fodDrvPaths[k].String() + "^out"
+	}
+
+	// Single nix build call — Nix handles parallelism internally
+	paths, err := nix.Build(installables...)
+	if err != nil {
+		return nil, fmt.Errorf("building FODs: %w", err)
+	}
+	if len(paths) != len(modKeys) {
+		return nil, fmt.Errorf("expected %d FOD outputs, got %d", len(modKeys), len(paths))
+	}
+
+	result := make(map[string]nixdrv.StorePath, len(modKeys))
+	for i, k := range modKeys {
+		result[k] = paths[i]
 	}
 	return result, nil
 }
@@ -260,7 +273,10 @@ func createPackageDrv(
 
 	// Set env vars
 	drv.SetEnv("importPath", pkg.ImportPath)
-	drv.SetEnv("goFiles", strings.Join(append(pkg.GoFiles, pkg.CgoFiles...), " "))
+
+	// PATH must include go and go2nix binaries (compile-package calls `go` by name)
+	goStoreDir := storeDirOf(cfg.GoBin)
+	drv.SetEnv("PATH", goStoreDir+"/bin:"+go2nixStorePath+"/bin")
 
 	// Source location
 	if pkg.IsLocal {
@@ -294,6 +310,21 @@ func createPackageDrv(
 		drv.AddInputDrv(dep.DrvPath.String(), "out")
 	}
 	drv.SetEnv("importcfg_entries", strings.Join(importcfgEntries, "\n"))
+
+	// Forward build tags if set
+	if cfg.Tags != "" {
+		drv.SetEnv("tags", cfg.Tags)
+	}
+
+	// Forward CGO_ENABLED if set
+	if cfg.CGOEnabled != "" {
+		drv.SetEnv("CGO_ENABLED", cfg.CGOEnabled)
+	}
+
+	// Forward gcflags if set
+	if cfg.GCFlags != "" {
+		drv.SetEnv("gcflags", cfg.GCFlags)
+	}
 
 	// CA placeholder for out
 	// We don't know our own drv path yet, so use standard placeholder
@@ -355,7 +386,7 @@ func createFinalDrv(
 	var linkPlaceholders []string
 
 	for _, mainPkg := range mainPkgs {
-		drvPath, err := createLinkDrv(cfg, nix, graph, sorted, mainPkg)
+		drvPath, err := createLinkDrv(cfg, nix, graph, sorted, mainPkg, len(mainPkgs))
 		if err != nil {
 			return nixdrv.StorePath{}, fmt.Errorf("creating link for %s: %w", mainPkg.ImportPath, err)
 		}
@@ -378,11 +409,19 @@ func createLinkDrv(
 	graph map[string]*ResolvedPkg,
 	sorted []*ResolvedPkg,
 	mainPkg *ResolvedPkg,
+	numMains int,
 ) (nixdrv.StorePath, error) {
-	drvName := nixdrv.LinkDrvName(cfg.PName)
+	// For single binary, use pname. For multiple binaries, derive name from import path.
+	binName := cfg.PName
+	if numMains > 1 {
+		// Use last path component of import path (e.g., "mymod/cmd/server" → "server")
+		parts := strings.Split(mainPkg.ImportPath, "/")
+		binName = parts[len(parts)-1]
+	}
+	drvName := nixdrv.LinkDrvName(binName)
 	bashStorePath := storeDirOf(cfg.BashBin)
 
-	script := linkScript(cfg.GoBin, cfg.PName)
+	script := linkScript(cfg.GoBin, binName)
 
 	drv := nixdrv.NewDerivation(drvName, cfg.System, bashStorePath+"/bin/bash")
 	drv.AddArg("-c")
@@ -469,7 +508,7 @@ func collectStdlibImports(sorted []*ResolvedPkg, graph map[string]*ResolvedPkg) 
 	for imp := range seen {
 		result = append(result, imp)
 	}
-	sortStrings(result)
+	sort.Strings(result)
 	return result
 }
 

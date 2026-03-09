@@ -11,6 +11,7 @@ func TestFodScript(t *testing.T) {
 		"golang.org/x/crypto",
 		"v0.17.0",
 		"/nix/store/yyy-cacert/etc/ssl/certs/ca-bundle.crt",
+		"",
 	)
 
 	if !strings.Contains(script, "GOMODCACHE=$out") {
@@ -21,6 +22,26 @@ func TestFodScript(t *testing.T) {
 	}
 	if !strings.Contains(script, "SSL_CERT_FILE") {
 		t.Error("missing SSL_CERT_FILE")
+	}
+	if strings.Contains(script, ".netrc") {
+		t.Error("should not contain .netrc when netrcFile is empty")
+	}
+}
+
+func TestFodScriptWithNetrc(t *testing.T) {
+	script := fodScript(
+		"/nix/store/xxx-go/bin/go",
+		"golang.org/x/crypto",
+		"v0.17.0",
+		"",
+		"/nix/store/zzz-netrc/netrc",
+	)
+
+	if !strings.Contains(script, "cp /nix/store/zzz-netrc/netrc $HOME/.netrc") {
+		t.Error("missing netrc copy")
+	}
+	if !strings.Contains(script, "chmod 600 $HOME/.netrc") {
+		t.Error("missing netrc chmod")
 	}
 }
 

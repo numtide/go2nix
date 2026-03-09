@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/golist"
@@ -18,7 +19,7 @@ type ResolvedPkg struct {
 	CXXFiles   []string
 	SFiles     []string
 	HFiles     []string
-	Imports    []string // non-stdlib import paths
+	Imports    []string // all import paths (including stdlib)
 	IsLocal    bool
 	FodPath    nixdrv.StorePath // FOD output path (third-party only)
 	FetchPath  string           // module fetch path (for source lookup within FOD)
@@ -37,14 +38,6 @@ func buildPackageGraph(
 	pkgs []golist.Pkg,
 	fodPaths map[string]nixdrv.StorePath,
 ) map[string]*ResolvedPkg {
-	// Collect all non-stdlib import paths for filtering
-	knownPkgs := make(map[string]bool, len(pkgs))
-	for _, pkg := range pkgs {
-		if !pkg.Standard {
-			knownPkgs[pkg.ImportPath] = true
-		}
-	}
-
 	result := make(map[string]*ResolvedPkg, len(pkgs))
 	for _, pkg := range pkgs {
 		if pkg.Standard {
@@ -60,13 +53,7 @@ func buildPackageGraph(
 			SFiles:     pkg.SFiles,
 			HFiles:     pkg.HFiles,
 			Name:       pkg.Name,
-		}
-
-		// Filter imports to non-stdlib only
-		for _, imp := range pkg.Imports {
-			if knownPkgs[imp] {
-				rp.Imports = append(rp.Imports, imp)
-			}
+			Imports:    pkg.Imports, // keep ALL imports (consumers check graph for stdlib vs non-stdlib)
 		}
 
 		if pkg.Module != nil && !pkg.Module.IsLocal() {
@@ -92,6 +79,10 @@ func buildPackageGraph(
 			}
 		} else {
 			rp.IsLocal = true
+			// Compute subdir for local packages (relative to module root)
+			if pkg.Module != nil && pkg.ImportPath != pkg.Module.Path {
+				rp.Subdir = strings.TrimPrefix(pkg.ImportPath, pkg.Module.Path+"/")
+			}
 		}
 
 		result[pkg.ImportPath] = rp
@@ -144,7 +135,7 @@ func topoSort(pkgs map[string]*ResolvedPkg) ([]*ResolvedPkg, error) {
 	for k := range pkgs {
 		keys = append(keys, k)
 	}
-	sortStrings(keys)
+	sort.Strings(keys)
 
 	for _, k := range keys {
 		if err := visit(k); err != nil {
@@ -155,10 +146,3 @@ func topoSort(pkgs map[string]*ResolvedPkg) ([]*ResolvedPkg, error) {
 	return sorted, nil
 }
 
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
-}

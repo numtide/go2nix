@@ -22,6 +22,8 @@ func runResolveCmd(args []string) {
 	subPackages := fs.String("sub-packages", "", "comma-separated sub-packages")
 	tags := fs.String("tags", "", "comma-separated build tags")
 	ldflags := fs.String("ldflags", "", "linker flags")
+	cgoEnabled := fs.String("cgo-enabled", "", "override CGO_ENABLED (0 or 1)")
+	gcflags := fs.String("gcflags", "", "extra flags for go tool compile")
 	overrides := fs.String("overrides", "", "JSON-encoded packageOverrides")
 	cacert := fs.String("cacert", "", "path to CA certificate bundle")
 	netrcFile := fs.String("netrc-file", "", "path to .netrc file for private module authentication")
@@ -64,6 +66,8 @@ func runResolveCmd(args []string) {
 		SubPackages: *subPackages,
 		Tags:        *tags,
 		LDFlags:     *ldflags,
+		CGOEnabled:  *cgoEnabled,
+		GCFlags:     *gcflags,
 		Overrides:   *overrides,
 		CACert:      *cacert,
 		NetrcFile:   *netrcFile,

@@ -139,9 +139,9 @@ func TestBuildPackageGraph(t *testing.T) {
 	if ssh.FodPath.String() != fodPath.String() {
 		t.Errorf("ssh fodPath = %q", ssh.FodPath.String())
 	}
-	// Should only have non-stdlib imports
-	if len(ssh.Imports) != 1 || ssh.Imports[0] != "golang.org/x/crypto/internal/chacha20poly1305" {
-		t.Errorf("ssh imports = %v", ssh.Imports)
+	// Should have ALL imports (including stdlib)
+	if len(ssh.Imports) != 2 {
+		t.Errorf("ssh imports = %v, want 2 entries", ssh.Imports)
 	}
 
 	// Check local package
@@ -154,5 +154,9 @@ func TestBuildPackageGraph(t *testing.T) {
 	}
 	if myapp.Name != "main" {
 		t.Errorf("myapp name = %q", myapp.Name)
+	}
+	// Local packages should have computed Subdir
+	if myapp.Subdir != "cmd/myapp" {
+		t.Errorf("myapp subdir = %q, want %q", myapp.Subdir, "cmd/myapp")
 	}
 }
