@@ -2,13 +2,9 @@
 package lockfilegen
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -20,58 +16,10 @@ import (
 	"sync"
 
 	"github.com/nix-community/go-nix/pkg/nar"
+	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/lockfile"
 	"golang.org/x/sync/errgroup"
 )
-
-// goListPkg matches one JSON record from `go list -json -deps`.
-type goListPkg struct {
-	ImportPath string   `json:"ImportPath"`
-	Name       string   `json:"Name"`
-	GoFiles    []string `json:"GoFiles"`
-	CgoFiles   []string `json:"CgoFiles"`
-	Standard   bool     `json:"Standard"`
-	DepOnly    bool     `json:"DepOnly"`
-	Imports    []string `json:"Imports"`
-
-	Module *goListModule `json:"Module"`
-}
-
-type goListModule struct {
-	Path    string         `json:"Path"`
-	Version string         `json:"Version"`
-	Main    bool           `json:"Main"`
-	Replace *goListReplace `json:"Replace"`
-}
-
-type goListReplace struct {
-	Path    string `json:"Path"`
-	Version string `json:"Version"`
-}
-
-func (m *goListModule) isLocal() bool {
-	if m == nil || m.Main {
-		return true
-	}
-	if m.Replace != nil && m.Replace.Version == "" {
-		return true
-	}
-	return false
-}
-
-type modInfo struct {
-	key       string
-	fetchPath string
-	version   string
-}
-
-func (m modInfo) replaced() string {
-	origPath := strings.TrimSuffix(m.key, "@"+m.version)
-	if origPath != m.fetchPath {
-		return m.fetchPath
-	}
-	return ""
-}
 
 // Generate creates a go2nix lockfile from the given project directories.
 // If minimal is true, only module hashes are collected (no [pkg] section).
@@ -82,10 +30,10 @@ func Generate(dirs []string, output string, jobs int, minimal bool) error {
 	}
 	slog.Info("cache loaded", "mods", len(cache.Mod), "pkgs", len(cache.Pkg))
 
-	allPkgMap := map[string]goListPkg{}
+	allPkgMap := map[string]golist.Pkg{}
 	for _, dir := range dirs {
 		slog.Info("collecting packages", "dir", dir)
-		pkgs, err := collectPackages(dir)
+		pkgs, err := golist.ListDeps(golist.ListDepsOptions{Dir: dir})
 		if err != nil {
 			return fmt.Errorf("%s: %w", dir, err)
 		}
@@ -102,27 +50,27 @@ func Generate(dirs []string, output string, jobs int, minimal bool) error {
 		thirdPartyPkgs[ip] = true
 	}
 
-	allPkgs := make([]goListPkg, 0, len(allPkgMap))
+	allPkgs := make([]golist.Pkg, 0, len(allPkgMap))
 	for _, pkg := range allPkgMap {
 		allPkgs = append(allPkgs, pkg)
 	}
-	mods := collectModulesFromPackages(allPkgs)
+	mods := golist.CollectModules(allPkgs)
 	slog.Info("modules found", "count", len(mods))
 
-	var toHash []modInfo
+	var toHash []golist.ModInfo
 	resultMod := map[string]string{}
 	resultReplace := map[string]string{}
 	for _, m := range mods {
-		if cached, ok := cache.Mod[m.key]; ok && cache.Replace[m.key] == m.replaced() {
-			resultMod[m.key] = cached
-			if r := m.replaced(); r != "" {
-				resultReplace[m.key] = r
+		if cached, ok := cache.Mod[m.Key]; ok && cache.Replace[m.Key] == m.Replaced() {
+			resultMod[m.Key] = cached
+			if r := m.Replaced(); r != "" {
+				resultReplace[m.Key] = r
 			}
 		} else {
 			toHash = append(toHash, m)
 		}
 	}
-	slices.SortFunc(toHash, func(a, b modInfo) int { return strings.Compare(a.key, b.key) })
+	slices.SortFunc(toHash, func(a, b golist.ModInfo) int { return strings.Compare(a.Key, b.Key) })
 	slog.Info("hashing", "todo", len(toHash), "cached", len(resultMod))
 
 	var mu sync.Mutex
@@ -130,15 +78,15 @@ func Generate(dirs []string, output string, jobs int, minimal bool) error {
 	g.SetLimit(jobs)
 	for _, m := range toHash {
 		g.Go(func() error {
-			slog.Debug("hashing module", "key", m.key)
-			h, err := modCacheHash(m.fetchPath, m.version)
+			slog.Debug("hashing module", "key", m.Key)
+			h, err := modCacheHash(m.FetchPath, m.Version)
 			if err != nil {
-				return fmt.Errorf("hashing %s: %w", m.key, err)
+				return fmt.Errorf("hashing %s: %w", m.Key, err)
 			}
 			mu.Lock()
-			resultMod[m.key] = h
-			if r := m.replaced(); r != "" {
-				resultReplace[m.key] = r
+			resultMod[m.Key] = h
+			if r := m.Replaced(); r != "" {
+				resultReplace[m.Key] = r
 			}
 			mu.Unlock()
 			return nil
@@ -184,60 +132,6 @@ func Generate(dirs []string, output string, jobs int, minimal bool) error {
 	result := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace, Pkg: resultPkg}
 	slog.Info("writing lockfile", "mods", len(resultMod), "pkgs", len(resultPkg), "path", output)
 	return result.Write(output, lockfile.Header)
-}
-
-func collectPackages(dir string) ([]goListPkg, error) {
-	cmd := exec.Command("go", "list", "-json", "-deps", "./...")
-	cmd.Dir = dir
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("go list -json -deps in %s: %w", dir, err)
-	}
-
-	var pkgs []goListPkg
-	dec := json.NewDecoder(bytes.NewReader(out))
-	for {
-		var pkg goListPkg
-		if err := dec.Decode(&pkg); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, fmt.Errorf("decoding go list output: %w", err)
-		}
-		if pkg.Standard {
-			continue
-		}
-		if pkg.Module.isLocal() {
-			continue
-		}
-		pkgs = append(pkgs, pkg)
-	}
-	return pkgs, nil
-}
-
-func collectModulesFromPackages(pkgs []goListPkg) []modInfo {
-	seen := map[string]bool{}
-	var mods []modInfo
-	for _, pkg := range pkgs {
-		if pkg.Module == nil || pkg.Module.Version == "" {
-			continue
-		}
-		fetchPath := pkg.Module.Path
-		version := pkg.Module.Version
-		if r := pkg.Module.Replace; r != nil && r.Version != "" {
-			fetchPath = r.Path
-			version = r.Version
-		}
-		key := pkg.Module.Path + "@" + version
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		mods = append(mods, modInfo{key: key, fetchPath: fetchPath, version: version})
-	}
-	sort.Slice(mods, func(i, j int) bool { return mods[i].key < mods[j].key })
-	return mods
 }
 
 func modCacheHash(fetchPath, version string) (string, error) {
