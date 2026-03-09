@@ -9,7 +9,7 @@ invocations.
 - [Project overview](#project-overview)
 - [Design goals](#design-goals)
 - [The lockfile](#the-lockfile)
-  - [Format](#format)
+  - [Format (v2)](#format-v2)
   - [Composite keys](#composite-keys)
   - [The tidiness invariant](#the-tidiness-invariant)
   - [Monorepo sharing](#monorepo-sharing)
@@ -34,6 +34,12 @@ invocations.
   - [Linking](#linking)
   - [Cgo](#cgo)
   - [Assembly](#assembly)
+- [Package DAG and parallel compilation](#package-dag-and-parallel-compilation)
+  - [Third-party DAG](#third-party-dag)
+  - [How Nix schedules this](#how-nix-schedules-this)
+  - [What the DAG provides](#what-the-dag-provides)
+  - [Local package DAG](#local-package-dag)
+  - [Without precise imports](#without-precise-imports)
 - [Staleness detection](#staleness-detection)
 - [Known limitations](#known-limitations)
 
@@ -367,7 +373,12 @@ The main build function. Parameters:
 
 The function:
 
-1. Reads the lockfile via `builtins.fromTOML`.
+1. Processes the lockfile into a `{ modules, packages }` structure. When
+   `builtins.wasm` is available (Nix with the `wasm-builtin` experimental
+   feature), lockfile processing runs as a Rust WASM plugin
+   (`nix/go2nix-wasm.wasm`) for faster eval. Otherwise, falls back to
+   pure-Nix processing (`nix/process-lockfile.nix`). Both paths produce
+   identical output.
 1. Fetches each module as a FOD (`fetchGoModule`).
 1. Creates a **per-package derivation** for each `[pkg]` entry. Each
    derivation uses `goModuleHook` and takes its direct import dependencies as
@@ -433,13 +444,8 @@ The `compile-go-pkg.sh` hook:
 ### Local packages
 
 Local (same-module) packages are compiled inside the application derivation,
-not as separate derivations. `compile-packages` handles this:
-
-1. Discovers library packages via `list-packages` (topologically sorted).
-1. Pre-populates importcfg with entries for all local packages.
-1. Compiles in parallel using `errgroup` with per-package done channels.
-   Each goroutine waits for its `local_deps` to complete before compiling.
-1. Concurrency is bounded by `NIX_BUILD_CORES` (default: `runtime.NumCPU()`).
+not as separate derivations. `compile-packages` handles this with DAG-aware
+parallel scheduling — see [Local package DAG](#local-package-dag) for details.
 
 ### Linking
 
@@ -477,6 +483,190 @@ If cgo was used (`.has_cgo` marker exists), the linker runs with
 1. **Assemble**: `go tool asm` on each `.s` file with platform-specific
    `-D` flags (GOOS, GOARCH, plus arch variants like GOAMD64, GOARM, etc.).
 1. **Pack**: `go tool pack` to add `.o` files into the archive.
+
+## Package DAG and parallel compilation
+
+Each `[pkg]` entry in the lockfile becomes a Nix derivation. The `imports`
+field defines edges: if package A imports package B, then B is a `buildInput`
+of A. Nix builds derivations respecting these edges — a package only builds
+after all its dependencies are done.
+
+### Third-party DAG
+
+Using yubikey-agent as a concrete example:
+
+```mermaid
+graph LR
+    subgraph "Level 0 — no dependencies, build immediately in parallel"
+        alias["x/crypto/internal/alias"]
+        field["x/crypto/curve25519/internal/field"]
+        ed25519["x/crypto/ed25519"]
+        poly1305["x/crypto/internal/poly1305"]
+        blowfish["x/crypto/blowfish"]
+        sysunix["x/sys/unix"]
+        pivgo["go-piv/piv-go/piv"]
+        pinentry["go-pinentry-minimal/pinentry"]
+    end
+
+    subgraph "Level 1 — wait for Level 0 deps"
+        chacha20["x/crypto/chacha20"]
+        curve25519["x/crypto/curve25519"]
+        bcrypt["x/crypto/ssh/internal/bcrypt_pbkdf"]
+        term["x/term"]
+    end
+
+    subgraph "Level 2 — wait for Level 1 deps"
+        ssh["x/crypto/ssh"]
+        terminal["x/crypto/ssh/terminal"]
+    end
+
+    subgraph "Level 3 — wait for Level 2 deps"
+        sshagent["x/crypto/ssh/agent"]
+    end
+
+    subgraph "Final — link binary"
+        app["yubikey-agent binary"]
+    end
+
+    chacha20 --> alias
+    curve25519 --> field
+    bcrypt --> blowfish
+    term --> sysunix
+
+    ssh --> chacha20
+    ssh --> curve25519
+    ssh --> ed25519
+    ssh --> poly1305
+    ssh --> bcrypt
+
+    terminal --> term
+
+    sshagent --> ed25519
+    sshagent --> ssh
+
+    app --> sshagent
+    app --> terminal
+    app --> ssh
+    app --> pivgo
+    app --> pinentry
+```
+
+### How Nix schedules this
+
+Nix's builder sees the derivation graph and schedules builds by dependency
+order. All Level 0 packages have no `buildInputs` from other packages, so
+Nix starts building all 8 of them **simultaneously** (up to `max-jobs`).
+
+As each Level 0 package finishes, Level 1 packages that depend on it become
+unblocked. For example, once `alias` finishes, `chacha20` can start — even
+while `blowfish` or `sysunix` are still building.
+
+```
+Time →
+
+  alias       ████░░░░░░░░░░░░░░░░░░░░
+  field       █████░░░░░░░░░░░░░░░░░░░
+  ed25519     ███░░░░░░░░░░░░░░░░░░░░░
+  poly1305    ████░░░░░░░░░░░░░░░░░░░░
+  blowfish    ██████░░░░░░░░░░░░░░░░░░
+  sys/unix    ███░░░░░░░░░░░░░░░░░░░░░
+  piv-go      ████████░░░░░░░░░░░░░░░░
+  pinentry    █████░░░░░░░░░░░░░░░░░░░
+                   ↓
+  chacha20    ░░░░████░░░░░░░░░░░░░░░░
+  curve25519  ░░░░░████░░░░░░░░░░░░░░░
+  bcrypt      ░░░░░░█████░░░░░░░░░░░░░
+  term        ░░░░████░░░░░░░░░░░░░░░░
+                        ↓
+  ssh         ░░░░░░░░░░██████░░░░░░░░
+  terminal    ░░░░░░░░████░░░░░░░░░░░░
+                              ↓
+  ssh/agent   ░░░░░░░░░░░░░░░░████░░░░
+                                  ↓
+  binary      ░░░░░░░░░░░░░░░░░░░░████  (link)
+```
+
+### What the DAG provides
+
+**Correctness**: `compile-go-pkg.sh` builds each package's `importcfg` from
+its `buildInputs`. Package `ssh` gets `packagefile` entries for `chacha20`,
+`curve25519`, `ed25519`, `poly1305`, and `bcrypt` — exactly what `go tool
+compile` needs to resolve its imports.
+
+**Parallelism**: independent packages build simultaneously. Without the DAG,
+Nix wouldn't know what depends on what.
+
+**Incremental rebuilds**: if `alias` changes (e.g., module version bump),
+only `alias` → `chacha20` → `ssh` → `ssh/agent` rebuild. The other 11
+packages are cached. Without precise edges, a change to any package would
+invalidate everything.
+
+### Local package DAG
+
+The Nix-level DAG handles **third-party** packages (each is a derivation). **Local**
+packages (the main module's own library packages) are compiled within a single
+derivation by `CompileLocalPackages` in `go/go2nix/pkg/compile/local.go`.
+
+It uses the same DAG principle but at the Go process level:
+
+1. `localpkgs.ListLocalPackages` discovers all local packages and their `LocalDeps`
+2. A `done` channel map tracks completion of each package
+3. An `errgroup` with `maxWorkers` (respecting `NIX_BUILD_CORES`) launches all
+   packages concurrently — each goroutine waits on its local deps' channels
+   before compiling
+4. `importcfg` is pre-populated with all local package entries upfront; since DAG
+   order is respected, each `.a` file exists by the time a dependent needs it
+
+```mermaid
+graph LR
+    subgraph "Level 0 — build in parallel"
+        util["pkg/util"]
+        log["pkg/log"]
+    end
+
+    subgraph "Level 1 — wait for Level 0"
+        config["pkg/config"]
+        db["pkg/db"]
+    end
+
+    subgraph "Level 2 — wait for Level 1"
+        auth["pkg/auth"]
+    end
+
+    subgraph "Level 3 — wait for Level 2"
+        server["pkg/server"]
+    end
+
+    subgraph "Final — link binary"
+        main["main"]
+    end
+
+    util --> config
+    util --> db
+    log --> config
+    config --> auth
+    db --> auth
+    auth --> server
+    server --> main
+```
+
+Both third-party and local packages benefit from parallel, DAG-aware
+compilation — third-party via Nix's scheduler, local via Go's errgroup.
+
+### Without precise imports
+
+If every package depended on every other package:
+- No parallelism — circular dependency makes this impossible in Nix
+- All packages rebuild on any change
+
+If all packages depended on nothing (importcfg empty):
+- `go tool compile` fails — can't find imported packages
+
+If dependencies were per-module (all packages in module X depend on all
+packages in module Y):
+- Coarser but valid DAG — still enables some parallelism
+- A change in `x/sys` rebuilds ALL `x/crypto` packages, not just `term`
+- Derivable from `go.mod` alone — no need to read third-party source
 
 ## Staleness detection
 
