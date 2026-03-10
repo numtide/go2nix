@@ -23,7 +23,9 @@ import (
 
 // Generate creates a go2nix lockfile from the given project directories.
 // If minimal is true, only module hashes are collected (no [pkg] section).
-func Generate(dirs []string, output string, jobs int, minimal bool) error {
+// If gomod2nix is true, the output uses the v1 gomod2nix format (attrset mod
+// values with version/hash/replaced fields, no [pkg] section).
+func Generate(dirs []string, output string, jobs int, minimal, gomod2nix bool) error {
 	cache, err := lockfile.Read(output)
 	if err != nil {
 		return fmt.Errorf("reading existing lockfile: %w", err)
@@ -96,6 +98,19 @@ func Generate(dirs []string, output string, jobs int, minimal bool) error {
 		return err
 	}
 
+	// Omit replace if empty.
+	if len(resultReplace) == 0 {
+		resultReplace = nil
+	}
+
+	// gomod2nix format: v1-style with attrset mod values, no [pkg] section.
+	if gomod2nix {
+		v2 := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace}
+		result := v2.ToGomod2nix()
+		slog.Info("writing lockfile (gomod2nix format)", "mods", len(resultMod), "path", output)
+		return result.Write(output, lockfile.Gomod2nixHeader)
+	}
+
 	var resultPkg map[string]map[string][]string
 	if !minimal {
 		resultPkg = map[string]map[string][]string{}
@@ -122,11 +137,6 @@ func Generate(dirs []string, output string, jobs int, minimal bool) error {
 			}
 			resultPkg[modKey][pkg.ImportPath] = imports
 		}
-	}
-
-	// Omit replace if empty.
-	if len(resultReplace) == 0 {
-		resultReplace = nil
 	}
 
 	result := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace, Pkg: resultPkg}

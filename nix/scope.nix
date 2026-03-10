@@ -2,6 +2,11 @@
 #
 # Creates a self-referential package set via lib.makeScope.
 # Provides: go, go2nix, stdlib, hooks, fetchers, helpers, buildGoApplication.
+#
+# Three builder approaches:
+#   - gomod2nix: vendor + go build (simple, works everywhere)
+#   - lockfile:  eval-time per-package DAG (fine-grained caching)
+#   - dynamic:   recursive-nix + CA derivations (best CI performance)
 {
   go,
   go2nix,
@@ -23,11 +28,13 @@ lib.makeScope newScope (
   let
     inherit (self) callPackage;
 
-    buildGoApplicationLockfile = callPackage ./build-go-application.nix { };
+    buildGoApplicationLockfile = callPackage ./lockfile { };
+
+    buildGoApplicationGomod2nix = callPackage ./gomod2nix { };
 
     buildGoApplicationDynamic' =
       if nixPackage != null then
-        callPackage ./build-go-application-dynamic.nix { inherit nixPackage; }
+        callPackage ./dynamic { inherit nixPackage; }
       else
         throw "buildGoApplicationDynamic requires nixPackage to be set in mk-go-env";
   in
@@ -47,10 +54,10 @@ lib.makeScope newScope (
 
     stdlib = callPackage ./stdlib.nix { };
 
-    hooks = callPackage ./hooks { };
+    hooks = callPackage ./lockfile/hooks { };
 
     fetchers = {
-      fetchGoModule = callPackage ./fetch-go-module.nix { };
+      fetchGoModule = callPackage ./lockfile/fetch-go-module.nix { };
     };
 
     # When nixPackage is provided and Nix supports dynamic derivations,
@@ -63,7 +70,7 @@ lib.makeScope newScope (
         buildGoApplicationLockfile;
 
     # Explicit access to each builder path.
-    inherit buildGoApplicationLockfile;
+    inherit buildGoApplicationLockfile buildGoApplicationGomod2nix;
     buildGoApplicationDynamic = buildGoApplicationDynamic';
   }
 )

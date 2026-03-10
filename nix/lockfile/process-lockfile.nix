@@ -4,7 +4,7 @@
 # pre-computed fields (dirSuffix, subdir, drvName) so the consumer
 # just iterates to create derivations.
 let
-  helpers = import ./helpers.nix;
+  helpers = import ../helpers.nix;
   inherit (helpers) sanitizeName removePrefix escapeModPath;
 in
 goLock:

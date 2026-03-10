@@ -159,6 +159,85 @@ func TestMinimalLockfileOmitsPkg(t *testing.T) {
 	}
 }
 
+func TestToGomod2nix(t *testing.T) {
+	v2 := &Lockfile{
+		Mod: map[string]string{
+			"github.com/foo/bar@v1.2.3": "sha256-aaa=",
+			"github.com/baz/qux@v0.1.0": "sha256-bbb=",
+		},
+		Replace: map[string]string{
+			"github.com/foo/bar@v1.2.3": "github.com/foo/bar-fork",
+		},
+	}
+
+	got := v2.ToGomod2nix()
+
+	if len(got.Mod) != 2 {
+		t.Fatalf("expected 2 mods, got %d", len(got.Mod))
+	}
+
+	foo := got.Mod["github.com/foo/bar@v1.2.3"]
+	if foo.Version != "v1.2.3" {
+		t.Errorf("foo version = %q, want v1.2.3", foo.Version)
+	}
+	if foo.Hash != "sha256-aaa=" {
+		t.Errorf("foo hash = %q, want sha256-aaa=", foo.Hash)
+	}
+	if foo.Replaced != "github.com/foo/bar-fork" {
+		t.Errorf("foo replaced = %q, want github.com/foo/bar-fork", foo.Replaced)
+	}
+
+	baz := got.Mod["github.com/baz/qux@v0.1.0"]
+	if baz.Version != "v0.1.0" {
+		t.Errorf("baz version = %q, want v0.1.0", baz.Version)
+	}
+	if baz.Replaced != "" {
+		t.Errorf("baz replaced = %q, want empty", baz.Replaced)
+	}
+}
+
+func TestGomod2nixRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lock.toml")
+
+	orig := &Gomod2nixLockfile{
+		Mod: map[string]Gomod2nixMod{
+			"github.com/foo/bar@v1.2.3": {
+				Version:  "v1.2.3",
+				Hash:     "sha256-aaa=",
+				Replaced: "github.com/foo/bar-fork",
+			},
+		},
+	}
+	if err := orig.Write(path, Gomod2nixHeader); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+
+	// Should contain the gomod2nix header.
+	if !strings.Contains(content, "gomod2nix format") {
+		t.Error("expected gomod2nix header")
+	}
+
+	// Should have attrset-style mod entries (version/hash fields).
+	if !strings.Contains(content, "version =") || !strings.Contains(content, "hash =") {
+		t.Error("expected version/hash fields in mod entries")
+	}
+
+	// Should not have [pkg] or [replace] sections.
+	if strings.Contains(content, "[pkg") {
+		t.Error("gomod2nix lockfile should not contain [pkg]")
+	}
+	if strings.Contains(content, "[replace]") {
+		t.Error("gomod2nix lockfile should not contain [replace] (replaced is per-mod)")
+	}
+}
+
 func TestReadMalformedTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lock.toml")
