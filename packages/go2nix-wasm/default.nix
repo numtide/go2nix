@@ -1,9 +1,8 @@
 # Build the go2nix WASM plugin.
 #
-# Usage: nix build .#go2nixWasmPlugin
-# Then copy result/go2nix_wasm.wasm to nix/go2nix-wasm.wasm
-{ rustPlatform, binaryen, lld }:
-rustPlatform.buildRustPackage {
+# Usage: nix run .#update-wasm
+{ pkgs }:
+pkgs.rustPlatform.buildRustPackage {
   pname = "go2nix-wasm";
   version = "0.1.0";
   src = ../../rust;
@@ -14,13 +13,13 @@ rustPlatform.buildRustPackage {
     };
   };
   CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
-  nativeBuildInputs = [ lld binaryen ];
+  nativeBuildInputs = [ pkgs.lld pkgs.binaryen ];
   buildPhase = ''
     cargo build --release --target wasm32-unknown-unknown
   '';
   installPhase = ''
     mkdir -p $out
-    wasm-opt -O3 -o $out/go2nix_wasm.wasm \
+    wasm-opt -O3 -o $out/go2nix.wasm \
       target/wasm32-unknown-unknown/release/go2nix_wasm.wasm
   '';
   doCheck = false;

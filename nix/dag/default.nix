@@ -49,7 +49,7 @@ let
 
   processed =
     if builtins ? wasm then
-      builtins.wasm { path = ./go2nix-wasm.wasm; function = "process_lockfile"; } goLock
+      builtins.wasm { path = ./go2nix.wasm; function = "process_lockfile"; } goLock
     else
       processLockfilePureNix goLock;
 

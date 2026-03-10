@@ -3,10 +3,10 @@
 # Creates a self-referential package set via lib.makeScope.
 # Provides: go, go2nix, stdlib, hooks, fetchers, helpers, buildGoApplication.
 #
-# Three builder approaches:
-#   - gomod2nix: vendor + go build (simple, works everywhere)
-#   - lockfile:  eval-time per-package DAG (fine-grained caching)
-#   - dynamic:   recursive-nix + CA derivations (best CI performance)
+# Three builder modes:
+#   - vendor:  vendor + go build (simple, works everywhere)
+#   - DAG:     eval-time per-package DAG (fine-grained caching)
+#   - dynamic: recursive-nix + CA derivations (best CI performance)
 {
   go,
   go2nix,
@@ -28,15 +28,15 @@ lib.makeScope newScope (
   let
     inherit (self) callPackage;
 
-    buildGoApplicationLockfile = callPackage ./lockfile { };
+    buildGoApplicationDAGMode = callPackage ./dag { };
 
-    buildGoApplicationGomod2nix = callPackage ./gomod2nix { };
+    buildGoApplicationVendorMode = callPackage ./vendor { };
 
-    buildGoApplicationDynamic' =
+    buildGoApplicationDynamicMode' =
       if nixPackage != null then
         callPackage ./dynamic { inherit nixPackage; }
       else
-        throw "buildGoApplicationDynamic requires nixPackage to be set in mk-go-env";
+        throw "buildGoApplicationDynamicMode requires nixPackage to be set in mk-go-env";
   in
   {
     inherit
@@ -54,23 +54,23 @@ lib.makeScope newScope (
 
     stdlib = callPackage ./stdlib.nix { };
 
-    hooks = callPackage ./lockfile/hooks { };
+    hooks = callPackage ./dag/hooks { };
 
     fetchers = {
-      fetchGoModule = callPackage ./lockfile/fetch-go-module.nix { };
+      fetchGoModule = callPackage ./dag/fetch-go-module.nix { };
     };
 
     # When nixPackage is provided and Nix supports dynamic derivations,
     # automatically use the dynamic path. Otherwise fall back to the
-    # lockfile-based builder.
+    # DAG-based builder.
     buildGoApplication =
       if hasDynamicDerivations && nixPackage != null then
-        buildGoApplicationDynamic'
+        buildGoApplicationDynamicMode'
       else
-        buildGoApplicationLockfile;
+        buildGoApplicationDAGMode;
 
-    # Explicit access to each builder path.
-    inherit buildGoApplicationLockfile buildGoApplicationGomod2nix;
-    buildGoApplicationDynamic = buildGoApplicationDynamic';
+    # Explicit access to each builder mode.
+    inherit buildGoApplicationDAGMode buildGoApplicationVendorMode;
+    buildGoApplicationDynamicMode = buildGoApplicationDynamicMode';
   }
 )
