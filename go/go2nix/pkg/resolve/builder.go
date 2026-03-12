@@ -32,10 +32,12 @@ func fodScript(goStorePath, fetchPath, version, cacertPath, netrcFile string) st
 func compileScript(go2nixBin string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
+	b.WriteString("export HOME=$TMPDIR\n")
 	b.WriteString("mkdir -p $out\n\n")
 
-	// Write importcfg from env var (placeholders resolved by Nix at build time)
-	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > importcfg\n\n")
+	// Write importcfg from env var (placeholders resolved by Nix at build time).
+	// Use absolute path since compile-package changes CWD to srcdir.
+	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > $NIX_BUILD_TOP/importcfg\n\n")
 
 	// Source directory: modSrc/relDir for third-party, srcRoot/relDir for local
 	b.WriteString("srcdir=\"$modSrc/$relDir\"\n\n")
@@ -43,10 +45,12 @@ func compileScript(go2nixBin string) string {
 	// Compile using go2nix compile-package
 	fmt.Fprintf(&b, "%s compile-package", go2nixBin)
 	b.WriteString(" \\\n  --import-path \"$importPath\"")
-	b.WriteString(" \\\n  --import-cfg importcfg")
+	b.WriteString(" \\\n  --import-cfg $NIX_BUILD_TOP/importcfg")
 	b.WriteString(" \\\n  --src-dir \"$srcdir\"")
 	b.WriteString(" \\\n  --output \"$out/pkg.a\"")
 	b.WriteString(" \\\n  --trim-path \"$NIX_BUILD_TOP\"")
+	// Override -p flag for main packages (pflag env var)
+	b.WriteString(" \\\n  ${pflag:+--p \"$pflag\"}")
 	// Only pass tags if set (env var set by createPackageDrv)
 	b.WriteString(" \\\n  ${tags:+--tags \"$tags\"}")
 	// Only pass gcflags if set
@@ -59,14 +63,15 @@ func compileScript(go2nixBin string) string {
 func linkScript(goStorePath, pname string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
+	b.WriteString("export HOME=$TMPDIR\n")
 	b.WriteString("mkdir -p $out/bin\n\n")
 
 	// Write importcfg for all transitive deps
-	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > importcfg\n\n")
+	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > $NIX_BUILD_TOP/importcfg\n\n")
 
 	// Link binary
-	fmt.Fprintf(&b, "%s tool link -o $out/bin/%s", goStorePath, pname)
-	b.WriteString(" \\\n  -importcfg importcfg")
+	fmt.Fprintf(&b, "%s tool link -o \"$out/bin/%s\"", goStorePath, pname)
+	b.WriteString(" \\\n  -importcfg $NIX_BUILD_TOP/importcfg")
 	b.WriteString(" \\\n  -buildmode=exe")
 	// ldflags passed via env
 	b.WriteString(" \\\n  ${ldflags:+$ldflags}")

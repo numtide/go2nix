@@ -68,7 +68,7 @@ func TestLinkScript(t *testing.T) {
 	if !strings.Contains(script, "go tool link") {
 		t.Error("missing go tool link")
 	}
-	if !strings.Contains(script, "$out/bin/myapp") {
+	if !strings.Contains(script, "\"$out/bin/myapp\"") {
 		t.Error("missing output binary path")
 	}
 	if !strings.Contains(script, "$mainPkg/pkg.a") {

@@ -9,10 +9,14 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"golang.org/x/mod/module"
+
+	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/lockfile"
 	"github.com/numtide/go2nix/pkg/nixdrv"
@@ -20,24 +24,32 @@ import (
 
 // Config holds all configuration for the resolve flow.
 type Config struct {
-	Src         string // store path to source
-	LockFile    string // path to go2nix.toml lockfile
-	System      string // e.g., "x86_64-linux"
-	GoBin       string // path to go binary
-	StdlibPath  string // path to pre-compiled stdlib
-	NixBin      string // path to nix binary
-	Go2NixBin   string // path to go2nix binary
-	BashBin     string // path to bash binary
-	PName       string // output binary name
-	SubPackages string // comma-separated sub-packages (default "./...")
-	Tags        string // comma-separated build tags
-	LDFlags     string // linker flags
-	CGOEnabled  string // "0" or "1" to override cgo detection, empty for auto
-	GCFlags     string // extra flags for go tool compile
-	Overrides   string // JSON-encoded packageOverrides
-	CACert      string // path to CA certificate bundle
-	NetrcFile   string // path to .netrc file for private module authentication
-	Output      string // $out path
+	Src          string // store path to source
+	LockFile     string // path to go2nix.toml lockfile
+	System       string // e.g., "x86_64-linux"
+	GoBin        string // path to go binary
+	StdlibPath   string // path to pre-compiled stdlib
+	NixBin       string // path to nix binary
+	Go2NixBin    string // path to go2nix binary
+	BashBin      string // path to bash binary
+	CoreutilsBin string // path to coreutils binary (e.g., /nix/store/xxx-coreutils/bin/mkdir)
+	PName        string // output binary name
+	SubPackages  string // comma-separated sub-packages (default "./...")
+	Tags         string // comma-separated build tags
+	LDFlags      string // linker flags
+	CGOEnabled   string // "0" or "1" to override cgo detection, empty for auto
+	GCFlags      string // extra flags for go tool compile
+	Overrides    string // JSON-encoded packageOverrides
+	CACert       string // path to CA certificate bundle
+	NetrcFile    string // path to .netrc file for private module authentication
+	Output       string // $out path
+
+	// coreutilsDir is the store path of coreutils, derived from CoreutilsBin.
+	coreutilsDir string
+	// ccDir is resolved at Resolve() time for cgo packages.
+	ccDir string
+	// allOverridePaths collects all nativeBuildInputs store paths for the link derivation.
+	allOverridePaths []string
 }
 
 // PackageOverride holds per-package overrides from Nix eval time.
@@ -54,12 +66,24 @@ func Resolve(cfg Config) error {
 		},
 	}
 
+	// Derive coreutils store path from the explicit binary path.
+	cfg.coreutilsDir = storeDirOf(cfg.CoreutilsBin)
+
+	// Find CC for cgo packages (stdenv provides cc in the wrapper).
+	if ccPath, err := exec.LookPath("cc"); err == nil {
+		cfg.ccDir = storeDirOf(filepath.Dir(ccPath))
+	}
+
 	// Parse overrides
 	overrides := map[string]PackageOverride{}
 	if cfg.Overrides != "" && cfg.Overrides != "{}" {
 		if err := json.Unmarshal([]byte(cfg.Overrides), &overrides); err != nil {
 			return fmt.Errorf("parsing overrides: %w", err)
 		}
+	}
+	// Collect all override paths for the link derivation (cgo external linking).
+	for _, ov := range overrides {
+		cfg.allOverridePaths = append(cfg.allOverridePaths, ov.NativeBuildInputs...)
 	}
 
 	// Step 1: Read lockfile
@@ -102,7 +126,7 @@ func Resolve(cfg Config) error {
 		"GOMODCACHE=" + gomodcache,
 		"GONOSUMCHECK=*",
 		"GOPROXY=off",
-		"GOFLAGS=-mod=mod",
+		"GOFLAGS=-mod=readonly",
 	}
 	if cfg.CGOEnabled != "" {
 		golistEnv = append(golistEnv, "CGO_ENABLED="+cfg.CGOEnabled)
@@ -115,6 +139,7 @@ func Resolve(cfg Config) error {
 		Patterns:  subPkgs,
 		Env:       golistEnv,
 		KeepLocal: true,
+		Compiled:  true,
 	})
 	if err != nil {
 		return fmt.Errorf("discovering packages: %w", err)
@@ -160,11 +185,10 @@ func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) 
 	bashStorePath := storeDirOf(cfg.BashBin)
 
 	for modKey, hash := range lock.Mod {
-		parts := strings.SplitN(modKey, "@", 2)
-		if len(parts) != 2 {
+		modPath, version, ok := strings.Cut(modKey, "@")
+		if !ok {
 			return nil, fmt.Errorf("invalid module key: %s", modKey)
 		}
-		modPath, version := parts[0], parts[1]
 
 		fetchPath := modPath
 		if r, ok := lock.Replace[modKey]; ok {
@@ -177,12 +201,13 @@ func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) 
 		drv := nixdrv.NewDerivation(drvName, cfg.System, bashStorePath+"/bin/bash")
 		drv.AddArg("-c")
 		drv.AddArg(script)
-		drv.AddFODOutput("out", "sha256", "nar", hash)
+		drv.AddFODOutput("out", "nar", hash)
 
-		// Set env.out to standard placeholder
-		drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
+		// Set env.out to empty; Nix fills in the computed path for FODs.
+		drv.SetEnv("out", "")
 
-		// Input sources: go binary, cacert, netrc
+		// Input sources: builder (bash), go binary, cacert, netrc
+		drv.AddInputSrc(bashStorePath)
 		goStoreDir := storeDirOf(cfg.GoBin)
 		drv.AddInputSrc(goStoreDir)
 		if cfg.CACert != "" {
@@ -304,10 +329,41 @@ func createPackageDrv(
 
 	// Set env vars
 	drv.SetEnv("importPath", pkg.ImportPath)
+	if pkg.Name == "main" {
+		drv.SetEnv("pflag", "main")
+	}
 
-	// PATH must include go and go2nix binaries (compile-package calls `go` by name)
+	// PATH must include go, go2nix, and coreutils (mkdir, etc.)
 	goStoreDir := storeDirOf(cfg.GoBin)
-	drv.SetEnv("PATH", goStoreDir+"/bin:"+go2nixStorePath+"/bin")
+	pathParts := []string{goStoreDir + "/bin", go2nixStorePath + "/bin", cfg.coreutilsDir + "/bin"}
+	var pkgConfigParts []string
+
+	// Collect nativeBuildInputs from overrides for PATH and PKG_CONFIG_PATH.
+	collectOverridePaths := func(ov PackageOverride) {
+		for _, nbi := range ov.NativeBuildInputs {
+			pathParts = append(pathParts, nbi+"/bin")
+			pkgConfigParts = append(pkgConfigParts, nbi+"/lib/pkgconfig")
+		}
+	}
+	if ov, ok := overrides[pkg.ImportPath]; ok {
+		collectOverridePaths(ov)
+	}
+	if pkg.ModPath != "" {
+		if ov, ok := overrides[pkg.ModPath]; ok {
+			collectOverridePaths(ov)
+		}
+	}
+
+	// Add C compiler for cgo packages (needed even without overrides).
+	if len(pkg.CgoFiles) > 0 && cfg.ccDir != "" {
+		pathParts = append(pathParts, cfg.ccDir+"/bin")
+		drv.AddInputSrc(cfg.ccDir)
+	}
+
+	drv.SetEnv("PATH", strings.Join(pathParts, ":"))
+	if len(pkgConfigParts) > 0 {
+		drv.SetEnv("PKG_CONFIG_PATH", strings.Join(pkgConfigParts, ":"))
+	}
 
 	// Source location
 	if pkg.IsLocal {
@@ -316,7 +372,11 @@ func createPackageDrv(
 		drv.AddInputSrc(cfg.Src)
 	} else {
 		drv.SetEnv("modSrc", pkg.FodPath.String())
-		relDir := nixdrv.EscapeModPath(pkg.FetchPath) + "@" + pkg.Version
+		escapedPath, err := module.EscapePath(pkg.FetchPath)
+		if err != nil {
+			return fmt.Errorf("escaping module path %s: %w", pkg.FetchPath, err)
+		}
+		relDir := escapedPath + "@" + pkg.Version
 		if pkg.Subdir != "" {
 			relDir += "/" + pkg.Subdir
 		}
@@ -324,7 +384,9 @@ func createPackageDrv(
 		drv.AddInputSrc(pkg.FodPath.String())
 	}
 
-	// Build importcfg entries
+	// Build importcfg entries.
+	// With -compiled, go list already includes cgo-generated implicit imports
+	// (runtime/cgo, syscall, unsafe) in the Imports field.
 	var importcfgEntries []string
 	for _, imp := range pkg.Imports {
 		dep, ok := graph[imp]
@@ -362,6 +424,8 @@ func createPackageDrv(
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
 
 	// Input sources
+	drv.AddInputSrc(bashStorePath)
+	drv.AddInputSrc(cfg.coreutilsDir)
 	drv.AddInputSrc(go2nixStorePath)
 	drv.AddInputSrc(storeDirOf(cfg.GoBin))
 	if cfg.StdlibPath != "" {
@@ -375,9 +439,8 @@ func createPackageDrv(
 		}
 	}
 	// Also check module-level overrides
-	if pkg.ModKey != "" {
-		modPath := strings.SplitN(pkg.ModKey, "@", 2)[0]
-		if ov, ok := overrides[modPath]; ok {
+	if pkg.ModPath != "" {
+		if ov, ok := overrides[pkg.ModPath]; ok {
 			for _, nbi := range ov.NativeBuildInputs {
 				drv.AddInputSrc(nbi)
 			}
@@ -478,8 +541,11 @@ func createLinkDrv(
 		drv.AddInputDrv(pkg.DrvPath.String(), "out")
 	}
 
-	// Add stdlib entries for all stdlib imports across all packages
-	stdlibImports := collectStdlibImports(sorted, graph)
+	// Add all stdlib entries — the linker needs the full transitive closure.
+	stdlibImports, err := collectStdlibImports(cfg.StdlibPath)
+	if err != nil {
+		return nixdrv.StorePath{}, err
+	}
 	for _, imp := range stdlibImports {
 		importcfgEntries = append(importcfgEntries,
 			fmt.Sprintf("packagefile %s=%s/%s.a", imp, cfg.StdlibPath, imp))
@@ -489,10 +555,34 @@ func createLinkDrv(
 	drv.SetEnv("ldflags", cfg.LDFlags)
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
 
+	// Check if any package in the graph uses cgo — the linker needs CC for
+	// external linking regardless of whether packageOverrides were specified.
+	hasCgo := false
+	for _, pkg := range sorted {
+		if len(pkg.CgoFiles) > 0 {
+			hasCgo = true
+			break
+		}
+	}
+
+	// PATH: coreutils + CC for external linking (cgo)
+	pathParts := []string{cfg.coreutilsDir + "/bin"}
+	if hasCgo && cfg.ccDir != "" {
+		pathParts = append(pathParts, cfg.ccDir+"/bin")
+		drv.AddInputSrc(cfg.ccDir)
+	}
+	drv.SetEnv("PATH", strings.Join(pathParts, ":"))
+
 	// Input sources
+	drv.AddInputSrc(bashStorePath)
+	drv.AddInputSrc(cfg.coreutilsDir)
 	drv.AddInputSrc(storeDirOf(cfg.GoBin))
 	if cfg.StdlibPath != "" {
 		drv.AddInputSrc(cfg.StdlibPath)
+	}
+	// Add override paths (libraries needed for external linking)
+	for _, p := range cfg.allOverridePaths {
+		drv.AddInputSrc(p)
 	}
 
 	return nix.DerivationAdd(drv)
@@ -516,7 +606,10 @@ func createCollectorDrv(
 	drv.AddCAOutput("out", "sha256", "nar")
 
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
+	drv.SetEnv("PATH", cfg.coreutilsDir+"/bin")
 
+	drv.AddInputSrc(bashStorePath)
+	drv.AddInputSrc(cfg.coreutilsDir)
 	for _, drvPath := range linkDrvPaths {
 		drv.AddInputDrv(drvPath.String(), "out")
 	}
@@ -524,39 +617,50 @@ func createCollectorDrv(
 	return nix.DerivationAdd(drv)
 }
 
-// collectStdlibImports returns all stdlib import paths used across all packages.
-func collectStdlibImports(sorted []*ResolvedPkg, graph map[string]*ResolvedPkg) []string {
-	seen := make(map[string]bool)
-	for _, pkg := range sorted {
-		for _, imp := range pkg.Imports {
-			if _, inGraph := graph[imp]; !inGraph {
-				// Not in our graph = stdlib
-				seen[imp] = true
-			}
+// collectStdlibImports returns all stdlib import paths from the pre-compiled stdlib.
+// The linker needs the full transitive closure including internal/ and vendor/
+// packages (e.g., net/http depends on internal/poll). Scanning all .a files is simplest;
+// extra entries are harmless — the linker ignores packages it doesn't need.
+func collectStdlibImports(stdlibPath string) ([]string, error) {
+	var result []string
+	err := filepath.WalkDir(stdlibPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-	}
-	result := make([]string, 0, len(seen))
-	for imp := range seen {
-		result = append(result, imp)
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".a") {
+			return nil
+		}
+		rel, err := filepath.Rel(stdlibPath, path)
+		if err != nil {
+			return err
+		}
+		importPath := strings.TrimSuffix(rel, ".a")
+		result = append(result, importPath)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scanning stdlib at %s: %w", stdlibPath, err)
 	}
 	sort.Strings(result)
-	return result
+	return result, nil
 }
 
-// storeDirOf returns the store path directory for a binary.
+// storeDirOf returns the top-level store path for a path inside the Nix store.
 // E.g., "/nix/store/xxx-go/bin/go" → "/nix/store/xxx-go"
-func storeDirOf(binPath string) string {
-	// Find the 4th "/" (after /nix/store/hash-name)
-	count := 0
-	for i, c := range binPath {
-		if c == '/' {
-			count++
-			if count == 4 {
-				return binPath[:i]
-			}
-		}
+func storeDirOf(path string) string {
+	prefix := storepath.StoreDir + "/"
+	if !strings.HasPrefix(path, prefix) {
+		return path
 	}
-	return binPath
+	// Find end of the store entry name (hash-name component).
+	rest := path[len(prefix):]
+	if idx := strings.Index(rest, "/"); idx >= 0 {
+		return path[:len(prefix)+idx]
+	}
+	return path
 }
 
 // copyFile copies src to dst.

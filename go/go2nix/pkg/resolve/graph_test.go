@@ -134,6 +134,9 @@ func TestBuildPackageGraph(t *testing.T) {
 	if ssh.ModKey != "golang.org/x/crypto@v0.17.0" {
 		t.Errorf("ssh modKey = %q", ssh.ModKey)
 	}
+	if ssh.ModPath != "golang.org/x/crypto" {
+		t.Errorf("ssh modPath = %q", ssh.ModPath)
+	}
 	if ssh.Subdir != "ssh" {
 		t.Errorf("ssh subdir = %q, want %q", ssh.Subdir, "ssh")
 	}

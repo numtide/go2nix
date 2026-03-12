@@ -10,9 +10,13 @@ func TestStoreDirOf(t *testing.T) {
 	tests := []struct {
 		input, want string
 	}{
-		{"/nix/store/xxx-go/bin/go", "/nix/store/xxx-go"},
+		{"/nix/store/4zqp1bsg6mkia7c0xrh1f0gs3v9fk2jf-go/bin/go", "/nix/store/4zqp1bsg6mkia7c0xrh1f0gs3v9fk2jf-go"},
 		{"/nix/store/abc123-cacert/etc/ssl/certs/ca-bundle.crt", "/nix/store/abc123-cacert"},
-		{"/nix/store/zzz-go2nix/bin/go2nix", "/nix/store/zzz-go2nix"},
+		{"/nix/store/xyz-go2nix/bin/go2nix", "/nix/store/xyz-go2nix"},
+		// Bare store path (no sub-path)
+		{"/nix/store/abc-src", "/nix/store/abc-src"},
+		// Not a store path — returns input unchanged
+		{"/usr/local/bin/go", "/usr/local/bin/go"},
 	}
 	for _, tt := range tests {
 		if got := storeDirOf(tt.input); got != tt.want {
@@ -22,20 +26,45 @@ func TestStoreDirOf(t *testing.T) {
 }
 
 func TestCollectStdlibImports(t *testing.T) {
-	graph := map[string]*ResolvedPkg{
-		"a": {ImportPath: "a", Imports: []string{"b", "fmt", "net/http"}},
-		"b": {ImportPath: "b", Imports: []string{"crypto/tls"}},
+	// Create a temporary stdlib directory with some .a files.
+	dir := t.TempDir()
+	for _, rel := range []string{
+		"fmt.a",
+		"net/http.a",
+		"crypto/tls.a",
+		"internal/poll.a",
+		"vendor/golang.org/x/net/http2/hpack.a",
+	} {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte{}, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	sorted := []*ResolvedPkg{graph["b"], graph["a"]}
 
-	stdlib := collectStdlibImports(sorted, graph)
-
-	// Should contain fmt, net/http, crypto/tls (sorted)
-	if len(stdlib) != 3 {
-		t.Fatalf("expected 3 stdlib imports, got %d: %v", len(stdlib), stdlib)
+	stdlib, err := collectStdlibImports(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if stdlib[0] != "crypto/tls" || stdlib[1] != "fmt" || stdlib[2] != "net/http" {
-		t.Errorf("stdlib = %v", stdlib)
+
+	// Must include internal/ and vendor/ packages — the linker needs them
+	// transitively (e.g., net/http depends on internal/poll).
+	expected := []string{
+		"crypto/tls",
+		"fmt",
+		"internal/poll",
+		"net/http",
+		"vendor/golang.org/x/net/http2/hpack",
+	}
+	if len(stdlib) != len(expected) {
+		t.Fatalf("expected %d stdlib imports, got %d: %v", len(expected), len(stdlib), stdlib)
+	}
+	for i, want := range expected {
+		if stdlib[i] != want {
+			t.Errorf("stdlib[%d] = %q, want %q", i, stdlib[i], want)
+		}
 	}
 }
 

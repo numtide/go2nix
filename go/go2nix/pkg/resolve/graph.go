@@ -12,7 +12,8 @@ import (
 // ResolvedPkg holds a resolved package with all info needed to create a derivation.
 type ResolvedPkg struct {
 	ImportPath string
-	ModKey     string   // "" for local packages
+	ModKey     string   // "" for local packages (path@version)
+	ModPath    string   // original module path (before replace), "" for local
 	GoFiles    []string // .go source files (basenames)
 	CgoFiles   []string
 	CFiles     []string
@@ -59,8 +60,8 @@ func buildPackageGraph(
 
 		if pkg.Module != nil && !pkg.Module.IsLocal() {
 			// Third-party package
-			modKey := pkg.Module.ModKey()
-			rp.ModKey = modKey
+			rp.ModKey = pkg.Module.ModKey()
+			rp.ModPath = pkg.Module.Path
 			rp.FetchPath = pkg.Module.FetchPath()
 			rp.Version = pkg.Module.Version
 			if r := pkg.Module.Replace; r != nil && r.Version != "" {
@@ -75,7 +76,7 @@ func buildPackageGraph(
 				rp.Subdir = strings.TrimPrefix(pkg.ImportPath, modPath+"/")
 			}
 
-			if fp, ok := fodPaths[modKey]; ok {
+			if fp, ok := fodPaths[rp.ModKey]; ok {
 				rp.FodPath = fp
 			}
 		} else {
