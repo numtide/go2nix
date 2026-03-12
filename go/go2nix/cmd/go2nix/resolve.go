@@ -18,6 +18,7 @@ func runResolveCmd(args []string) {
 	nixBin := fs.String("nix", "", "path to nix binary")
 	go2nixBin := fs.String("go2nix", "", "path to go2nix binary")
 	bashBin := fs.String("bash", "", "path to bash binary")
+	coreutilsBin := fs.String("coreutils", "", "path to a coreutils binary (e.g., coreutils/bin/mkdir)")
 	pname := fs.String("pname", "", "output binary name")
 	subPackages := fs.String("sub-packages", "", "comma-separated sub-packages")
 	tags := fs.String("tags", "", "comma-separated build tags")
@@ -54,15 +55,16 @@ func runResolveCmd(args []string) {
 	}
 
 	cfg := resolve.Config{
-		Src:         *src,
-		LockFile:    *lockfilePath,
-		System:      *system,
-		GoBin:       *goBin,
-		StdlibPath:  *stdlibPath,
-		NixBin:      *nixBin,
-		Go2NixBin:   g2n,
-		BashBin:     bash,
-		PName:       *pname,
+		Src:          *src,
+		LockFile:     *lockfilePath,
+		System:       *system,
+		GoBin:        *goBin,
+		StdlibPath:   *stdlibPath,
+		NixBin:       *nixBin,
+		Go2NixBin:    g2n,
+		BashBin:      bash,
+		CoreutilsBin: *coreutilsBin,
+		PName:        *pname,
 		SubPackages: *subPackages,
 		Tags:        *tags,
 		LDFlags:     *ldflags,
