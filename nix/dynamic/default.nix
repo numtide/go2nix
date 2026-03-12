@@ -92,6 +92,7 @@ let
 
     buildPhase = ''
       export NIX_CONFIG="extra-experimental-features = nix-command ca-derivations dynamic-derivations"
+      export HOME=$TMPDIR
 
       go2nix resolve \
         --src ${moduleRoot} \
@@ -102,6 +103,7 @@ let
         --nix ${nixPackage}/bin/nix \
         --go2nix ${go2nix}/bin/go2nix \
         --bash ${bash}/bin/bash \
+        --coreutils ${coreutils}/bin/mkdir \
         --pname ${lib.escapeShellArg pname} \
         --sub-packages ${lib.escapeShellArg (lib.concatStringsSep "," subPackages)} \
         --tags ${lib.escapeShellArg (lib.concatStringsSep "," tags)} \
