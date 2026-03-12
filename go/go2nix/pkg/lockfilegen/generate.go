@@ -118,11 +118,7 @@ func Generate(dirs []string, output string, jobs int, minimal, gomod2nix bool) e
 			if pkg.Module == nil || pkg.Module.Version == "" {
 				continue
 			}
-			version := pkg.Module.Version
-			if r := pkg.Module.Replace; r != nil && r.Version != "" {
-				version = r.Version
-			}
-			modKey := pkg.Module.Path + "@" + version
+			modKey := pkg.Module.ModKey()
 
 			var imports []string
 			for _, imp := range pkg.Imports {

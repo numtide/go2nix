@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	"golang.org/x/mod/module"
 )
 
 // Pkg matches one JSON record from `go list -json -deps`.
@@ -59,12 +61,13 @@ func (m *Module) IsLocal() bool {
 }
 
 // ModKey returns "path@version" for this module.
+// Uses the original module path with the effective version (replacement if any).
 func (m *Module) ModKey() string {
 	version := m.Version
 	if r := m.Replace; r != nil && r.Version != "" {
 		version = r.Version
 	}
-	return m.Path + "@" + version
+	return module.Version{Path: m.Path, Version: version}.String()
 }
 
 // FetchPath returns the actual path to fetch (respects replaces).
@@ -99,6 +102,7 @@ type ListDepsOptions struct {
 	Tags      string   // build tags (comma-separated)
 	Patterns  []string // patterns to list (default: ["./..."])
 	KeepLocal bool     // if true, include local packages in results
+	Compiled  bool     // if true, pass -compiled to include cgo-generated imports in Imports
 }
 
 // ListDeps runs `go list -json -deps` and returns packages.
@@ -113,6 +117,9 @@ func ListDeps(opts ListDepsOptions) ([]Pkg, error) {
 	}
 
 	args := []string{"list", "-json", "-deps"}
+	if opts.Compiled {
+		args = append(args, "-compiled")
+	}
 	if opts.Tags != "" {
 		args = append(args, "-tags", opts.Tags)
 	}

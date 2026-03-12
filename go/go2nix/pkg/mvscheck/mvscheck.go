@@ -23,6 +23,7 @@ import (
 
 	"github.com/numtide/go2nix/pkg/lockfile"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 )
 
 // Check verifies that go.mod in dir is tidy with respect to vendor/.
@@ -144,7 +145,7 @@ func CheckLockfile(dir string, lockfilePath string) error {
 			version = r.New.Version
 		}
 
-		key := modPath + "@" + version
+		key := module.Version{Path: modPath, Version: version}.String()
 		if _, ok := lf.Mod[key]; !ok {
 			missing = append(missing, key)
 		}
