@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/nix-community/go-nix/pkg/storepath"
 )
 
-const storeDir = "/nix/store"
 const hashLen = 32
 
 // StorePath represents a validated Nix store path.
@@ -24,8 +25,8 @@ func ParseStorePath(path string) (StorePath, error) {
 	if name[hashLen] != '-' {
 		return StorePath{}, fmt.Errorf("invalid store path %q: expected dash at position %d", path, hashLen)
 	}
-	if !strings.HasPrefix(path, storeDir+"/") {
-		return StorePath{}, fmt.Errorf("invalid store path %q: must start with %s/", path, storeDir)
+	if !strings.HasPrefix(path, storepath.StoreDir+"/") {
+		return StorePath{}, fmt.Errorf("invalid store path %q: must start with %s/", path, storepath.StoreDir)
 	}
 	return StorePath{path: path}, nil
 }

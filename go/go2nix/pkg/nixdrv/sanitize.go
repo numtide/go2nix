@@ -1,16 +1,29 @@
 package nixdrv
 
-import (
-	"strings"
-	"unicode"
-)
+import "strings"
 
-// SanitizeName converts a Go import path to a valid Nix derivation name component.
-// Matches helpers.nix sanitizeName: replace / → -, + → _
-// Dots and @ are valid in Nix derivation names and are preserved.
+// SanitizeName converts a Go import path to a valid Nix store path name.
+// Valid characters: [a-zA-Z0-9+-._?=]
+// Replaces: / → -, + preserved, ~ → _, @ → _at_
+// Any other illegal characters are replaced with _.
 func SanitizeName(s string) string {
-	r := strings.NewReplacer("/", "-", "+", "_")
-	return r.Replace(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, c := range s {
+		switch {
+		case (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+			b.WriteRune(c)
+		case c == '+' || c == '-' || c == '.' || c == '_' || c == '?' || c == '=':
+			b.WriteRune(c)
+		case c == '/':
+			b.WriteByte('-')
+		case c == '@':
+			b.WriteString("_at_")
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // PkgDrvName returns the derivation name for a package: gopkg-<sanitized>.
@@ -31,20 +44,4 @@ func LinkDrvName(pname string) string {
 // CollectDrvName returns the derivation name for a collector: gocollect-<sanitized>.
 func CollectDrvName(pname string) string {
 	return "gocollect-" + SanitizeName(pname)
-}
-
-// EscapeModPath escapes a Go module path for use in GOMODCACHE paths.
-// Matches golang.org/x/mod/module.EscapePath(): uppercase letters become !lowercase.
-func EscapeModPath(path string) string {
-	var b strings.Builder
-	b.Grow(len(path))
-	for _, r := range path {
-		if unicode.IsUpper(r) {
-			b.WriteByte('!')
-			b.WriteRune(unicode.ToLower(r))
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
