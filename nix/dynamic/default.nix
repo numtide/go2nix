@@ -42,6 +42,18 @@
   ...
 }:
 
+assert lib.assertMsg (builtins ? outputOf)
+  "go2nix dynamic mode requires the dynamic-derivations experimental feature (which implies ca-derivations). Enable with: extra-experimental-features = dynamic-derivations ca-derivations recursive-nix";
+
+assert
+  let
+    # Extract major.minor from version strings like "2.34pre20260217_6e725093".
+    major = lib.versions.major nixPackage.version;
+    minor = lib.versions.minor nixPackage.version;
+  in
+  lib.assertMsg (lib.versionAtLeast "${major}.${minor}" "2.34")
+    "go2nix dynamic mode requires Nix >= 2.34 (v4 derivation JSON format), got ${nixPackage.version}";
+
 let
   moduleRoot = if moduleDir == "." then "${src}" else "${src}/${moduleDir}";
 
