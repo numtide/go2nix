@@ -51,8 +51,8 @@ See [dynamic-derivations.md](dynamic-derivations.md) for internals.
 ### Choosing a mode
 
 `buildGoApplication` auto-selects: dynamic mode when `builtins.outputOf`
-is available and `nixPackage` is set, otherwise DAG mode. Use the explicit
-builders to override:
+is available and `nixPackage` is set with version higher or equal than `2.34`, 
+otherwise DAG mode. Use the explicit builders to override this automatic behavior:
 
 ```nix
 goEnv.buildGoApplicationVendorMode { ... }
@@ -92,7 +92,7 @@ goEnv = import ./nix/mk-go-env.nix {
   inherit go go2nix;
   inherit (pkgs) callPackage;
   tags = [ "nethttpomithttp2" ];  # optional
-  nixPackage = pkgs.nix;          # optional, enables dynamic mode
+  nixPackage = pkgs.nix_234;      # optional, enables dynamic mode
 };
 ```
 
@@ -106,6 +106,7 @@ Everything within the scope shares the same Go version, build tags, and
 go2nix binary.
 
 Exposes:
+
 - `buildGoApplication` — auto-selects dynamic or DAG
 - `buildGoApplicationDAGMode`
 - `buildGoApplicationVendorMode`
@@ -126,6 +127,7 @@ DAG and dynamic modes.
 ### Shared: helpers.nix
 
 Pure Nix utility functions:
+
 - `sanitizeName` — `/` → `-`, `+` → `_` for derivation names.
 - `removePrefix` — Substring after a known prefix.
 - `escapeModPath` — Go module case-escaping (`A` → `!a`).

@@ -17,7 +17,7 @@ entire application.
 Vendor mode uses the v1-style lockfile:
 
 ```bash
-go2nix generate --gomod2nix .
+go2nix generate --mode=vendor .
 ```
 
 This produces a lockfile with `[mod."path@version"]` entries containing
@@ -71,7 +71,7 @@ all standard Go build flags.
 ```nix
 goEnv.buildGoApplicationVendorMode {
   src = ./.;
-  goLock = ./go2nix.toml;  # Generated with --gomod2nix
+  goLock = ./go2nix.toml;  # Generated with --mode=vendor
   pname = "my-app";
   version = "0.1.0";
   tags = [ "nethttpomithttp2" ];

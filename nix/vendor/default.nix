@@ -6,7 +6,7 @@
 # Adapted to work as a callPackage-compatible function within the go2nix scope.
 # Returns a single builder function: { src, goLock, pname, version, ... }:
 #
-# Expects a v1-style lockfile (generated via `go2nix generate --gomod2nix`):
+# Expects a v1-style lockfile (generated via `go2nix generate --mode=vendor`):
 #   [mod."path@version"]
 #   version = "v1.2.3"
 #   hash    = "sha256-..."

@@ -76,8 +76,8 @@ goEnv.buildGoApplicationDynamicMode { ... }
 | Command | Description |
 |---------------------|----------------------------------------------------------------|
 | `go2nix generate` | Generate `go2nix.toml` lockfile |
-| `go2nix generate --minimal` | Lockfile with `[mod]` only (no `[pkg]`) |
-| `go2nix generate --gomod2nix` | Vendor-format lockfile |
+| `go2nix generate --mode=dynamic` | Lockfile with `[mod]` only (no `[pkg]`) |
+| `go2nix generate --mode=vendor` | Vendor-format lockfile |
 | `go2nix check` | Validate lockfile against `go.mod` |
 
 Run `go2nix generate -h` for all flags.

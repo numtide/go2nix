@@ -15,8 +15,15 @@ go2nix generate [flags] [dir...]
 |------|---------|-------------|
 | `-o` | `go2nix.toml` | Output lockfile path |
 | `-j` | `NumCPU` | Max parallel hash invocations |
-| `--minimal` | `false` | Modules only, no `[pkg]` section |
-| `--gomod2nix` | `false` | Vendor-format (v1) lockfile |
+| `--mode` | `dag` | Builder mode: `dag`, `dynamic`, `vendor` |
+
+Modes:
+
+| Mode | Format | Sections | Used by |
+|------|--------|----------|---------|
+| `dag` | v2 | `[mod]` + `[pkg]` | DAG mode |
+| `dynamic` | v2 | `[mod]` only | Dynamic mode |
+| `vendor` | v1 | `[mod."key"]` attrset | Vendor mode |
 
 When no directory is given, defaults to `.`. Multiple directories produce a
 merged lockfile (monorepo support).
@@ -24,9 +31,9 @@ merged lockfile (monorepo support).
 Examples:
 
 ```bash
-go2nix generate .                    # Full lockfile (mod + pkg)
-go2nix generate --minimal .          # Modules only (for vendor/dynamic mode)
-go2nix generate --gomod2nix .        # Vendor-format lockfile
+go2nix generate .                    # DAG mode (default, mod + pkg)
+go2nix generate --mode=dynamic .     # Dynamic mode (mod only)
+go2nix generate --mode=vendor .      # Vendor-format lockfile
 go2nix generate -o lock.toml ./a ./b # Monorepo with two modules
 ```
 
