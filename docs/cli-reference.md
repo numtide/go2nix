@@ -130,7 +130,7 @@ go2nix resolve [flags]
 | `--nix` | Yes | Path to nix binary |
 | `--pname` | Yes | Output binary name |
 | `--output` | Yes | `$out` path |
-| `--stdlib` | No | Path to pre-compiled Go stdlib |
+| `--stdlib` | Yes | Path to pre-compiled Go stdlib |
 | `--go2nix` | No | Path to go2nix binary (defaults to self) |
 | `--bash` | No | Path to bash binary |
 | `--sub-packages` | No | Comma-separated sub-packages |

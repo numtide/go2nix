@@ -32,8 +32,8 @@ func runResolveCmd(args []string) {
 	fs.Parse(args)
 
 	if *src == "" || *lockfilePath == "" || *system == "" || *goBin == "" ||
-		*nixBin == "" || *pname == "" || *output == "" {
-		slog.Error("usage: go2nix resolve --src PATH --lockfile PATH --system SYSTEM --go PATH --nix PATH --pname NAME --output PATH [--stdlib PATH] [--go2nix PATH] [--bash PATH] [--sub-packages PKGS] [--tags TAGS] [--ldflags FLAGS] [--overrides JSON] [--cacert PATH]")
+		*stdlibPath == "" || *nixBin == "" || *pname == "" || *output == "" {
+		slog.Error("usage: go2nix resolve --src PATH --lockfile PATH --system SYSTEM --go PATH --stdlib PATH --nix PATH --pname NAME --output PATH [--go2nix PATH] [--bash PATH] [--sub-packages PKGS] [--tags TAGS] [--ldflags FLAGS] [--overrides JSON] [--cacert PATH]")
 		os.Exit(1)
 	}
 

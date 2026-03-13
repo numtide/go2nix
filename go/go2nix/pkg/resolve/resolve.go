@@ -150,7 +150,10 @@ func Resolve(cfg Config) error {
 	slog.Info("packages discovered", "count", len(pkgs))
 
 	// Step 6: Build and topo-sort package graph
-	graph := buildPackageGraph(pkgs, fodPaths, cfg.Src)
+	graph, err := buildPackageGraph(pkgs, fodPaths, cfg.Src)
+	if err != nil {
+		return err
+	}
 	sorted, err := topoSort(graph)
 	if err != nil {
 		return fmt.Errorf("topological sort: %w", err)
@@ -429,9 +432,7 @@ func createPackageDrv(
 	drv.AddInputSrc(cfg.coreutilsDir)
 	drv.AddInputSrc(go2nixStorePath)
 	drv.AddInputSrc(storeDirOf(cfg.GoBin))
-	if cfg.StdlibPath != "" {
-		drv.AddInputSrc(cfg.StdlibPath)
-	}
+	drv.AddInputSrc(cfg.StdlibPath)
 
 	// Package overrides (cgo) — add all discovered paths (including transitive).
 	for _, p := range allInputPaths {
@@ -568,9 +569,7 @@ func createLinkDrv(
 	drv.AddInputSrc(bashStorePath)
 	drv.AddInputSrc(cfg.coreutilsDir)
 	drv.AddInputSrc(storeDirOf(cfg.GoBin))
-	if cfg.StdlibPath != "" {
-		drv.AddInputSrc(cfg.StdlibPath)
-	}
+	drv.AddInputSrc(cfg.StdlibPath)
 	// Add override paths (libraries needed for external linking)
 	for _, p := range cfg.allOverridePaths {
 		drv.AddInputSrc(p)

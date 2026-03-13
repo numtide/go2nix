@@ -1,0 +1,139 @@
+# Dynamic Mode
+
+Per-package CA derivations at build time, via recursive-nix.
+
+## Overview
+
+Dynamic mode moves package graph discovery from Nix eval time to build time.
+A single recursive-nix wrapper derivation runs `go2nix resolve`, which calls
+`go list -json -deps` to discover the import graph, then registers one
+content-addressed (CA) derivation per package via `nix derivation add`. The
+wrapper's output is a `.drv` file; `builtins.outputOf` resolves it to the
+final binary at eval time.
+
+Because derivations are content-addressed, a change that doesn't affect the
+compiled output (e.g., editing a comment) won't propagate rebuilds — Nix
+deduplicates by content hash.
+
+## Requirements
+
+Dynamic mode requires Nix >= 2.34 with these experimental features enabled:
+
+```
+extra-experimental-features = recursive-nix ca-derivations dynamic-derivations
+```
+
+## Lockfile requirements
+
+Dynamic mode uses a minimal v2 lockfile with `[mod]` only (no `[pkg]`):
+
+```bash
+go2nix generate --mode=dynamic .
+```
+
+The package graph is discovered at build time, so only module NAR hashes are
+needed at eval time. See [lockfile-format.md](lockfile-format.md) for details.
+
+## Build flow
+
+### 1. Wrapper derivation (eval time)
+
+Nix evaluates a text-mode CA derivation (`${pname}.drv`) that will run
+`go2nix resolve` at build time. All inputs (Go toolchain, go2nix, Nix binary,
+source, lockfile) are captured as derivation inputs.
+
+### 2. Module FODs (build time)
+
+`go2nix resolve` reads `[mod]` from the lockfile and creates fixed-output
+derivations for each module, then builds them inside the recursive-nix
+sandbox. Each FOD runs `go mod download` and produces a GOMODCACHE directory.
+
+### 3. Package graph discovery (build time)
+
+With all modules available, `go list -json -deps` discovers the full import
+graph. This is the step that DAG mode performs at generation time — dynamic
+mode defers it to build time.
+
+### 4. CA derivation registration (build time)
+
+For each package, `go2nix resolve` calls `nix derivation add` to register a
+content-addressed derivation that compiles one Go package to an archive
+(`.a` file). Dependencies between packages are expressed as derivation inputs.
+Local packages are also individual CA derivations.
+
+### 5. Link derivation (build time)
+
+A final CA derivation links all compiled packages into the output binary.
+For multi-binary projects, a collector derivation aggregates multiple link
+outputs.
+
+### 6. Output resolution (eval time)
+
+The wrapper's output is the `.drv` file path. `builtins.outputOf` tells Nix
+to build that derivation and use its output, connecting eval time to the
+build-time-generated derivation graph.
+
+## Package overrides
+
+Per-package customization (e.g., for cgo libraries):
+
+```nix
+goEnv.buildGoApplicationDynamicMode {
+  src = ./.;
+  goLock = ./go2nix.toml;
+  pname = "my-app";
+  version = "0.1.0";
+  packageOverrides = {
+    "github.com/mattn/go-sqlite3" = {
+      nativeBuildInputs = [ pkg-config sqlite ];
+    };
+  };
+}
+```
+
+Overrides are serialized to JSON and passed to `go2nix resolve`, which adds
+the extra inputs to the appropriate CA derivations.
+
+## Usage
+
+```nix
+goEnv.buildGoApplicationDynamicMode {
+  src = ./.;
+  goLock = ./go2nix.toml;  # Generated with --mode=dynamic
+  pname = "my-app";
+  version = "0.1.0";
+  subPackages = [ "cmd/server" ];
+  tags = [ "nethttpomithttp2" ];
+  ldflags = [ "-s" "-w" ];
+}
+```
+
+The result has a `target` passthru attribute containing the final binary,
+resolved via `builtins.outputOf`.
+
+## Directory layout
+
+```
+nix/dynamic/
+└── default.nix    # buildGoApplicationDynamicMode (wrapper derivation)
+```
+
+The build-time logic lives in the `go2nix resolve` command
+(see [cli-reference.md](cli-reference.md)).
+
+## Trade-offs
+
+**Pros:**
+- Smallest lockfile — only `[mod]` hashes, no `[pkg]` section
+- No lockfile regeneration when import graph changes (only when modules change)
+- Per-package caching via CA derivations
+- CA deduplication — comment-only edits don't trigger rebuilds
+
+**Cons:**
+- Requires Nix >= 2.34 with experimental features (`recursive-nix`,
+  `ca-derivations`, `dynamic-derivations`)
+- Build-time overhead from `nix derivation add` calls (~32ms each)
+- Parallelism limited by SQLite write lock (saturates at ~4 concurrent adds)
+
+See [recursive-nix-internals.md](recursive-nix-internals.md) for performance
+analysis and benchmarks.

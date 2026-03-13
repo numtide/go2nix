@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -35,11 +36,12 @@ type ResolvedPkg struct {
 // buildPackageGraph converts go list packages into ResolvedPkgs.
 // srcRoot is the source store path for computing local package subdirectories.
 // fodPaths maps modKey → materialized FOD StorePath.
+// Returns an error if a third-party module is missing from fodPaths (stale lockfile).
 func buildPackageGraph(
 	pkgs []golist.Pkg,
 	fodPaths map[string]*storepath.StorePath,
 	srcRoot string,
-) map[string]*ResolvedPkg {
+) (map[string]*ResolvedPkg, error) {
 	result := make(map[string]*ResolvedPkg, len(pkgs))
 	for _, pkg := range pkgs {
 		if pkg.Standard {
@@ -76,9 +78,11 @@ func buildPackageGraph(
 				rp.Subdir = strings.TrimPrefix(pkg.ImportPath, modPath+"/")
 			}
 
-			if fp, ok := fodPaths[rp.ModKey]; ok {
-				rp.FodPath = fp
+			fp, ok := fodPaths[rp.ModKey]
+			if !ok {
+				return nil, fmt.Errorf("lockfile missing module %s — regenerate with go2nix generate", rp.ModKey)
 			}
+			rp.FodPath = fp
 		} else {
 			rp.IsLocal = true
 			// Compute subdir for local packages relative to source root.
@@ -97,7 +101,7 @@ func buildPackageGraph(
 
 		result[pkg.ImportPath] = rp
 	}
-	return result
+	return result, nil
 }
 
 // topoSort returns packages in dependency order (leaves first).

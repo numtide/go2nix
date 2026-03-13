@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/storepath"
@@ -124,7 +125,10 @@ func TestBuildPackageGraph(t *testing.T) {
 		"golang.org/x/crypto@v0.17.0": fodPath,
 	}
 
-	graph := buildPackageGraph(pkgs, fodPaths, "/nix/store/src")
+	graph, err := buildPackageGraph(pkgs, fodPaths, "/nix/store/src")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Check third-party package
 	ssh := graph["golang.org/x/crypto/ssh"]
@@ -194,7 +198,10 @@ func TestBuildPackageGraph_LocalReplace(t *testing.T) {
 		},
 	}
 
-	graph := buildPackageGraph(pkgs, nil, "/src")
+	graph, err := buildPackageGraph(pkgs, nil, "/src")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	utils := graph["example.com/shared/utils"]
 	if utils == nil {
@@ -207,5 +214,25 @@ func TestBuildPackageGraph_LocalReplace(t *testing.T) {
 	// NOT the import path structure.
 	if utils.Subdir != "libs/shared/utils" {
 		t.Errorf("utils subdir = %q, want %q", utils.Subdir, "libs/shared/utils")
+	}
+}
+
+func TestBuildPackageGraph_MissingModule(t *testing.T) {
+	pkgs := []golist.Pkg{
+		{
+			ImportPath: "golang.org/x/crypto/ssh",
+			Name:       "ssh",
+			GoFiles:    []string{"client.go"},
+			Module:     &golist.Module{Path: "golang.org/x/crypto", Version: "v0.17.0"},
+		},
+	}
+
+	// Empty fodPaths — module not in lockfile.
+	_, err := buildPackageGraph(pkgs, map[string]*storepath.StorePath{}, "/src")
+	if err == nil {
+		t.Fatal("expected error for missing module")
+	}
+	if !strings.Contains(err.Error(), "golang.org/x/crypto@v0.17.0") {
+		t.Errorf("error should mention module key, got: %s", err)
 	}
 }
