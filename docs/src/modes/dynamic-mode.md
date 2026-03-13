@@ -47,6 +47,7 @@ source, lockfile) are captured as derivation inputs.
 `go2nix resolve` reads `[mod]` from the lockfile and creates fixed-output
 derivations for each module, then builds them inside the recursive-nix
 sandbox. Each FOD runs `go mod download` and produces a GOMODCACHE directory.
+The `netrcFile` option supports private module authentication.
 
 ### 3. Package graph discovery (build time)
 

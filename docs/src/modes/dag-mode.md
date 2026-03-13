@@ -14,7 +14,7 @@ dependency changes, only it and its reverse dependencies rebuild.
 DAG mode requires a full lockfile with both `[mod]` and `[pkg]` sections:
 
 ```bash
-go2nix generate .
+go2nix generate --mode=dag .
 ```
 
 The `[pkg]` section encodes the import graph so Nix can wire up `buildInputs`
@@ -50,7 +50,7 @@ For each package in `processed.packages`, a derivation is created:
 ```nix
 stdenv.mkDerivation {
   name = pkg.drvName;                         # "gopkg-github.com-foo-bar"
-  nativeBuildInputs = [ hooks.goModuleHook ];  # compile-go-pkg.sh
+  nativeBuildInputs = [ hooks.goModuleHook ]; # compile-go-pkg.sh
   buildInputs = deps;                         # dependency package derivations
   env = {
     goPackagePath = importPath;

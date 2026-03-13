@@ -7,9 +7,9 @@ experimental features enabled.
 ## Integration testing
 
 - `go2nix resolve` producing a `.drv` file for a real Go project
-- `nix build` of a project using `buildGoApplicationDynamic`
+- `nix build` of a project using `buildGoApplicationDynamicMode`
 - `go2nix generate --mode=dynamic` producing a lockfile that `resolve` can consume
-- Fallback to `buildGoApplicationLockfile` when `builtins.outputOf` is unavailable
+- Fallback to `buildGoApplicationDAGMode` when `builtins.outputOf` is unavailable
 - CA deduplication: editing a comment should not trigger recompilation of unchanged packages
 - Multi-binary projects (multiple main packages → collector derivation)
 - Cgo projects with `packageOverrides`

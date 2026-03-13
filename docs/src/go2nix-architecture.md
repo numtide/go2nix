@@ -51,8 +51,9 @@ See [dynamic-derivations.md](internals/dynamic-derivations.md) for internals.
 ### Choosing a mode
 
 `buildGoApplication` auto-selects: dynamic mode when `builtins.outputOf`
-is available and `nixPackage` is set with version higher or equal than `2.34`, 
-otherwise DAG mode. Use the explicit builders to override this automatic behavior:
+is available and `nixPackage` is set, otherwise DAG mode. (The dynamic builder
+additionally asserts Nix >= 2.34 at eval time, but this check is separate from
+the auto-selection logic.) Use the explicit builders to override:
 
 ```nix
 goEnv.buildGoApplicationVendorMode { ... }
@@ -134,12 +135,12 @@ Pure Nix utility functions:
 
 ## Staleness detection
 
-| When | What | How |
-|------|------|-----|
-| Generation | MVS consistency | `go list -json -deps` resolves actual versions |
-| Nix eval | Missing packages | Package not in lockfile → error |
-| Build time | Lockfile consistency | `go2nix check --lockfile` or `mvscheck` |
-| Build time | Tidiness | `go mod graph` against GOMODCACHE from vendor tree |
+| When | What | Applies to | How |
+|------|------|-----------|-----|
+| Generation | MVS consistency | All modes | `go list -json -deps` resolves actual versions |
+| Nix eval | Missing packages | DAG only | Package not in `[pkg]` → error |
+| Build time | Lockfile consistency | DAG, dynamic | `go2nix check --lockfile` validates against `go.mod` |
+| Build time | Tidiness | Vendor only | `go mod graph` against GOMODCACHE from vendor tree |
 
 ## Further reading
 

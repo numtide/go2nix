@@ -133,6 +133,7 @@ go2nix resolve [flags]
 | `--stdlib` | Yes | Path to pre-compiled Go stdlib |
 | `--go2nix` | No | Path to go2nix binary (defaults to self) |
 | `--bash` | No | Path to bash binary |
+| `--coreutils` | No | Path to a coreutils binary (e.g., `coreutils/bin/mkdir`) |
 | `--sub-packages` | No | Comma-separated sub-packages |
 | `--tags` | No | Comma-separated build tags |
 | `--ldflags` | No | Linker flags |
