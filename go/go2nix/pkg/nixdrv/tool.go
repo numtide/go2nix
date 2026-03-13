@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/nix-community/go-nix/pkg/storepath"
 )
 
 // NixTool wraps the nix CLI for derivation operations.
@@ -14,10 +16,10 @@ type NixTool struct {
 }
 
 // DerivationAdd pipes derivation JSON to `nix derivation add` and returns the .drv store path.
-func (t *NixTool) DerivationAdd(drv *Derivation) (StorePath, error) {
+func (t *NixTool) DerivationAdd(drv *Derivation) (*storepath.StorePath, error) {
 	jsonData, err := drv.ToJSON()
 	if err != nil {
-		return StorePath{}, fmt.Errorf("serializing derivation %q: %w", drv.name, err)
+		return nil, fmt.Errorf("serializing derivation %q: %w", drv.name, err)
 	}
 
 	args := append(t.baseArgs(), "derivation", "add")
@@ -29,16 +31,16 @@ func (t *NixTool) DerivationAdd(drv *Derivation) (StorePath, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return StorePath{}, fmt.Errorf("nix derivation add for %q failed: %w\nstderr: %s\nJSON: %s",
+		return nil, fmt.Errorf("nix derivation add for %q failed: %w\nstderr: %s\nJSON: %s",
 			drv.name, err, stderr.String(), string(jsonData))
 	}
 
 	drvPath := strings.TrimSpace(stdout.String())
-	return ParseStorePath(drvPath)
+	return storepath.FromAbsolutePath(drvPath)
 }
 
 // Build runs `nix build <installables> --no-link --print-out-paths` and returns output paths.
-func (t *NixTool) Build(installables ...string) ([]StorePath, error) {
+func (t *NixTool) Build(installables ...string) ([]*storepath.StorePath, error) {
 	args := append(t.baseArgs(), "build")
 	args = append(args, "--no-link", "--print-out-paths")
 	args = append(args, installables...)
@@ -53,13 +55,13 @@ func (t *NixTool) Build(installables ...string) ([]StorePath, error) {
 			installables, err, stderr.String())
 	}
 
-	var paths []StorePath
+	var paths []*storepath.StorePath
 	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		sp, err := ParseStorePath(line)
+		sp, err := storepath.FromAbsolutePath(line)
 		if err != nil {
 			return nil, fmt.Errorf("parsing build output %q: %w", line, err)
 		}
@@ -69,7 +71,7 @@ func (t *NixTool) Build(installables ...string) ([]StorePath, error) {
 }
 
 // StoreAdd runs `nix store add --name <name> <path>` and returns the store path.
-func (t *NixTool) StoreAdd(name, path string) (StorePath, error) {
+func (t *NixTool) StoreAdd(name, path string) (*storepath.StorePath, error) {
 	args := append(t.baseArgs(), "store", "add", "--name", name, path)
 	cmd := exec.Command(t.NixBin, args...)
 
@@ -78,11 +80,11 @@ func (t *NixTool) StoreAdd(name, path string) (StorePath, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return StorePath{}, fmt.Errorf("nix store add %q failed: %w\nstderr: %s",
+		return nil, fmt.Errorf("nix store add %q failed: %w\nstderr: %s",
 			name, err, stderr.String())
 	}
 
-	return ParseStorePath(strings.TrimSpace(stdout.String()))
+	return storepath.FromAbsolutePath(strings.TrimSpace(stdout.String()))
 }
 
 func (t *NixTool) baseArgs() []string {

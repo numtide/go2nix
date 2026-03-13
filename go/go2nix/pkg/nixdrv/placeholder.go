@@ -2,13 +2,30 @@ package nixdrv
 
 import (
 	"crypto/sha256"
+	"fmt"
+	"strings"
 
 	"github.com/nix-community/go-nix/pkg/nixbase32"
+	"github.com/nix-community/go-nix/pkg/storepath"
 )
 
 // Placeholder represents a Nix placeholder hash.
 type Placeholder struct {
 	hash []byte // 32 bytes (SHA-256)
+}
+
+// HashPart returns the nixbase32-encoded hash portion of a store path.
+func HashPart(sp *storepath.StorePath) string {
+	return nixbase32.EncodeToString(sp.Digest)
+}
+
+// DrvName returns the name portion of a .drv store path with the ".drv" suffix stripped.
+// Panics if the store path is not a derivation.
+func DrvName(sp *storepath.StorePath) string {
+	if !strings.HasSuffix(sp.Name, ".drv") {
+		panic(fmt.Sprintf("not a derivation path: %s", sp.Absolute()))
+	}
+	return strings.TrimSuffix(sp.Name, ".drv")
 }
 
 // StandardOutput creates a placeholder for a simple derivation output.
@@ -21,10 +38,10 @@ func StandardOutput(outputName string) Placeholder {
 // CAOutput creates a placeholder for a content-addressed derivation output.
 // The drvPath must be a .drv store path.
 // Format: SHA256("nix-upstream-output:<drv_hash_part>:<output_path_name>")
-func CAOutput(drvPath StorePath, outputName string) Placeholder {
-	drvName := drvPath.DrvName()
+func CAOutput(drvPath *storepath.StorePath, outputName string) Placeholder {
+	drvName := DrvName(drvPath)
 	outputPathName := OutputPathName(drvName, outputName)
-	clearText := "nix-upstream-output:" + drvPath.HashPart() + ":" + outputPathName
+	clearText := "nix-upstream-output:" + HashPart(drvPath) + ":" + outputPathName
 	h := sha256.Sum256([]byte(clearText))
 	return Placeholder{hash: h[:]}
 }

@@ -82,9 +82,12 @@ func Resolve(cfg Config) error {
 		}
 	}
 	// Collect all override paths for the link derivation (cgo external linking).
+	// Use discoverInputPaths to follow propagated-build-inputs transitively.
+	var allOverrideInputs []string
 	for _, ov := range overrides {
-		cfg.allOverridePaths = append(cfg.allOverridePaths, ov.NativeBuildInputs...)
+		allOverrideInputs = append(allOverrideInputs, ov.NativeBuildInputs...)
 	}
+	_, _, cfg.allOverridePaths = discoverInputPaths(allOverrideInputs)
 
 	// Step 1: Read lockfile
 	slog.Info("reading lockfile", "path", cfg.LockFile)
@@ -170,8 +173,8 @@ func Resolve(cfg Config) error {
 	}
 
 	// Step 10: Copy .drv file to $out
-	slog.Info("writing output", "drv", finalDrvPath.String(), "out", cfg.Output)
-	if err := copyFile(finalDrvPath.String(), cfg.Output); err != nil {
+	slog.Info("writing output", "drv", finalDrvPath.Absolute(), "out", cfg.Output)
+	if err := copyFile(finalDrvPath.Absolute(), cfg.Output); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 
@@ -180,8 +183,8 @@ func Resolve(cfg Config) error {
 
 // createModuleFODs creates a FOD derivation for each module in the lockfile.
 // Returns modKey → .drv StorePath.
-func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) (map[string]nixdrv.StorePath, error) {
-	result := make(map[string]nixdrv.StorePath, len(lock.Mod))
+func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) (map[string]*storepath.StorePath, error) {
+	result := make(map[string]*storepath.StorePath, len(lock.Mod))
 	bashStorePath := storeDirOf(cfg.BashBin)
 
 	for modKey, hash := range lock.Mod {
@@ -228,9 +231,9 @@ func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) 
 
 // buildFODs materializes all FODs in a single batched nix build call.
 // Returns modKey → output StorePath.
-func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]nixdrv.StorePath) (map[string]nixdrv.StorePath, error) {
+func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]*storepath.StorePath) (map[string]*storepath.StorePath, error) {
 	if len(fodDrvPaths) == 0 {
-		return map[string]nixdrv.StorePath{}, nil
+		return map[string]*storepath.StorePath{}, nil
 	}
 
 	// Build a deterministic ordered list of modKeys and installables
@@ -242,7 +245,7 @@ func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]nixdrv.StorePath) (ma
 
 	installables := make([]string, len(modKeys))
 	for i, k := range modKeys {
-		installables[i] = fodDrvPaths[k].String() + "^out"
+		installables[i] = fodDrvPaths[k].Absolute() + "^out"
 	}
 
 	// Single nix build call — Nix handles parallelism internally
@@ -254,7 +257,7 @@ func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]nixdrv.StorePath) (ma
 		return nil, fmt.Errorf("expected %d FOD outputs, got %d", len(modKeys), len(paths))
 	}
 
-	result := make(map[string]nixdrv.StorePath, len(modKeys))
+	result := make(map[string]*storepath.StorePath, len(modKeys))
 	for i, k := range modKeys {
 		result[k] = paths[i]
 	}
@@ -268,16 +271,16 @@ func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]nixdrv.StorePath) (ma
 // share directory prefixes (e.g., cache/download/golang.org/) but never share
 // leaf files since each FOD downloads a unique module@version. We walk each
 // FOD, create real directories for intermediate paths, and symlink leaf files.
-func setupGOMODCACHE(fodPaths map[string]nixdrv.StorePath) (string, error) {
+func setupGOMODCACHE(fodPaths map[string]*storepath.StorePath) (string, error) {
 	gomodcache, err := os.MkdirTemp("", "gomodcache-")
 	if err != nil {
 		return "", err
 	}
 	for _, fodPath := range fodPaths {
-		src := fodPath.String()
+		src := fodPath.Absolute()
 		if err := symlinkTree(src, gomodcache); err != nil {
 			os.RemoveAll(gomodcache)
-			return "", fmt.Errorf("merging FOD %s: %w", fodPath, err)
+			return "", fmt.Errorf("merging FOD %s: %w", fodPath.Absolute(), err)
 		}
 	}
 	return gomodcache, nil
@@ -336,23 +339,21 @@ func createPackageDrv(
 	// PATH must include go, go2nix, and coreutils (mkdir, etc.)
 	goStoreDir := storeDirOf(cfg.GoBin)
 	pathParts := []string{goStoreDir + "/bin", go2nixStorePath + "/bin", cfg.coreutilsDir + "/bin"}
-	var pkgConfigParts []string
-
-	// Collect nativeBuildInputs from overrides for PATH and PKG_CONFIG_PATH.
-	collectOverridePaths := func(ov PackageOverride) {
-		for _, nbi := range ov.NativeBuildInputs {
-			pathParts = append(pathParts, nbi+"/bin")
-			pkgConfigParts = append(pkgConfigParts, nbi+"/lib/pkgconfig")
-		}
-	}
+	// Collect nativeBuildInputs from overrides, discover actual dirs and
+	// follow propagated-build-inputs for transitive dependencies.
+	var overrideStorePaths []string
 	if ov, ok := overrides[pkg.ImportPath]; ok {
-		collectOverridePaths(ov)
+		overrideStorePaths = append(overrideStorePaths, ov.NativeBuildInputs...)
 	}
 	if pkg.ModPath != "" {
 		if ov, ok := overrides[pkg.ModPath]; ok {
-			collectOverridePaths(ov)
+			overrideStorePaths = append(overrideStorePaths, ov.NativeBuildInputs...)
 		}
 	}
+	binDirs, pkgConfigDirs, allInputPaths := discoverInputPaths(overrideStorePaths)
+	pathParts = append(pathParts, binDirs...)
+	var pkgConfigParts []string
+	pkgConfigParts = append(pkgConfigParts, pkgConfigDirs...)
 
 	// Add C compiler for cgo packages (needed even without overrides).
 	if len(pkg.CgoFiles) > 0 && cfg.ccDir != "" {
@@ -371,7 +372,7 @@ func createPackageDrv(
 		drv.SetEnv("relDir", pkg.Subdir)
 		drv.AddInputSrc(cfg.Src)
 	} else {
-		drv.SetEnv("modSrc", pkg.FodPath.String())
+		drv.SetEnv("modSrc", pkg.FodPath.Absolute())
 		escapedPath, err := module.EscapePath(pkg.FetchPath)
 		if err != nil {
 			return fmt.Errorf("escaping module path %s: %w", pkg.FetchPath, err)
@@ -381,7 +382,7 @@ func createPackageDrv(
 			relDir += "/" + pkg.Subdir
 		}
 		drv.SetEnv("relDir", relDir)
-		drv.AddInputSrc(pkg.FodPath.String())
+		drv.AddInputSrc(pkg.FodPath.Absolute())
 	}
 
 	// Build importcfg entries.
@@ -400,7 +401,7 @@ func createPackageDrv(
 		placeholder := nixdrv.CAOutput(dep.DrvPath, "out")
 		importcfgEntries = append(importcfgEntries,
 			fmt.Sprintf("packagefile %s=%s/pkg.a", imp, placeholder.Render()))
-		drv.AddInputDrv(dep.DrvPath.String(), "out")
+		drv.AddInputDrv(dep.DrvPath.Absolute(), "out")
 	}
 	drv.SetEnv("importcfg_entries", strings.Join(importcfgEntries, "\n"))
 
@@ -432,19 +433,9 @@ func createPackageDrv(
 		drv.AddInputSrc(cfg.StdlibPath)
 	}
 
-	// Package overrides (cgo)
-	if ov, ok := overrides[pkg.ImportPath]; ok {
-		for _, nbi := range ov.NativeBuildInputs {
-			drv.AddInputSrc(nbi)
-		}
-	}
-	// Also check module-level overrides
-	if pkg.ModPath != "" {
-		if ov, ok := overrides[pkg.ModPath]; ok {
-			for _, nbi := range ov.NativeBuildInputs {
-				drv.AddInputSrc(nbi)
-			}
-		}
+	// Package overrides (cgo) — add all discovered paths (including transitive).
+	for _, p := range allInputPaths {
+		drv.AddInputSrc(p)
 	}
 
 	drvPath, err := nix.DerivationAdd(drv)
@@ -462,7 +453,7 @@ func createFinalDrv(
 	nix *nixdrv.NixTool,
 	graph map[string]*ResolvedPkg,
 	sorted []*ResolvedPkg,
-) (nixdrv.StorePath, error) {
+) (*storepath.StorePath, error) {
 	// Find main packages
 	var mainPkgs []*ResolvedPkg
 	for _, pkg := range sorted {
@@ -472,17 +463,17 @@ func createFinalDrv(
 	}
 
 	if len(mainPkgs) == 0 {
-		return nixdrv.StorePath{}, fmt.Errorf("no main packages found")
+		return nil, fmt.Errorf("no main packages found")
 	}
 
 	// Create a link derivation for each main package
-	var linkDrvPaths []nixdrv.StorePath
+	var linkDrvPaths []*storepath.StorePath
 	var linkPlaceholders []string
 
 	for _, mainPkg := range mainPkgs {
 		drvPath, err := createLinkDrv(cfg, nix, graph, sorted, mainPkg, len(mainPkgs))
 		if err != nil {
-			return nixdrv.StorePath{}, fmt.Errorf("creating link for %s: %w", mainPkg.ImportPath, err)
+			return nil, fmt.Errorf("creating link for %s: %w", mainPkg.ImportPath, err)
 		}
 		linkDrvPaths = append(linkDrvPaths, drvPath)
 		linkPlaceholders = append(linkPlaceholders, nixdrv.CAOutput(drvPath, "out").Render())
@@ -504,7 +495,7 @@ func createLinkDrv(
 	sorted []*ResolvedPkg,
 	mainPkg *ResolvedPkg,
 	numMains int,
-) (nixdrv.StorePath, error) {
+) (*storepath.StorePath, error) {
 	// For single binary, use pname. For multiple binaries, derive name from import path.
 	binName := cfg.PName
 	if numMains > 1 {
@@ -525,7 +516,7 @@ func createLinkDrv(
 	// Main package placeholder
 	mainPlaceholder := nixdrv.CAOutput(mainPkg.DrvPath, "out")
 	drv.SetEnv("mainPkg", mainPlaceholder.Render())
-	drv.AddInputDrv(mainPkg.DrvPath.String(), "out")
+	drv.AddInputDrv(mainPkg.DrvPath.Absolute(), "out")
 
 	// Build importcfg with ALL transitive dependencies
 	var importcfgEntries []string
@@ -538,13 +529,13 @@ func createLinkDrv(
 		placeholder := nixdrv.CAOutput(pkg.DrvPath, "out")
 		importcfgEntries = append(importcfgEntries,
 			fmt.Sprintf("packagefile %s=%s/pkg.a", pkg.ImportPath, placeholder.Render()))
-		drv.AddInputDrv(pkg.DrvPath.String(), "out")
+		drv.AddInputDrv(pkg.DrvPath.Absolute(), "out")
 	}
 
 	// Add all stdlib entries — the linker needs the full transitive closure.
 	stdlibImports, err := collectStdlibImports(cfg.StdlibPath)
 	if err != nil {
-		return nixdrv.StorePath{}, err
+		return nil, err
 	}
 	for _, imp := range stdlibImports {
 		importcfgEntries = append(importcfgEntries,
@@ -592,9 +583,9 @@ func createLinkDrv(
 func createCollectorDrv(
 	cfg Config,
 	nix *nixdrv.NixTool,
-	linkDrvPaths []nixdrv.StorePath,
+	linkDrvPaths []*storepath.StorePath,
 	linkPlaceholders []string,
-) (nixdrv.StorePath, error) {
+) (*storepath.StorePath, error) {
 	drvName := nixdrv.CollectDrvName(cfg.PName)
 	bashStorePath := storeDirOf(cfg.BashBin)
 
@@ -611,7 +602,7 @@ func createCollectorDrv(
 	drv.AddInputSrc(bashStorePath)
 	drv.AddInputSrc(cfg.coreutilsDir)
 	for _, drvPath := range linkDrvPaths {
-		drv.AddInputDrv(drvPath.String(), "out")
+		drv.AddInputDrv(drvPath.Absolute(), "out")
 	}
 
 	return nix.DerivationAdd(drv)
@@ -661,6 +652,47 @@ func storeDirOf(path string) string {
 		return path[:len(prefix)+idx]
 	}
 	return path
+}
+
+// discoverInputPaths inspects store paths to determine which environment
+// directories they provide, and follows nix-support/propagated-build-inputs
+// for transitive dependencies.
+func discoverInputPaths(storePaths []string) (binDirs, pkgConfigDirs, allPaths []string) {
+	visited := make(map[string]bool)
+	var walk func(string)
+	walk = func(p string) {
+		if visited[p] {
+			return
+		}
+		visited[p] = true
+		allPaths = append(allPaths, p)
+
+		if isDir(p + "/bin") {
+			binDirs = append(binDirs, p+"/bin")
+		}
+		if isDir(p + "/lib/pkgconfig") {
+			pkgConfigDirs = append(pkgConfigDirs, p+"/lib/pkgconfig")
+		}
+
+		// Follow propagated-build-inputs (space-separated store paths).
+		data, err := os.ReadFile(p + "/nix-support/propagated-build-inputs")
+		if err != nil {
+			return
+		}
+		for _, dep := range strings.Fields(string(data)) {
+			walk(dep)
+		}
+	}
+	for _, sp := range storePaths {
+		walk(sp)
+	}
+	return
+}
+
+// isDir returns true if path exists and is a directory.
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // copyFile copies src to dst.

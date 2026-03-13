@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/numtide/go2nix/pkg/golist"
-	"github.com/numtide/go2nix/pkg/nixdrv"
 	"github.com/numtide/go2nix/pkg/toposort"
 )
 
@@ -22,14 +22,14 @@ type ResolvedPkg struct {
 	HFiles     []string
 	Imports    []string // all import paths (including stdlib)
 	IsLocal    bool
-	FodPath    nixdrv.StorePath // FOD output path (third-party only)
+	FodPath    *storepath.StorePath // FOD output path (third-party only)
 	FetchPath  string           // module fetch path (for source lookup within FOD)
 	Version    string
 	Subdir     string // package path relative to module root
 	Name       string // Go package name (e.g., "main", "ssh")
 
 	// Set during derivation creation
-	DrvPath nixdrv.StorePath // .drv path after nix derivation add
+	DrvPath *storepath.StorePath // .drv path after nix derivation add
 }
 
 // buildPackageGraph converts go list packages into ResolvedPkgs.
@@ -37,7 +37,7 @@ type ResolvedPkg struct {
 // fodPaths maps modKey → materialized FOD StorePath.
 func buildPackageGraph(
 	pkgs []golist.Pkg,
-	fodPaths map[string]nixdrv.StorePath,
+	fodPaths map[string]*storepath.StorePath,
 	srcRoot string,
 ) map[string]*ResolvedPkg {
 	result := make(map[string]*ResolvedPkg, len(pkgs))

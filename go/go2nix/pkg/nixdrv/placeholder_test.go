@@ -1,6 +1,10 @@
 package nixdrv
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/nix-community/go-nix/pkg/storepath"
+)
 
 // Test vectors from nix-ninja (crates/nix-libstore/src/placeholder.rs).
 
@@ -13,7 +17,10 @@ func TestStandardOutput(t *testing.T) {
 }
 
 func TestCAOutput(t *testing.T) {
-	drvPath := MustParseStorePath("/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv")
+	drvPath, err := storepath.FromAbsolutePath("/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv")
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := CAOutput(drvPath, "out")
 	want := "/0c6rn30q4frawknapgwq386zq358m8r6msvywcvc89n6m5p2dgbz"
 	if got := p.Render(); got != want {
@@ -23,7 +30,10 @@ func TestCAOutput(t *testing.T) {
 
 func TestDynamicOutput(t *testing.T) {
 	// First create a CA placeholder for foo.drv.drv (note the double .drv)
-	drvPath := MustParseStorePath("/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv.drv")
+	drvPath, err := storepath.FromAbsolutePath("/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv.drv")
+	if err != nil {
+		t.Fatal(err)
+	}
 	caPlaceholder := CAOutput(drvPath, "out")
 
 	// Then create a dynamic placeholder from it

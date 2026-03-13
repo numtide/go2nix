@@ -148,6 +148,80 @@ func TestSymlinkTree(t *testing.T) {
 	}
 }
 
+func TestDiscoverInputPaths(t *testing.T) {
+	// Create a fake store layout:
+	//   pkgA/bin/          (has bin)
+	//   pkgA/lib/pkgconfig/ (has pkgconfig)
+	//   pkgA/nix-support/propagated-build-inputs → "pkgB"
+	//   pkgB/lib/pkgconfig/ (has pkgconfig, no bin)
+	//   pkgC/bin/           (has bin, no pkgconfig, no propagated)
+
+	root := t.TempDir()
+	pkgA := filepath.Join(root, "pkgA")
+	pkgB := filepath.Join(root, "pkgB")
+	pkgC := filepath.Join(root, "pkgC")
+
+	// pkgA: bin + pkgconfig + propagated-build-inputs → pkgB
+	os.MkdirAll(filepath.Join(pkgA, "bin"), 0o755)
+	os.MkdirAll(filepath.Join(pkgA, "lib", "pkgconfig"), 0o755)
+	os.MkdirAll(filepath.Join(pkgA, "nix-support"), 0o755)
+	os.WriteFile(filepath.Join(pkgA, "nix-support", "propagated-build-inputs"),
+		[]byte(pkgB), 0o644)
+
+	// pkgB: pkgconfig only
+	os.MkdirAll(filepath.Join(pkgB, "lib", "pkgconfig"), 0o755)
+
+	// pkgC: bin only
+	os.MkdirAll(filepath.Join(pkgC, "bin"), 0o755)
+
+	binDirs, pkgConfigDirs, allPaths := discoverInputPaths([]string{pkgA, pkgC})
+
+	// binDirs: pkgA/bin, pkgC/bin
+	if len(binDirs) != 2 {
+		t.Fatalf("expected 2 binDirs, got %d: %v", len(binDirs), binDirs)
+	}
+	if binDirs[0] != pkgA+"/bin" || binDirs[1] != pkgC+"/bin" {
+		t.Errorf("binDirs = %v, want [%s %s]", binDirs, pkgA+"/bin", pkgC+"/bin")
+	}
+
+	// pkgConfigDirs: pkgA/lib/pkgconfig, pkgB/lib/pkgconfig (transitive)
+	if len(pkgConfigDirs) != 2 {
+		t.Fatalf("expected 2 pkgConfigDirs, got %d: %v", len(pkgConfigDirs), pkgConfigDirs)
+	}
+	if pkgConfigDirs[0] != pkgA+"/lib/pkgconfig" || pkgConfigDirs[1] != pkgB+"/lib/pkgconfig" {
+		t.Errorf("pkgConfigDirs = %v, want [%s %s]", pkgConfigDirs,
+			pkgA+"/lib/pkgconfig", pkgB+"/lib/pkgconfig")
+	}
+
+	// allPaths: pkgA, pkgB (transitive), pkgC — in walk order
+	if len(allPaths) != 3 {
+		t.Fatalf("expected 3 allPaths, got %d: %v", len(allPaths), allPaths)
+	}
+	if allPaths[0] != pkgA || allPaths[1] != pkgB || allPaths[2] != pkgC {
+		t.Errorf("allPaths = %v, want [%s %s %s]", allPaths, pkgA, pkgB, pkgC)
+	}
+}
+
+func TestDiscoverInputPathsCyclic(t *testing.T) {
+	// Ensure cycles in propagated-build-inputs are handled.
+	root := t.TempDir()
+	pkgX := filepath.Join(root, "pkgX")
+	pkgY := filepath.Join(root, "pkgY")
+
+	os.MkdirAll(filepath.Join(pkgX, "nix-support"), 0o755)
+	os.WriteFile(filepath.Join(pkgX, "nix-support", "propagated-build-inputs"),
+		[]byte(pkgY), 0o644)
+
+	os.MkdirAll(filepath.Join(pkgY, "nix-support"), 0o755)
+	os.WriteFile(filepath.Join(pkgY, "nix-support", "propagated-build-inputs"),
+		[]byte(pkgX), 0o644)
+
+	_, _, allPaths := discoverInputPaths([]string{pkgX})
+	if len(allPaths) != 2 {
+		t.Fatalf("expected 2 allPaths (cycle handled), got %d: %v", len(allPaths), allPaths)
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

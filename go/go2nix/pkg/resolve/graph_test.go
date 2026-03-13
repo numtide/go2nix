@@ -3,8 +3,8 @@ package resolve
 import (
 	"testing"
 
+	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/numtide/go2nix/pkg/golist"
-	"github.com/numtide/go2nix/pkg/nixdrv"
 )
 
 func TestTopoSort(t *testing.T) {
@@ -90,7 +90,10 @@ func TestTopoSortDiamond(t *testing.T) {
 
 func TestBuildPackageGraph(t *testing.T) {
 	cryptoMod := &golist.Module{Path: "golang.org/x/crypto", Version: "v0.17.0"}
-	fodPath := nixdrv.MustParseStorePath("/nix/store/abc123abc123abc123abc123abc123ab-gomod-golang-org-x-crypto-v0-17-0")
+	fodPath, err := storepath.FromAbsolutePath("/nix/store/abc123abc123abc123abc123abc123ab-gomod-golang-org-x-crypto-v0-17-0")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	pkgs := []golist.Pkg{
 		{
@@ -117,7 +120,7 @@ func TestBuildPackageGraph(t *testing.T) {
 		},
 	}
 
-	fodPaths := map[string]nixdrv.StorePath{
+	fodPaths := map[string]*storepath.StorePath{
 		"golang.org/x/crypto@v0.17.0": fodPath,
 	}
 
@@ -140,8 +143,8 @@ func TestBuildPackageGraph(t *testing.T) {
 	if ssh.Subdir != "ssh" {
 		t.Errorf("ssh subdir = %q, want %q", ssh.Subdir, "ssh")
 	}
-	if ssh.FodPath.String() != fodPath.String() {
-		t.Errorf("ssh fodPath = %q", ssh.FodPath.String())
+	if ssh.FodPath.Absolute() != fodPath.Absolute() {
+		t.Errorf("ssh fodPath = %q", ssh.FodPath.Absolute())
 	}
 	// Should have ALL imports (including stdlib)
 	if len(ssh.Imports) != 2 {
