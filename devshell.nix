@@ -8,6 +8,7 @@ pkgs.mkShell {
     pkgs.binaryen
     pkgs.lld
     pkgs.time
+    pkgs.mdbook
   ];
 
   shellHook = ''

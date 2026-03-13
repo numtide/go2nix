@@ -28,7 +28,7 @@ Downloads modules, creates a vendor tree via symlinks, runs `go build`.
 Derived from [gomod2nix](https://github.com/nix-community/gomod2nix).
 Works everywhere. A change to any dependency rebuilds the entire application.
 
-See [vendor-mode.md](vendor-mode.md) for internals.
+See [vendor-mode.md](modes/vendor-mode.md) for internals.
 
 ### DAG mode
 
@@ -37,7 +37,7 @@ Each third-party Go package becomes its own Nix derivation. go2nix calls
 gives Nix full control over the dependency graph at package granularity.
 When a dependency changes, only affected packages rebuild.
 
-See [dag-mode.md](dag-mode.md) for internals.
+See [dag-mode.md](modes/dag-mode.md) for internals.
 
 ### Dynamic mode
 
@@ -46,7 +46,7 @@ at build time using recursive-nix and content-addressed (CA) derivations.
 Only needs `[mod]` in the lockfile — faster lockfile generation, smaller
 diffs.
 
-See [dynamic-derivations.md](dynamic-derivations.md) for internals.
+See [dynamic-derivations.md](internals/dynamic-derivations.md) for internals.
 
 ### Choosing a mode
 
@@ -145,7 +145,7 @@ Pure Nix utility functions:
 
 - [Lockfile format](lockfile-format.md)
 - [CLI reference](cli-reference.md)
-- [Compilation pipeline](compilation-pipeline.md)
-- [DAG mode](dag-mode.md)
-- [Vendor mode](vendor-mode.md)
-- [Dynamic mode](dynamic-derivations.md)
+- [Compilation pipeline](internals/compilation-pipeline.md)
+- [DAG mode](modes/dag-mode.md)
+- [Vendor mode](modes/vendor-mode.md)
+- [Dynamic mode](internals/dynamic-derivations.md)

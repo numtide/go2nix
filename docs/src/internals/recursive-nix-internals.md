@@ -27,9 +27,10 @@ a restricted daemon inside the build sandbox.
    daemonWorkerThreads.push_back(std::move(workerThread));
    ```
 
-3. **Cleanup**: On builder exit, `stopDaemon()` joins all worker threads
+2. **Cleanup**: On builder exit, `stopDaemon()` joins all worker threads
    **sequentially** (line 1234-1237). Two FIXMEs in the source:
-   ```cpp
+
+3  ```cpp
    // FIXME: should prune worker threads more quickly.
    // FIXME: shutdown the client socket to speed up worker termination.
    ```
@@ -41,6 +42,7 @@ All operations go through a `RestrictedStore` wrapper
 
 **Path whitelisting**: Only paths in the original input closure or paths added
 via recursive Nix calls are accessible. `RestrictionContext` tracks:
+
 - `originalPaths()` — derivation inputs from eval time
 - `addedPaths` — paths added during the build via recursive Nix calls
 - `addedDrvOutputs` — realisations added during the build
@@ -123,8 +125,7 @@ Each `nix derivation add` call:
 | Large (20 deps, 200 importcfg entries) | 26 KB | 35.0ms |
 
 JSON size has minimal impact (~3ms difference for 65x larger payload).
-~80% of the per-call cost is Nix CLI process startup (measured: `nix store
-info` alone takes 26ms, `nix eval 1+1` takes 21ms).
+~80% of the per-call cost is Nix CLI process startup (measured: `nix store info` alone takes 26ms, `nix eval 1+1` takes 21ms).
 
 **No degradation over time**: 7 sequential batches of 500 adds each showed
 consistent ~32ms/call from batch 1 through batch 7 (3,500 total).
@@ -146,6 +147,7 @@ in the Nix store database (`/nix/var/nix/db/db.sqlite`). Multiple concurrent
 ### FOD materialization cost
 
 The single batched `nix build` for FODs triggers:
+
 - Network fetches (bounded by `max-substitution-jobs`, default 16)
 - One `computeFSClosure` call for the union of all FOD outputs
 - FOD outputs are independent (no cross-references), so closure is O(N) total paths
@@ -209,9 +211,10 @@ collection during the build.
 `src/libutil/experimental-features.cc:239-250`:
 
 Enables two things:
+
 1. **Text-hashed derivation outputs** (`outputHashMode = "text"`) — so the
    wrapper can output a `.drv` file
-2. **Nested derivation references** — `builtins.outputOf` can reference outputs
+1. **Nested derivation references** — `builtins.outputOf` can reference outputs
    of derivations that are themselves outputs of other derivations
 
 ### `builtins.outputOf` resolution
@@ -229,9 +232,10 @@ Built {
 ```
 
 At build time, Nix resolves this by:
+
 1. Building the wrapper → getting the `.drv` file
-2. Reading the `.drv` from the wrapper's text-mode output
-3. Building that `.drv` → transitively building all package CAs
+1. Reading the `.drv` from the wrapper's text-mode output
+1. Building that `.drv` → transitively building all package CAs
 
 ### Resolution termination
 
@@ -252,6 +256,7 @@ wrapper.drv → package-graph.drv → binary output.
 `src/libstore/downstream-placeholder.cc`:
 
 Three placeholder types:
+
 - **Standard**: `SHA256("nix-output:<name>")` → for non-CA outputs
 - **CA (unknownCaOutput)**: `SHA256("nix-upstream-output:<hash>:<name>")` → for
   CA derivation outputs (what we use for package `.a` files)
@@ -272,11 +277,11 @@ All measurements on 32-core x86_64, Nix 2.31.3, SSD storage.
 | Step | Count (app-full) | Measured time | Source |
 |------|-------------------|---------------|--------|
 | `nix derivation add` (FODs) | 478 | **15.3s** sequential | 478 x 32ms/call |
-| `nix build` (FODs, batched) | 1 call, 478 installables | Warm: <1s, Cold: minutes | I/O bound |
+| `nix build` (FODs, batched) | 1 call, 478 installables | Warm: \<1s, Cold: minutes | I/O bound |
 | `go list -json -deps` | 1 call, 3,527 pkgs | **1.0-2.2s** | Benchmarked on app-full |
 | JSON parse (30 MB) | — | **~0.3s** | Benchmarked with jq |
 | `nix derivation add` (packages) | 3,265 | **105s** sequential | 3,250 x 32ms, confirmed at scale |
-| `nix derivation add` (link) | 1-2 | **<0.1s** | Negligible |
+| `nix derivation add` (link) | 1-2 | **\<0.1s** | Negligible |
 | **Total wrapper (sequential, warm)** | **3,745 adds** | **~122s** | Dominated by drv adds |
 | **Total wrapper (P=4, warm)** | **3,745 adds** | **~40s** | 3.3x speedup measured |
 
@@ -424,7 +429,7 @@ Project:  app-full (478 modules, 3,265 non-stdlib packages)
 | Full app-full wrapper (P=4) | **~40s** | 3,745 adds x 12ms effective + 2s go list |
 | Degradation over time | **None** | 32ms/call consistent across 3,500 adds |
 | `go list` | **Fast** | 1.0s warm, 201 MB RSS for 3,527 packages |
-| FOD fetch (warm cache) | **<1s** | Already in store |
+| FOD fetch (warm cache) | **\<1s** | Already in store |
 | `go list` memory at 10K pkgs | **~600 MB** | Linear extrapolation from 201 MB at 3,527 |
 
 The architecture avoids the O(n^2) `computeFSClosure` bottleneck. The dominant

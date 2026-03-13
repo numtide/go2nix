@@ -22,7 +22,7 @@ go2nix generate --mode=vendor .
 
 This produces a lockfile with `[mod."path@version"]` entries containing
 `version`, `hash`, and optional `replaced` fields. See
-[lockfile-format.md](lockfile-format.md) for details.
+[lockfile-format.md](../lockfile-format.md) for details.
 
 ## Build flow
 
@@ -111,5 +111,5 @@ programs compiled at Nix build time using `pkgsBuildBuild.go`.
 - Cannot take advantage of per-package parallelism
 - Vendor tree reconstruction on every build
 
-See [lockfile-format.md](lockfile-format.md) for details on the vendor
+See [lockfile-format.md](../lockfile-format.md) for details on the vendor
 lockfile format.

@@ -119,5 +119,5 @@ nix/dag/
 - Lockfile must be regenerated when import graph changes
 - Many small derivations can slow Nix evaluation on very large projects
 
-See [compilation-pipeline.md](compilation-pipeline.md) for details on how
+See [compilation-pipeline.md](../internals/compilation-pipeline.md) for details on how
 compilation and linking work.

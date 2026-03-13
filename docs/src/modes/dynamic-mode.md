@@ -32,7 +32,7 @@ go2nix generate --mode=dynamic .
 ```
 
 The package graph is discovered at build time, so only module NAR hashes are
-needed at eval time. See [lockfile-format.md](lockfile-format.md) for details.
+needed at eval time. See [lockfile-format.md](../lockfile-format.md) for details.
 
 ## Build flow
 
@@ -119,7 +119,7 @@ nix/dynamic/
 ```
 
 The build-time logic lives in the `go2nix resolve` command
-(see [cli-reference.md](cli-reference.md)).
+(see [cli-reference.md](../cli-reference.md)).
 
 ## Trade-offs
 
@@ -135,5 +135,5 @@ The build-time logic lives in the `go2nix resolve` command
 - Build-time overhead from `nix derivation add` calls (~32ms each)
 - Parallelism limited by SQLite write lock (saturates at ~4 concurrent adds)
 
-See [recursive-nix-internals.md](recursive-nix-internals.md) for performance
+See [recursive-nix-internals.md](../internals/recursive-nix-internals.md) for performance
 analysis and benchmarks.
