@@ -17,7 +17,6 @@
 #   - `mkGoEnv` removed (handled by nix/mk-go-env.nix + nix/scope.nix)
 #   - Uses `goLock` parameter name (was `modules`) for API consistency
 {
-  buildPackages,
   cacert,
   git,
   jq,
@@ -48,7 +47,6 @@ let
     optional
     optionalAttrs
     optionalString
-    pathExists
     removePrefix
     removeSuffix
     ;
@@ -174,13 +172,11 @@ let
 
       localReplaceCommands =
         let
-          localReplaceAttrs = filterAttrs (n: v: hasAttr "path" v) goMod.replace;
-          commands = (
-            mapAttrsToList (name: value: (''
-              mkdir -p $(dirname vendor/${name})
-              ln -s ${pwd + "/${value.path}"} vendor/${name}
-            '')) localReplaceAttrs
-          );
+          localReplaceAttrs = filterAttrs (_n: v: hasAttr "path" v) goMod.replace;
+          commands = mapAttrsToList (name: value: ''
+            mkdir -p $(dirname vendor/${name})
+            ln -s ${pwd + "/${value.path}"} vendor/${name}
+          '') localReplaceAttrs;
         in
         if goMod != null then commands else [ ];
 
@@ -212,7 +208,7 @@ let
           "sources"
         ];
       }
-      (''
+      ''
         mkdir vendor
 
         export GOCACHE=$TMPDIR/go-cache
@@ -222,7 +218,7 @@ let
         ${concatStringsSep "\n" localReplaceCommands}
 
         mv vendor $out
-      '');
+      '';
 
   stripVersion =
     version:
@@ -255,7 +251,6 @@ in
   meta ? { },
   passthru ? { },
   tags ? [ ],
-  ldflags ? [ ],
   CGO_ENABLED ? null,
   goModFile ? null,
   subPackages ? null,
@@ -268,11 +263,7 @@ let
 
   goModPath = if goModFile != null then goModFile else "${toString effectivePwd}/go.mod";
 
-  goMod =
-    if effectivePwd != null || goModFile != null then
-      parseGoMod (readFile goModPath)
-    else
-      null;
+  goMod = if effectivePwd != null || goModFile != null then parseGoMod (readFile goModPath) else null;
 
   defaultPackage = modulesStruct.goPackagePath or "";
 
@@ -292,11 +283,7 @@ let
     pwd = effectivePwd;
   };
 
-  effectivePname =
-    if pname != null then
-      pname
-    else
-      baseNameOf defaultPackage;
+  effectivePname = if pname != null then pname else baseNameOf defaultPackage;
 
   effectiveVersion =
     if version != null then
@@ -329,7 +316,7 @@ stdenv.mkDerivation (
     src = vendorEnv.passthru.sources.${defaultPackage};
   }
   // optionalAttrs (subPackages == null && hasAttr "subPackages" modulesStruct) {
-    subPackages = modulesStruct.subPackages;
+    inherit (modulesStruct) subPackages;
   }
   // extraArgs
   // {
@@ -340,7 +327,8 @@ stdenv.mkDerivation (
     nativeBuildInputs = [
       rsync
       go
-    ] ++ nativeBuildInputs;
+    ]
+    ++ nativeBuildInputs;
 
     inherit (go) GOOS GOARCH;
 
@@ -493,6 +481,7 @@ stdenv.mkDerivation (
 
     passthru = {
       inherit go vendorEnv goLock;
-    } // passthru;
+    }
+    // passthru;
   }
 )

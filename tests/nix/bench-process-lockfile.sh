@@ -19,7 +19,7 @@ bench() {
   for i in $(seq 1 "$n"); do
     # shellcheck disable=SC2086
     "$TIME" -f "  run $i: %e s (wall), %U s (user), %M KB (peak RSS)" \
-      "$nix_bin" --eval --strict $flags --expr "$expr" > /dev/null
+      "$nix_bin" --eval --strict $flags --expr "$expr" >/dev/null
   done
   echo ""
 }

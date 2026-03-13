@@ -18,7 +18,6 @@
   go2nix,
   lib,
   hooks,
-  helpers,
   fetchers,
   ...
 }:
@@ -49,7 +48,10 @@ let
 
   processed =
     if builtins ? wasm then
-      builtins.wasm { path = ./go2nix.wasm; function = "process_lockfile"; } goLock
+      builtins.wasm {
+        path = ./go2nix.wasm;
+        function = "process_lockfile";
+      } goLock
     else
       processLockfilePureNix goLock;
 
@@ -87,7 +89,8 @@ let
       env = {
         goPackagePath = importPath;
         goPackageSrcDir = srcDir;
-      } // extraEnv;
+      }
+      // extraEnv;
     }
   ) processed.packages;
 

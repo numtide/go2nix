@@ -24,8 +24,8 @@ type Derivation struct {
 
 // InputDrv represents an input derivation reference.
 type InputDrv struct {
-	Outputs        []string               `json:"outputs"`
-	DynamicOutputs map[string]*InputDrv   `json:"dynamicOutputs"`
+	Outputs        []string             `json:"outputs"`
+	DynamicOutputs map[string]*InputDrv `json:"dynamicOutputs"`
 }
 
 // Output represents a derivation output specification.
@@ -120,14 +120,14 @@ func (d *Derivation) ToJSON() ([]byte, error) {
 
 // derivationJSON is the JSON-serializable form matching Nix 2.34 v4 format.
 type derivationJSON struct {
-	Name    string               `json:"name"`
-	Version int                  `json:"version"`
-	Outputs sortedMap[*Output]   `json:"outputs"`
-	Inputs  inputsJSON           `json:"inputs"`
-	System  string               `json:"system"`
-	Builder string               `json:"builder"`
-	Args    []string             `json:"args"`
-	Env     sortedMap[string]    `json:"env"`
+	Name    string             `json:"name"`
+	Version int                `json:"version"`
+	Outputs sortedMap[*Output] `json:"outputs"`
+	Inputs  inputsJSON         `json:"inputs"`
+	System  string             `json:"system"`
+	Builder string             `json:"builder"`
+	Args    []string           `json:"args"`
+	Env     sortedMap[string]  `json:"env"`
 }
 
 // inputsJSON represents the nested inputs format: { srcs: [...], drvs: {...} }

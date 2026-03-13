@@ -13,7 +13,10 @@ pkgs.rustPlatform.buildRustPackage {
     };
   };
   CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
-  nativeBuildInputs = [ pkgs.lld pkgs.binaryen ];
+  nativeBuildInputs = [
+    pkgs.lld
+    pkgs.binaryen
+  ];
   buildPhase = ''
     cargo build --release --target wasm32-unknown-unknown
   '';

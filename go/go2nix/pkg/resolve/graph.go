@@ -23,7 +23,7 @@ type ResolvedPkg struct {
 	Imports    []string // all import paths (including stdlib)
 	IsLocal    bool
 	FodPath    *storepath.StorePath // FOD output path (third-party only)
-	FetchPath  string           // module fetch path (for source lookup within FOD)
+	FetchPath  string               // module fetch path (for source lookup within FOD)
 	Version    string
 	Subdir     string // package path relative to module root
 	Name       string // Go package name (e.g., "main", "ssh")
@@ -110,4 +110,3 @@ func topoSort(pkgs map[string]*ResolvedPkg) ([]*ResolvedPkg, error) {
 		return nil
 	})
 }
-

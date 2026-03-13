@@ -159,7 +159,7 @@ func TestDerivationInputDrv(t *testing.T) {
 	var got struct {
 		Inputs struct {
 			Drvs map[string]struct {
-				Outputs        []string                  `json:"outputs"`
+				Outputs        []string                   `json:"outputs"`
 				DynamicOutputs map[string]json.RawMessage `json:"dynamicOutputs"`
 			} `json:"drvs"`
 		} `json:"inputs"`

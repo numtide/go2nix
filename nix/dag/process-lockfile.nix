@@ -47,8 +47,7 @@ in
             builtins.mapAttrs (
               importPath: imports:
               let
-                subdir =
-                  if importPath == mk.path then "" else removePrefix "${mk.path}/" importPath;
+                subdir = if importPath == mk.path then "" else removePrefix "${mk.path}/" importPath;
               in
               {
                 name = importPath;

@@ -13,8 +13,8 @@ export HOME
 
 # Setup authentication for private Go modules
 # NETRC_CONTENT is set by nix when netrcFile parameter is provided
-if [[ -n "${NETRC_CONTENT:-}" ]]; then
-  echo "$NETRC_CONTENT" > "$HOME/.netrc"
+if [[ -n ${NETRC_CONTENT:-} ]]; then
+  echo "$NETRC_CONTENT" >"$HOME/.netrc"
   chmod 600 "$HOME/.netrc"
 fi
 

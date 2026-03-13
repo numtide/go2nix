@@ -55,7 +55,7 @@ let
 
         in
         {
-          data = (
+          data =
             acc.data
             // (
               # If a we're in a directive and it's closing, no-op
@@ -130,8 +130,7 @@ let
                       ${directive} = rest;
                     }
                 )
-            )
-          );
+            );
           inherit inDirective;
         }
       )

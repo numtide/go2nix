@@ -23,7 +23,6 @@
   coreutils,
   bash,
   cacert,
-  helpers,
   netrcFile,
   stdlib,
 }:
@@ -32,19 +31,16 @@
   pname,
   src,
   goLock,
-  version ? "0.0.0",
   subPackages ? [ "." ],
   tags ? [ ],
   ldflags ? [ ],
   gcflags ? [ ],
   CGO_ENABLED ? null,
-  allowGoReference ? false,
-  meta ? { },
   nativeBuildInputs ? [ ],
   moduleDir ? ".",
   packageOverrides ? { },
   ...
-}@args:
+}:
 
 let
   moduleRoot = if moduleDir == "." then "${src}" else "${src}/${moduleDir}";
@@ -54,20 +50,20 @@ let
   # Auto-expand .dev outputs (like stdenv's multiple-outputs.sh hook) so users
   # can write `pkgs.pcsclite` instead of `pkgs.pcsclite.dev pkgs.pcsclite.out`.
   overridesJSON = builtins.toJSON (
-    lib.mapAttrs (
-      _path: cfg:
-      {
-        nativeBuildInputs = map toString (
-          lib.concatMap (
-            input:
-            if builtins.isAttrs input then
-              lib.unique [ input (lib.getDev input) ]
-            else
-              [ input ]
-          ) (cfg.nativeBuildInputs or [ ])
-        );
-      }
-    ) packageOverrides
+    lib.mapAttrs (_path: cfg: {
+      nativeBuildInputs = map toString (
+        lib.concatMap (
+          input:
+          if builtins.isAttrs input then
+            lib.unique [
+              input
+              (lib.getDev input)
+            ]
+          else
+            [ input ]
+        ) (cfg.nativeBuildInputs or [ ])
+      );
+    }) packageOverrides
   );
 
   wrapperDrv = stdenv.mkDerivation {
@@ -83,17 +79,16 @@ let
     # Prevent self-references in text-mode output (stdenv adds -rpath with self ref).
     NIX_NO_SELF_RPATH = true;
 
-    nativeBuildInputs =
-      [
-        go
-        go2nix
-        nixPackage
-        coreutils
-        bash
-        cacert
-      ]
-      ++ lib.concatMap (cfg: cfg.nativeBuildInputs or [ ]) (lib.attrValues packageOverrides)
-      ++ nativeBuildInputs;
+    nativeBuildInputs = [
+      go
+      go2nix
+      nixPackage
+      coreutils
+      bash
+      cacert
+    ]
+    ++ lib.concatMap (cfg: cfg.nativeBuildInputs or [ ]) (lib.attrValues packageOverrides)
+    ++ nativeBuildInputs;
 
     # No source to unpack — everything is passed via store paths.
     dontUnpack = true;
@@ -120,7 +115,11 @@ let
         --ldflags ${lib.escapeShellArg (lib.concatStringsSep " " ldflags)} \
         --overrides ${lib.escapeShellArg overridesJSON} \
         ${lib.optionalString (CGO_ENABLED != null) "--cgo-enabled ${toString CGO_ENABLED}"} \
-        ${lib.optionalString (gcflags != [ ]) "--gcflags ${lib.escapeShellArg (lib.concatStringsSep " " gcflags)}"} \
+        ${
+          lib.optionalString (
+            gcflags != [ ]
+          ) "--gcflags ${lib.escapeShellArg (lib.concatStringsSep " " gcflags)}"
+        } \
         --cacert ${cacert}/etc/ssl/certs/ca-bundle.crt \
         ${lib.optionalString (netrcFile != null) "--netrc-file ${netrcFile}"} \
         --output $out

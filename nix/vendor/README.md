@@ -9,8 +9,6 @@ Derived from [`nix-community/gomod2nix/builder`] at
 [`47d628dc`](https://github.com/nix-community/gomod2nix/commit/47d628dc3b506bd28632e47280c6b89d3496909d)
 (Aug 2025). MIT licensed — see [`LICENSE`](LICENSE).
 
-[`nix-community/gomod2nix/builder`]: https://github.com/nix-community/gomod2nix/tree/master/builder
-
 ## Changes from upstream
 
 ### Added
@@ -32,8 +30,6 @@ Derived from [`nix-community/gomod2nix/builder`] at
 - **`parser.nix` fix** for `go.mod` files mixing single-line and parenthesized
   `require` blocks: upstream's fold-left overwrites the accumulator; we merge.
   Standalone bugfix, no dependency on the other changes.
-
-[PR #243]: https://github.com/nix-community/gomod2nix/pull/243
 
 ### Removed
 
@@ -61,3 +57,6 @@ fetch.sh             fixed-output derivation builder: `go mod download` one modu
 symlink/symlink.go   build the vendor/ tree from JSON module spec
 install/install.go   install tools from tools.go (used by mkGoEnv)
 ```
+
+[pr #243]: https://github.com/nix-community/gomod2nix/pull/243
+[`nix-community/gomod2nix/builder`]: https://github.com/nix-community/gomod2nix/tree/master/builder
