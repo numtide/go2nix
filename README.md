@@ -11,7 +11,7 @@ per-package derivations with fine-grained caching.
 | **DAG** | `go tool compile/link` per-package | `[mod]` + `[pkg]` | Per-package |
 | **Dynamic** | Recursive-nix, DAG at build time | `[mod]` only | Per-package |
 
-See [docs/go2nix-architecture.md](docs/go2nix-architecture.md) for details on
+See [docs/src/go2nix-architecture.md](docs/src/go2nix-architecture.md) for details on
 each mode.
 
 ## Quick start
@@ -84,9 +84,9 @@ Run `go2nix generate -h` for all flags.
 
 ## Documentation
 
-- [Architecture](docs/go2nix-architecture.md) — builder modes, lockfile format,
+- [Architecture](docs/src/go2nix-architecture.md) — builder modes, lockfile format,
   compilation pipeline, package DAG
-- [Dynamic derivations](docs/dynamic-derivations.md) — recursive-nix + CA
+- [Dynamic derivations](docs/src/internals/dynamic-derivations.md) — recursive-nix + CA
   derivations mode
 
 ## Development
