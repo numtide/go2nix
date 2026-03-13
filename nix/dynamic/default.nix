@@ -51,11 +51,21 @@ let
 
   # Serialize packageOverrides to JSON for the resolve command.
   # Only pass nativeBuildInputs store paths — resolve adds them to derivation inputs.
+  # Auto-expand .dev outputs (like stdenv's multiple-outputs.sh hook) so users
+  # can write `pkgs.pcsclite` instead of `pkgs.pcsclite.dev pkgs.pcsclite.out`.
   overridesJSON = builtins.toJSON (
     lib.mapAttrs (
       _path: cfg:
       {
-        nativeBuildInputs = map toString (cfg.nativeBuildInputs or [ ]);
+        nativeBuildInputs = map toString (
+          lib.concatMap (
+            input:
+            if builtins.isAttrs input then
+              lib.unique [ input (lib.getDev input) ]
+            else
+              [ input ]
+          ) (cfg.nativeBuildInputs or [ ])
+        );
       }
     ) packageOverrides
   );
