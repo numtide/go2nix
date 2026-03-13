@@ -22,10 +22,11 @@ import (
 )
 
 // Generate creates a go2nix lockfile from the given project directories.
-// If minimal is true, only module hashes are collected (no [pkg] section).
-// If gomod2nix is true, the output uses the v1 gomod2nix format (attrset mod
-// values with version/hash/replaced fields, no [pkg] section).
-func Generate(dirs []string, output string, jobs int, minimal, gomod2nix bool) error {
+// mode selects the output format:
+//   - "dag": full lockfile with [mod] and [pkg] sections (default)
+//   - "dynamic": minimal lockfile with [mod] only, no [pkg] section
+//   - "vendor": v1 gomod2nix format (attrset mod values, no [pkg] section)
+func Generate(dirs []string, output string, jobs int, mode string) error {
 	cache, err := lockfile.Read(output)
 	if err != nil {
 		return fmt.Errorf("reading existing lockfile: %w", err)
@@ -103,16 +104,16 @@ func Generate(dirs []string, output string, jobs int, minimal, gomod2nix bool) e
 		resultReplace = nil
 	}
 
-	// gomod2nix format: v1-style with attrset mod values, no [pkg] section.
-	if gomod2nix {
+	// vendor mode: v1-style with attrset mod values, no [pkg] section.
+	if mode == "vendor" {
 		v2 := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace}
 		result := v2.ToGomod2nix()
-		slog.Info("writing lockfile (gomod2nix format)", "mods", len(resultMod), "path", output)
+		slog.Info("writing lockfile (vendor format)", "mods", len(resultMod), "path", output)
 		return result.Write(output, lockfile.Gomod2nixHeader)
 	}
 
 	var resultPkg map[string]map[string][]string
-	if !minimal {
+	if mode == "dag" {
 		resultPkg = map[string]map[string][]string{}
 		for _, pkg := range allPkgs {
 			if pkg.Module == nil || pkg.Module.Version == "" {
