@@ -14,6 +14,9 @@ let
 
       # markdown
       mdformat.enable = true;
+
+      # go
+      gofumpt.enable = true;
     };
     settings.formatter = {
       # nix

@@ -1,0 +1,9 @@
+[book]
+title = "go2nix"
+authors = ["numtide"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false

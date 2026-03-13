@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/go2nix-wasm"]
+resolver = "2"

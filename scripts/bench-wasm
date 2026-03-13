@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Benchmark go2nix-wasm plugin: Rust (cargo bench) + Nix eval comparison.
+#
+# Usage: scripts/bench-wasm [iterations]
+#
+# Set NIX_WASM to a Nix binary with wasm-builtin support:
+#   NIX_WASM=/path/to/nix-instantiate scripts/bench-wasm
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+ITERS="${1:-5}"
+
+echo "╔══════════════════════════════════════════╗"
+echo "║  go2nix-wasm benchmark suite             ║"
+echo "╚══════════════════════════════════════════╝"
+echo ""
+
+# --- Rust benchmarks ---
+echo "━━━ Rust (cargo bench) ━━━"
+echo ""
+(cd rust && cargo bench 2>&1 | grep -E '(Benchmarking|time:)')
+echo ""
+
+# --- Nix benchmarks ---
+echo "━━━ Nix eval ━━━"
+echo ""
+bash tests/nix/bench-process-lockfile.sh "$ITERS"
