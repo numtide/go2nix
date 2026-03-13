@@ -1,4 +1,4 @@
-# Test: buildGoApplication with packageOverrides for cgo (pcsclite via pkg-config).
+# Test: buildGoApplicationDAGMode (explicit) with packageOverrides for cgo (pcsclite via pkg-config).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,7 +8,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplication {
+goEnv.buildGoApplicationDAGMode {
   src = pkgs.fetchFromGitHub {
     owner = "FiloSottile";
     repo = "yubikey-agent";

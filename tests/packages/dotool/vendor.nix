@@ -1,4 +1,4 @@
-# Test: buildGoApplication (auto-selects mode) with local cgo package (xkbcommon via pkg-config).
+# Test: buildGoApplicationVendorMode (explicit) with local cgo package (xkbcommon via pkg-config).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,21 +8,17 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplication {
+goEnv.buildGoApplicationVendorMode {
   pname = "dotool";
   version = "1.6";
-  goLock = ./go2nix.toml;
+  goLock = ./go2nix-vendor.toml;
   src = pkgs.fetchgit {
     url = "https://git.sr.ht/~geb/dotool";
     rev = "180af21c46dcc848d93dbec2644c011f4eea1592";
     hash = "sha256-KI3vA45/MvFRV8Fr3Q4yd/argDy1PpFHCT3KA9VDP80=";
   };
-  packageOverrides = {
-    "git.sr.ht/~geb/dotool/xkb" = {
-      nativeBuildInputs = [
-        pkgs.pkg-config
-        pkgs.libxkbcommon
-      ];
-    };
-  };
+  nativeBuildInputs = [
+    pkgs.pkg-config
+    pkgs.libxkbcommon
+  ];
 }

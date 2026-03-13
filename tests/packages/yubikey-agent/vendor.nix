@@ -1,4 +1,4 @@
-# Test: buildGoApplication with packageOverrides for cgo (pcsclite via pkg-config).
+# Test: buildGoApplicationVendorMode (explicit) with cgo (pcsclite via pkg-config).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,22 +8,18 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplication {
+goEnv.buildGoApplicationVendorMode {
   src = pkgs.fetchFromGitHub {
     owner = "FiloSottile";
     repo = "yubikey-agent";
     rev = "v0.1.6";
     hash = "sha256-Knk1ipBOzjmjrS2OFUMuxi1TkyDcSYlVKezDWT//ERY=";
   };
-  goLock = ./go2nix.toml;
+  goLock = ./go2nix-vendor.toml;
   pname = "yubikey-agent";
   version = "0.1.6";
-  packageOverrides = {
-    "github.com/go-piv/piv-go/piv" = {
-      nativeBuildInputs = [
-        pkgs.pkg-config
-        pkgs.pcsclite
-      ];
-    };
-  };
+  nativeBuildInputs = [
+    pkgs.pkg-config
+    pkgs.pcsclite
+  ];
 }

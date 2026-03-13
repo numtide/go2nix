@@ -1,4 +1,4 @@
-# Test: buildGoApplication (auto-selects mode) with local cgo package (xkbcommon via pkg-config).
+# Test: buildGoApplicationDAGMode (explicit) with local cgo package (xkbcommon via pkg-config).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,7 +8,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplication {
+goEnv.buildGoApplicationDAGMode {
   pname = "dotool";
   version = "1.6";
   goLock = ./go2nix.toml;

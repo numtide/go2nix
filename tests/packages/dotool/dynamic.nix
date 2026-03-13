@@ -1,4 +1,8 @@
-# Test: buildGoApplication (auto-selects mode) with local cgo package (xkbcommon via pkg-config).
+# Test: buildGoApplicationDynamicMode with local cgo package (xkbcommon via pkg-config).
+#
+# Requires: recursive-nix, ca-derivations, dynamic-derivations experimental features.
+# Requires: Nix >= 2.34 (v4 derivation JSON format).
+# Run: nix-build tests/packages/dotool/dynamic.nix
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -6,12 +10,13 @@ let
   goEnv = import ../../../nix/mk-go-env.nix {
     inherit go go2nix;
     inherit (pkgs) callPackage;
+    nixPackage = pkgs.nixVersions.git;
   };
 in
-goEnv.buildGoApplication {
+goEnv.buildGoApplicationDynamicMode {
   pname = "dotool";
   version = "1.6";
-  goLock = ./go2nix.toml;
+  goLock = ./go2nix-dynamic.toml;
   src = pkgs.fetchgit {
     url = "https://git.sr.ht/~geb/dotool";
     rev = "180af21c46dcc848d93dbec2644c011f4eea1592";
