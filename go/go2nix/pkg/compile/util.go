@@ -120,6 +120,19 @@ func asmArchDefines(goarch string) []string {
 	return defs
 }
 
+// DefaultBuildMode returns the default -buildmode for go tool link,
+// matching cmd/go's platform.DefaultPIE logic (without race consideration).
+// Returns "pie" for platforms where Go defaults to PIE, "exe" otherwise.
+func DefaultBuildMode(goos, goarch string) string {
+	switch goos {
+	case "android", "ios":
+		return "pie"
+	case "windows", "darwin":
+		return "pie"
+	}
+	return "exe"
+}
+
 func extractPackageName(goFile string) string {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, goFile, nil, parser.PackageClauseOnly)

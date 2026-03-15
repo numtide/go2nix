@@ -40,10 +40,21 @@ linkGoBinaryBuildPhase() {
   local localdir="$NIX_BUILD_TOP/local-pkgs"
   mkdir -p "$localdir"
 
+  # Determine build mode for compiler flags.
+  # When PIE, pass -shared to go tool compile for position-independent code.
+  local go_buildmode="exe"
+  case "$(@go@ env GOOS)" in
+    darwin|windows|android|ios) go_buildmode="pie" ;;
+  esac
+
   # Build gcflags argument array (empty if unset, avoids quoting issues).
+  local gcflags_val="${goGcflags:-}"
+  if [ "$go_buildmode" = "pie" ]; then
+    gcflags_val="-shared${gcflags_val:+ $gcflags_val}"
+  fi
   local -a gcflagArgs=()
-  if [ -n "${goGcflags:-}" ]; then
-    gcflagArgs=(--gc-flags "$goGcflags")
+  if [ -n "$gcflags_val" ]; then
+    gcflagArgs=(--gc-flags "$gcflags_val")
   fi
 
   # Pass 1: compile library packages in parallel (DAG-aware).
@@ -91,6 +102,7 @@ linkGoBinaryBuildPhase() {
     # shellcheck disable=SC2086
     @go@ tool link \
       -buildid=redacted \
+      -buildmode="$go_buildmode" \
       -importcfg "$NIX_BUILD_TOP/importcfg" \
       ${goLdflags:-} \
       $linkflags \

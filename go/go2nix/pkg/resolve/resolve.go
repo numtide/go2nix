@@ -17,6 +17,7 @@ import (
 	"golang.org/x/mod/module"
 
 	"github.com/nix-community/go-nix/pkg/storepath"
+	"github.com/numtide/go2nix/pkg/compile"
 	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/lockfile"
 	"github.com/numtide/go2nix/pkg/nixdrv"
@@ -50,6 +51,8 @@ type Config struct {
 	ccDir string
 	// allOverridePaths collects all nativeBuildInputs store paths for the link derivation.
 	allOverridePaths []string
+	// buildMode is "pie" or "exe", determined at Resolve() time from GOOS/GOARCH.
+	buildMode string
 }
 
 // PackageOverride holds per-package overrides from Nix eval time.
@@ -73,6 +76,11 @@ func Resolve(cfg Config) error {
 	if ccPath, err := exec.LookPath("cc"); err == nil {
 		cfg.ccDir = storeDirOf(filepath.Dir(ccPath))
 	}
+
+	// Determine default build mode (pie vs exe) from the Go toolchain,
+	// matching cmd/go's platform.DefaultPIE logic.
+	cfg.buildMode = resolveDefaultBuildMode(cfg.GoBin)
+	slog.Info("build mode", "mode", cfg.buildMode)
 
 	// Parse overrides
 	overrides := map[string]PackageOverride{}
@@ -418,9 +426,18 @@ func createPackageDrv(
 		drv.SetEnv("CGO_ENABLED", cfg.CGOEnabled)
 	}
 
-	// Forward gcflags if set
-	if cfg.GCFlags != "" {
-		drv.SetEnv("gcflags", cfg.GCFlags)
+	// Forward gcflags. When building PIE, pass -shared to the compiler
+	// so it generates position-independent code, matching cmd/go behavior.
+	gcflags := cfg.GCFlags
+	if cfg.buildMode == "pie" {
+		if gcflags != "" {
+			gcflags = "-shared " + gcflags
+		} else {
+			gcflags = "-shared"
+		}
+	}
+	if gcflags != "" {
+		drv.SetEnv("gcflags", gcflags)
 	}
 
 	// CA placeholder for out
@@ -507,7 +524,7 @@ func createLinkDrv(
 	drvName := nixdrv.LinkDrvName(binName)
 	bashStorePath := storeDirOf(cfg.BashBin)
 
-	script := linkScript(cfg.GoBin, binName)
+	script := linkScript(cfg.GoBin, binName, cfg.buildMode)
 
 	drv := nixdrv.NewDerivation(drvName, cfg.System, bashStorePath+"/bin/bash")
 	drv.AddArg("-c")
@@ -692,6 +709,27 @@ func discoverInputPaths(storePaths []string) (binDirs, pkgConfigDirs, allPaths [
 func isDir(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
+}
+
+// resolveDefaultBuildMode queries the Go toolchain for GOOS/GOARCH and
+// returns the default build mode ("pie" or "exe"), matching cmd/go's
+// platform.DefaultPIE logic.
+func resolveDefaultBuildMode(goBin string) string {
+	goos := queryGoEnv(goBin, "GOOS")
+	goarch := queryGoEnv(goBin, "GOARCH")
+	return compile.DefaultBuildMode(goos, goarch)
+}
+
+// queryGoEnv runs `go env <key>` and returns the result.
+func queryGoEnv(goBin, key string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	out, err := exec.Command(goBin, "env", key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // copyFile copies src to dst.

@@ -32,6 +32,7 @@ in
       setupGoEnv
     ];
     substitutions = {
+      go = "${go}/bin/go";
       go2nix = "${go2nix}/bin/go2nix";
       stdlib = "${stdlib}";
       inherit tagArg;

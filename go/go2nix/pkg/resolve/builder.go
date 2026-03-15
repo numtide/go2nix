@@ -60,7 +60,9 @@ func compileScript(go2nixBin string) string {
 }
 
 // linkScript generates the bash builder script for linking a binary.
-func linkScript(goStorePath, pname string) string {
+// buildMode should be "pie" or "exe", matching cmd/go's default for
+// the target platform (see compile.DefaultBuildMode).
+func linkScript(goStorePath, pname, buildMode string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
 	b.WriteString("export HOME=$TMPDIR\n")
@@ -72,7 +74,7 @@ func linkScript(goStorePath, pname string) string {
 	// Link binary
 	fmt.Fprintf(&b, "%s tool link -o \"$out/bin/%s\"", goStorePath, pname)
 	b.WriteString(" \\\n  -importcfg $NIX_BUILD_TOP/importcfg")
-	b.WriteString(" \\\n  -buildmode=exe")
+	fmt.Fprintf(&b, " \\\n  -buildmode=%s", buildMode)
 	// ldflags passed via env
 	b.WriteString(" \\\n  ${ldflags:+$ldflags}")
 	b.WriteString(" \\\n  $mainPkg/pkg.a\n")

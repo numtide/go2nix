@@ -63,7 +63,7 @@ func TestCompileScript(t *testing.T) {
 }
 
 func TestLinkScript(t *testing.T) {
-	script := linkScript("/nix/store/xxx-go/bin/go", "myapp")
+	script := linkScript("/nix/store/xxx-go/bin/go", "myapp", "exe")
 
 	if !strings.Contains(script, "go tool link") {
 		t.Error("missing go tool link")
@@ -73,6 +73,17 @@ func TestLinkScript(t *testing.T) {
 	}
 	if !strings.Contains(script, "$mainPkg/pkg.a") {
 		t.Error("missing main package archive reference")
+	}
+	if !strings.Contains(script, "-buildmode=exe") {
+		t.Error("missing -buildmode=exe")
+	}
+}
+
+func TestLinkScriptPIE(t *testing.T) {
+	script := linkScript("/nix/store/xxx-go/bin/go", "myapp", "pie")
+
+	if !strings.Contains(script, "-buildmode=pie") {
+		t.Error("missing -buildmode=pie")
 	}
 }
 

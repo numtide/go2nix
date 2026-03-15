@@ -36,6 +36,27 @@ func TestExtraGCFlags(t *testing.T) {
 	}
 }
 
+func TestDefaultBuildMode(t *testing.T) {
+	tests := []struct {
+		goos, goarch, want string
+	}{
+		{"linux", "amd64", "exe"},
+		{"linux", "arm64", "exe"},
+		{"darwin", "amd64", "pie"},
+		{"darwin", "arm64", "pie"},
+		{"windows", "amd64", "pie"},
+		{"android", "arm64", "pie"},
+		{"ios", "arm64", "pie"},
+		{"freebsd", "amd64", "exe"},
+	}
+	for _, tt := range tests {
+		got := DefaultBuildMode(tt.goos, tt.goarch)
+		if got != tt.want {
+			t.Errorf("DefaultBuildMode(%q, %q) = %q, want %q", tt.goos, tt.goarch, got, tt.want)
+		}
+	}
+}
+
 func TestExtractPackageName(t *testing.T) {
 	dir := t.TempDir()
 

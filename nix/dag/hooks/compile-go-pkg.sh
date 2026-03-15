@@ -23,13 +23,21 @@ compileGoPkgBuildPhase() {
   # Compile the package.
   mkdir -p "$out/$(dirname "$goPackagePath")"
 
+  # When building PIE (darwin, windows), pass -shared to generate
+  # position-independent code, matching cmd/go's default behavior.
+  local -a gcflagArgs=()
+  case "$(@go@ env GOOS)" in
+    darwin|windows|android|ios) gcflagArgs=(--gc-flags "-shared") ;;
+  esac
+
   @go2nix@ compile-package \
     --import-cfg "$NIX_BUILD_TOP/importcfg" \
     --import-path "$goPackagePath" \
     --src-dir "$goPackageSrcDir" \
     --output "$out/$goPackagePath.a" \
     --trim-path "$NIX_BUILD_TOP" \
-    @tagArg@
+    @tagArg@ \
+    "${gcflagArgs[@]}"
 
   # Write importcfg entry for consumers of this package.
   echo "packagefile $goPackagePath=$out/$goPackagePath.a" >"$out/importcfg"
