@@ -47,8 +47,12 @@ type Config struct {
 
 	// coreutilsDir is the store path of coreutils, derived from CoreutilsBin.
 	coreutilsDir string
-	// ccDir is resolved at Resolve() time for cgo packages.
+	// ccDir is the store path of the CC wrapper, resolved at Resolve() time.
 	ccDir string
+	// ccPath is the full path to the C compiler (e.g., /nix/store/xxx/bin/cc).
+	ccPath string
+	// cxxPath is the full path to the C++ compiler (e.g., /nix/store/xxx/bin/c++).
+	cxxPath string
 	// allOverridePaths collects all nativeBuildInputs store paths for the link derivation.
 	allOverridePaths []string
 	// buildMode is "pie" or "exe", determined at Resolve() time from GOOS/GOARCH.
@@ -72,9 +76,14 @@ func Resolve(cfg Config) error {
 	// Derive coreutils store path from the explicit binary path.
 	cfg.coreutilsDir = storeDirOf(cfg.CoreutilsBin)
 
-	// Find CC for cgo packages (stdenv provides cc in the wrapper).
+	// Find CC/CXX for cgo packages (stdenv provides these in the cc-wrapper).
+	// Go's setextld uses CXX instead of CC when C++ files are present.
 	if ccPath, err := exec.LookPath("cc"); err == nil {
+		cfg.ccPath = ccPath
 		cfg.ccDir = storeDirOf(filepath.Dir(ccPath))
+	}
+	if cxxPath, err := exec.LookPath("c++"); err == nil {
+		cfg.cxxPath = cxxPath
 	}
 
 	// Determine default build mode (pie vs exe) from the Go toolchain,
@@ -566,17 +575,29 @@ func createLinkDrv(
 
 	// Check if any package in the graph uses cgo — the linker needs CC for
 	// external linking regardless of whether packageOverrides were specified.
+	// Also track C++ usage: Go's setextld uses CXX instead of CC when C++
+	// files are present (needed to link C++ standard libraries).
 	hasCgo := false
+	hasCxx := false
 	for _, pkg := range sorted {
 		if len(pkg.CgoFiles) > 0 {
 			hasCgo = true
-			break
+		}
+		if len(pkg.CXXFiles) > 0 {
+			hasCxx = true
 		}
 	}
 
 	// PATH: coreutils + CC for external linking (cgo)
 	pathParts := []string{cfg.coreutilsDir + "/bin"}
-	if hasCgo && cfg.ccDir != "" {
+	if hasCgo && cfg.ccPath != "" {
+		// Pass -extld explicitly so the linker uses the correct compiler,
+		// matching cmd/go's setextld behavior (see gc.go).
+		extld := cfg.ccPath
+		if hasCxx && cfg.cxxPath != "" {
+			extld = cfg.cxxPath
+		}
+		drv.SetEnv("extld", extld)
 		pathParts = append(pathParts, cfg.ccDir+"/bin")
 		drv.AddInputSrc(cfg.ccDir)
 	}

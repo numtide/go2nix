@@ -77,6 +77,9 @@ func TestLinkScript(t *testing.T) {
 	if !strings.Contains(script, "-buildmode=exe") {
 		t.Error("missing -buildmode=exe")
 	}
+	if !strings.Contains(script, `${extld:+-extld "$extld" -linkmode external}`) {
+		t.Error("missing extld conditional for cgo external linking")
+	}
 }
 
 func TestLinkScriptPIE(t *testing.T) {

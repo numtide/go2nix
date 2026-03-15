@@ -91,7 +91,12 @@ linkGoBinaryBuildPhase() {
 
     local linkflags=""
     if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
-      linkflags="-extld $CC -linkmode external"
+      # Use CXX when C++ files are present, matching Go's setextld (gc.go).
+      local extld="$CC"
+      if [ -f "$NIX_BUILD_TOP/.has_cxx" ]; then
+        extld="$CXX"
+      fi
+      linkflags="-extld $extld -linkmode external"
     fi
 
     # Word splitting is intentional: goLdflags and linkflags contain

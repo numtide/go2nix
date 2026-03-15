@@ -22,6 +22,13 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		if err := os.WriteFile(filepath.Join(nixBuildTop, ".has_cgo"), nil, 0o644); err != nil {
 			return fmt.Errorf("writing .has_cgo: %w", err)
 		}
+		// Signal C++ usage so the linker uses CXX instead of CC as the
+		// external linker, matching Go's setextld behavior (gc.go).
+		if len(files.CXXFiles) > 0 {
+			if err := os.WriteFile(filepath.Join(nixBuildTop, ".has_cxx"), nil, 0o644); err != nil {
+				return fmt.Errorf("writing .has_cxx: %w", err)
+			}
+		}
 	}
 
 	cgowork, err := os.MkdirTemp(opts.TrimPath, "cgo_work_"+uid+"_")
