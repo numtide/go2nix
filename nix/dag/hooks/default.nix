@@ -7,11 +7,15 @@
   go,
   go2nix,
   stdlib,
+  stdenv,
   makeSetupHook,
   tagFlag,
 }:
 let
   tagArg = if tagFlag == "" then "" else "--tags ${tagFlag}";
+  goos = stdenv.hostPlatform.go.GOOS;
+  # Match Go's internal/platform.DefaultPIE: PIE for darwin, windows, android, ios.
+  buildMode = if builtins.elem goos [ "darwin" "windows" "android" "ios" ] then "pie" else "exe";
 
   setupGoEnv = makeSetupHook {
     name = "go2nix-setup-go-env";
@@ -32,10 +36,9 @@ in
       setupGoEnv
     ];
     substitutions = {
-      go = "${go}/bin/go";
       go2nix = "${go2nix}/bin/go2nix";
       stdlib = "${stdlib}";
-      inherit tagArg;
+      inherit tagArg buildMode;
     };
   } ./compile-go-pkg.sh;
 
@@ -57,7 +60,7 @@ in
       go = "${go}/bin/go";
       go2nix = "${go2nix}/bin/go2nix";
       stdlib = "${stdlib}";
-      inherit tagArg;
+      inherit tagArg buildMode;
     };
   } ./link-go-binary.sh;
 }

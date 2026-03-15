@@ -40,12 +40,9 @@ linkGoBinaryBuildPhase() {
   local localdir="$NIX_BUILD_TOP/local-pkgs"
   mkdir -p "$localdir"
 
-  # Determine build mode for compiler flags.
-  # When PIE, pass -shared to go tool compile for position-independent code.
-  local go_buildmode="exe"
-  case "$(@go@ env GOOS)" in
-    darwin|windows|android|ios) go_buildmode="pie" ;;
-  esac
+  # Build mode is computed at Nix eval time from stdenv.hostPlatform.go.GOOS
+  # (see hooks/default.nix), matching Go's internal/platform.DefaultPIE.
+  local go_buildmode="@buildMode@"
 
   # Build gcflags argument array (empty if unset, avoids quoting issues).
   local gcflags_val="${goGcflags:-}"

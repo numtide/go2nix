@@ -23,12 +23,13 @@ compileGoPkgBuildPhase() {
   # Compile the package.
   mkdir -p "$out/$(dirname "$goPackagePath")"
 
-  # When building PIE (darwin, windows), pass -shared to generate
-  # position-independent code, matching cmd/go's default behavior.
+  # When building PIE, pass -shared to generate position-independent code,
+  # matching cmd/go's default behavior. buildMode is computed at Nix eval time
+  # from stdenv.hostPlatform.go.GOOS (see hooks/default.nix).
   local -a gcflagArgs=()
-  case "$(@go@ env GOOS)" in
-    darwin|windows|android|ios) gcflagArgs=(--gc-flags "-shared") ;;
-  esac
+  if [ "@buildMode@" = "pie" ]; then
+    gcflagArgs=(--gc-flags "-shared")
+  fi
 
   @go2nix@ compile-package \
     --import-cfg "$NIX_BUILD_TOP/importcfg" \
