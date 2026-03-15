@@ -36,11 +36,12 @@ type Pkg struct {
 
 // Module represents module info from `go list -json`.
 type Module struct {
-	Path    string   `json:"Path"`
-	Version string   `json:"Version"`
-	Main    bool     `json:"Main"`
-	Dir     string   `json:"Dir"`
-	Replace *Replace `json:"Replace"`
+	Path      string   `json:"Path"`
+	Version   string   `json:"Version"`
+	GoVersion string   `json:"GoVersion"` // go directive from go.mod
+	Main      bool     `json:"Main"`
+	Dir       string   `json:"Dir"`
+	Replace   *Replace `json:"Replace"`
 }
 
 // Replace represents a module replacement.

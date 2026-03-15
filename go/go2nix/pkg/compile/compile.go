@@ -23,6 +23,7 @@ type Options struct {
 	TrimPath   string // path prefix to trim (defaults to $NIX_BUILD_TOP)
 	Tags       string // comma-separated build tags
 	GCFlags    string // extra flags for go tool compile (space-separated, e.g. "-race")
+	GoVersion  string // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
 
 	// Resolved once by CompilePackage; avoids repeated go env subprocesses.
 	goroot      string
@@ -48,6 +49,12 @@ func CompileGoPackage(opts Options) error {
 	}
 	opts.goos, opts.goarch = goEnv()
 	opts.asmArchDefs = asmArchDefines(opts.goarch)
+
+	// Auto-detect Go language version from go.mod if not set explicitly,
+	// matching cmd/go's -lang=goX.Y behavior (see gc.go).
+	if opts.GoVersion == "" {
+		opts.GoVersion = findGoVersion(opts.SrcDir)
+	}
 
 	slog.Debug("compile-package", "import-path", opts.ImportPath, "src", opts.SrcDir)
 

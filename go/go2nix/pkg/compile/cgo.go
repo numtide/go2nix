@@ -180,6 +180,9 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		"-pack",
 		"-o", opts.Output,
 	}
+	if opts.GoVersion != "" {
+		compileArgs = append(compileArgs, "-lang=go"+opts.GoVersion)
+	}
 	if hasSFiles {
 		compileArgs = append(compileArgs, "-symabis", symabisPath, "-asmhdr", asmhdr)
 	}

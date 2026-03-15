@@ -15,6 +15,9 @@ func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		"-pack",
 		"-o", opts.Output,
 	}
+	if opts.GoVersion != "" {
+		args = append(args, "-lang=go"+opts.GoVersion)
+	}
 	args = append(args, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		args = append(args, embedFlag)

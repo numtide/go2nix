@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 )
 
 func runIn(dir, name string, args ...string) error {
@@ -131,6 +134,38 @@ func DefaultBuildMode(goos, goarch string) string {
 		return "pie"
 	}
 	return "exe"
+}
+
+// findGoVersion walks up from dir looking for go.mod and returns the
+// Go language version (major.minor only), matching cmd/go's -lang behavior.
+// Returns "" if no go.mod is found or it lacks a go directive.
+func findGoVersion(dir string) string {
+	for d := dir; ; {
+		data, err := os.ReadFile(filepath.Join(d, "go.mod"))
+		if err == nil {
+			f, err := modfile.ParseLax(filepath.Join(d, "go.mod"), data, nil)
+			if err == nil && f.Go != nil {
+				return LangVersion(f.Go.Version)
+			}
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return ""
+}
+
+// LangVersion strips the patch version from a Go version string,
+// matching internal/gover.Lang: "1.21.3" → "1.21", "1.21" → "1.21".
+func LangVersion(v string) string {
+	major, rest, ok := strings.Cut(v, ".")
+	if !ok {
+		return v
+	}
+	minor, _, _ := strings.Cut(rest, ".")
+	return major + "." + minor
 }
 
 func extractPackageName(goFile string) string {

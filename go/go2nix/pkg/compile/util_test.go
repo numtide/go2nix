@@ -57,6 +57,47 @@ func TestDefaultBuildMode(t *testing.T) {
 	}
 }
 
+func TestLangVersion(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"1.21", "1.21"},
+		{"1.21.3", "1.21"},
+		{"1.22.0", "1.22"},
+		{"1", "1"},
+		{"2.0", "2.0"},
+	}
+	for _, tt := range tests {
+		if got := LangVersion(tt.in); got != tt.want {
+			t.Errorf("LangVersion(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestFindGoVersion(t *testing.T) {
+	// Create a module root with go.mod.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/foo\n\ngo 1.21.3\n"), 0o644)
+
+	// From the module root itself.
+	if got := findGoVersion(dir); got != "1.21" {
+		t.Errorf("root: got %q, want %q", got, "1.21")
+	}
+
+	// From a sub-package directory.
+	subdir := filepath.Join(dir, "pkg", "bar")
+	os.MkdirAll(subdir, 0o755)
+	if got := findGoVersion(subdir); got != "1.21" {
+		t.Errorf("subdir: got %q, want %q", got, "1.21")
+	}
+
+	// Directory with no go.mod returns "".
+	nomod := t.TempDir()
+	if got := findGoVersion(nomod); got != "" {
+		t.Errorf("no go.mod: got %q, want %q", got, "")
+	}
+}
+
 func TestExtractPackageName(t *testing.T) {
 	dir := t.TempDir()
 

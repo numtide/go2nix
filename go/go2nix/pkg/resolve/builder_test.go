@@ -60,6 +60,9 @@ func TestCompileScript(t *testing.T) {
 	if !strings.Contains(script, "pkg.a") {
 		t.Error("missing pkg.a output")
 	}
+	if !strings.Contains(script, `${goVersion:+--go-version "$goVersion"}`) {
+		t.Error("missing goVersion conditional for -lang flag")
+	}
 }
 
 func TestLinkScript(t *testing.T) {

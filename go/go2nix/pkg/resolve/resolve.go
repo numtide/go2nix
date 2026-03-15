@@ -430,6 +430,11 @@ func createPackageDrv(
 		drv.SetEnv("tags", cfg.Tags)
 	}
 
+	// Forward Go language version for -lang flag (from module's go.mod).
+	if pkg.GoVersion != "" {
+		drv.SetEnv("goVersion", compile.LangVersion(pkg.GoVersion))
+	}
+
 	// Forward CGO_ENABLED if set
 	if cfg.CGOEnabled != "" {
 		drv.SetEnv("CGO_ENABLED", cfg.CGOEnabled)

@@ -55,6 +55,8 @@ func compileScript(go2nixBin string) string {
 	b.WriteString(" \\\n  ${tags:+--tags \"$tags\"}")
 	// Only pass gcflags if set
 	b.WriteString(" \\\n  ${gcflags:+--gc-flags \"$gcflags\"}")
+	// Go language version for -lang flag (from module's go.mod)
+	b.WriteString(" \\\n  ${goVersion:+--go-version \"$goVersion\"}")
 	b.WriteString("\n")
 	return b.String()
 }

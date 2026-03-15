@@ -18,10 +18,11 @@ func runCompilePackageCmd(args []string) {
 	gcflags := fs.String("gc-flags", "", "extra flags for go tool compile (space-separated)")
 	trimPath := fs.String("trim-path", "", "path prefix to trim (default: $NIX_BUILD_TOP)")
 	pFlag := fs.String("p", "", "override -p flag (default: import-path)")
+	goVersion := fs.String("go-version", "", "Go language version for -lang (e.g., 1.21); auto-detected from go.mod if empty")
 	fs.Parse(args)
 
 	if *importPath == "" || *srcDir == "" || *output == "" || *importCfg == "" {
-		slog.Error("usage: go2nix compile-package --import-path PATH --src-dir DIR --output FILE --import-cfg FILE [--tags TAGS] [--trim-path PATH] [--p FLAG]")
+		slog.Error("usage: go2nix compile-package --import-path PATH --src-dir DIR --output FILE --import-cfg FILE [--tags TAGS] [--trim-path PATH] [--p FLAG] [--go-version VER]")
 		os.Exit(1)
 	}
 
@@ -34,6 +35,7 @@ func runCompilePackageCmd(args []string) {
 		TrimPath:   *trimPath,
 		Tags:       *tags,
 		GCFlags:    *gcflags,
+		GoVersion:  *goVersion,
 	}
 
 	if err := compile.CompileGoPackage(opts); err != nil {

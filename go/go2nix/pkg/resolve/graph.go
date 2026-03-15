@@ -28,6 +28,7 @@ type ResolvedPkg struct {
 	Version    string
 	Subdir     string // package path relative to module root
 	Name       string // Go package name (e.g., "main", "ssh")
+	GoVersion  string // Go language version from module's go.mod (e.g., "1.21")
 
 	// Set during derivation creation
 	DrvPath *storepath.StorePath // .drv path after nix derivation add
@@ -58,6 +59,9 @@ func buildPackageGraph(
 			HFiles:     pkg.HFiles,
 			Name:       pkg.Name,
 			Imports:    pkg.Imports, // keep ALL imports (consumers check graph for stdlib vs non-stdlib)
+		}
+		if pkg.Module != nil {
+			rp.GoVersion = pkg.Module.GoVersion
 		}
 
 		if pkg.Module != nil && !pkg.Module.IsLocal() {

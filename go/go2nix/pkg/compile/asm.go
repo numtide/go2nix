@@ -52,6 +52,9 @@ func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) erro
 		"-pack",
 		"-o", opts.Output,
 	}
+	if opts.GoVersion != "" {
+		compileArgs = append(compileArgs, "-lang=go"+opts.GoVersion)
+	}
 	compileArgs = append(compileArgs, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		compileArgs = append(compileArgs, embedFlag)
