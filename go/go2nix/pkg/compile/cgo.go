@@ -59,6 +59,14 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		cgoLdflags = filterCppFlags(cgoLdflags)
 	}
 
+	// Support gfortran out of the box for Fortran files, matching cmd/go behavior.
+	if len(files.FFiles) > 0 {
+		fc := envOrDefault("FC", "gfortran")
+		if strings.Contains(fc, "gfortran") {
+			cgoLdflags = append(cgoLdflags, "-lgfortran")
+		}
+	}
+
 	// Ensure absolute build paths don't leak into debug info for reproducibility.
 	cgoCflags = append([]string{"-fdebug-prefix-map=" + opts.SrcDir + "=."}, cgoCflags...)
 
@@ -276,6 +284,26 @@ func compileCFiles(cc, cxx, cgowork, srcDir, uid string, files gofiles.PkgFiles,
 			return nil, fmt.Errorf("cxx %s: %w", f, err)
 		}
 		compiledOFiles = append(compiledOFiles, oFile)
+	}
+
+	// Compile Fortran files with FC (default: gfortran).
+	if len(files.FFiles) > 0 {
+		fc := envOrDefault("FC", "gfortran")
+		cgoFflags := strings.Fields(os.Getenv("CGO_FFLAGS"))
+		for _, f := range files.FFiles {
+			base := filepath.Base(f)
+			for _, ext := range []string{".f90", ".for", ".f", ".F"} {
+				base = strings.TrimSuffix(base, ext)
+			}
+			oFile := filepath.Join(cgowork, base+"_f_"+uid+".o")
+			fcArgs := []string{"-c", "-I", cgowork, "-I", srcDir, "-fPIC", "-pthread"}
+			fcArgs = append(fcArgs, cgoFflags...)
+			fcArgs = append(fcArgs, filepath.Join(srcDir, f), "-o", oFile)
+			if err := runIn("", fc, fcArgs...); err != nil {
+				return nil, fmt.Errorf("fc %s: %w", f, err)
+			}
+			compiledOFiles = append(compiledOFiles, oFile)
+		}
 	}
 
 	return compiledOFiles, nil

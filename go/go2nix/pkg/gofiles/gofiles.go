@@ -23,6 +23,7 @@ type PkgFiles struct {
 	SFiles     []string  `json:"s_files"`
 	CFiles     []string  `json:"c_files"`
 	CXXFiles   []string  `json:"cxx_files"`
+	FFiles     []string  `json:"f_files"` // .f, .F, .for, .f90 Fortran source files
 	HFiles     []string  `json:"h_files"`
 	EmbedFiles []string  `json:"embed_files"`
 	EmbedCfg   *EmbedCfg `json:"embed_cfg,omitempty"`
@@ -59,6 +60,7 @@ func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 		SFiles:     nonNil(pkg.SFiles),
 		CFiles:     nonNil(pkg.CFiles),
 		CXXFiles:   nonNil(pkg.CXXFiles),
+		FFiles:     nonNil(pkg.FFiles),
 		HFiles:     nonNil(pkg.HFiles),
 		EmbedFiles: nonNil(pkg.EmbedPatterns),
 		IsCommand:  pkg.IsCommand(),

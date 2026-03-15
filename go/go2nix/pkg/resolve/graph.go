@@ -19,6 +19,7 @@ type ResolvedPkg struct {
 	CgoFiles   []string
 	CFiles     []string
 	CXXFiles   []string
+	FFiles     []string
 	SFiles     []string
 	HFiles     []string
 	Imports    []string // all import paths (including stdlib)
@@ -55,6 +56,7 @@ func buildPackageGraph(
 			CgoFiles:   pkg.CgoFiles,
 			CFiles:     pkg.CFiles,
 			CXXFiles:   pkg.CXXFiles,
+			FFiles:     pkg.FFiles,
 			SFiles:     pkg.SFiles,
 			HFiles:     pkg.HFiles,
 			Name:       pkg.Name,
