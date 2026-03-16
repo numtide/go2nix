@@ -52,8 +52,8 @@ The `netrcFile` option supports private module authentication.
 ### 3. Package graph discovery (build time)
 
 With all modules available, `go list -json -deps` discovers the full import
-graph. This is the step that DAG mode performs at generation time — dynamic
-mode defers it to build time.
+graph. DAG mode performs this step at eval time via the go-nix-plugin — dynamic
+mode defers it to build time inside the recursive-nix sandbox.
 
 ### 4. CA derivation registration (build time)
 
@@ -125,7 +125,7 @@ The build-time logic lives in the `go2nix resolve` command
 ## Trade-offs
 
 **Pros:**
-- Smallest lockfile — only `[mod]` hashes, no `[pkg]` section
+- Small lockfile — only `[mod]` hashes (same as DAG mode)
 - No lockfile regeneration when import graph changes (only when modules change)
 - Per-package caching via CA derivations
 - CA deduplication — comment-only edits don't trigger rebuilds

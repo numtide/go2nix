@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 
@@ -23,9 +22,9 @@ import (
 
 // Generate creates a go2nix lockfile from the given project directories.
 // mode selects the output format:
-//   - "dag": full lockfile with [mod] and [pkg] sections (default)
-//   - "dynamic": minimal lockfile with [mod] only, no [pkg] section
-//   - "vendor": v1 gomod2nix format (attrset mod values, no [pkg] section)
+//   - "dag": lockfile with [mod] sections (package graph resolved at eval time by plugin)
+//   - "dynamic": minimal lockfile with [mod] only
+//   - "vendor": v1 gomod2nix format (attrset mod values)
 func Generate(dirs []string, output string, jobs int, mode string) error {
 	cache, err := lockfile.Read(output)
 	if err != nil {
@@ -47,11 +46,6 @@ func Generate(dirs []string, output string, jobs int, mode string) error {
 		}
 	}
 	slog.Info("packages found", "count", len(allPkgMap))
-
-	thirdPartyPkgs := map[string]bool{}
-	for ip := range allPkgMap {
-		thirdPartyPkgs[ip] = true
-	}
 
 	allPkgs := make([]golist.Pkg, 0, len(allPkgMap))
 	for _, pkg := range allPkgMap {
@@ -112,32 +106,8 @@ func Generate(dirs []string, output string, jobs int, mode string) error {
 		return result.Write(output, lockfile.Gomod2nixHeader)
 	}
 
-	var resultPkg map[string]map[string][]string
-	if mode == "dag" {
-		resultPkg = map[string]map[string][]string{}
-		for _, pkg := range allPkgs {
-			if pkg.Module == nil || pkg.Module.Version == "" {
-				continue
-			}
-			modKey := pkg.Module.ModKey()
-
-			var imports []string
-			for _, imp := range pkg.Imports {
-				if thirdPartyPkgs[imp] {
-					imports = append(imports, imp)
-				}
-			}
-			sort.Strings(imports)
-
-			if resultPkg[modKey] == nil {
-				resultPkg[modKey] = map[string][]string{}
-			}
-			resultPkg[modKey][pkg.ImportPath] = imports
-		}
-	}
-
-	result := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace, Pkg: resultPkg}
-	slog.Info("writing lockfile", "mods", len(resultMod), "pkgs", len(resultPkg), "path", output)
+	result := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace}
+	slog.Info("writing lockfile", "mods", len(resultMod), "path", output)
 	return result.Write(output, lockfile.Header)
 }
 

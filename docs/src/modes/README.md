@@ -9,7 +9,7 @@ rebuild granularity when a dependency changes.
 | Mode | How it works | Lockfile | Caching | Nix features |
 |------|-------------|----------|---------|--------------|
 | **[Vendor](vendor-mode.md)** | `go build` with vendored deps | `[mod]` only | Per-module | None |
-| **[DAG](dag-mode.md)** | `go tool compile/link` per-package | `[mod]` + `[pkg]` | Per-package | None |
+| **[DAG](dag-mode.md)** | `go tool compile/link` per-package | `[mod]` only | Per-package | go-nix-plugin |
 | **[Dynamic](dynamic-mode.md)** | Recursive-nix, DAG at build time | `[mod]` only | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
 - **Vendor** wraps the standard `go build` with a Nix-managed vendor directory.
@@ -19,9 +19,9 @@ rebuild granularity when a dependency changes.
 
 - **DAG** goes deeper: every *package* (not just every module) gets its own
   derivation. go2nix calls `go tool compile` and `go tool link` directly,
-  bypassing `go build`. The full import graph is recorded in the lockfile's
-  `[pkg]` section at generation time, so Nix can wire up per-package
-  derivations at eval time. When one package changes, only it and its reverse
+  bypassing `go build`. The import graph is discovered at eval time by the
+  go-nix-plugin (`builtins.resolveGoPackages`), so the lockfile stays small
+  (just `[mod]` hashes). When one package changes, only it and its reverse
   dependencies rebuild.
 
 - **Dynamic** achieves the same per-package granularity as DAG, but discovers
@@ -33,9 +33,10 @@ rebuild granularity when a dependency changes.
 ## Choosing a mode
 
 Start with **Vendor** if you want the simplest setup and don't need
-fine-grained caching. Move to **DAG** when rebuild times matter and you're
-comfortable with a larger lockfile. Use **Dynamic** if you have a compatible
-Nix version and want per-package caching without the lockfile overhead.
+fine-grained caching. Move to **DAG** when rebuild times matter — the lockfile
+is the same size as vendor/dynamic (just module hashes), but requires the
+go-nix-plugin. Use **Dynamic** if you have a compatible Nix version and want
+per-package caching without requiring the plugin.
 
 `buildGoApplication` auto-selects: dynamic mode when `builtins.outputOf` is
 available and `nixPackage` is set, otherwise DAG mode. Use the explicit

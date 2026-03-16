@@ -699,9 +699,10 @@ Following nix-ninja's pattern:
 
 ### Lockfile changes
 
-`go2nix generate --mode=dynamic` skips `[pkg]` collection. The `Pkg` field uses
-`omitempty` so TOML omits it when nil. `resolve` reads only `Mod` + `Replace`,
-ignores `Pkg`.
+All modes now skip `[pkg]` collection (the package graph is resolved at eval
+time by the go-nix-plugin in DAG mode, or at build time in dynamic mode). The
+`Pkg` field uses `omitempty` so TOML omits it when nil. `resolve` reads only
+`Mod` + `Replace`.
 
 ## Files summary
 

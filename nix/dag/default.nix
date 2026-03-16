@@ -19,6 +19,7 @@
   lib,
   hooks,
   fetchers,
+  helpers,
   ...
 }:
 
@@ -28,6 +29,7 @@
   pname,
   version,
   subPackages ? [ "." ],
+  tags ? [ ],
   ldflags ? [ ],
   gcflags ? [ ],
   CGO_ENABLED ? null,
@@ -43,18 +45,29 @@
 let
   inherit (builtins) concatStringsSep;
 
-  # --- Lockfile processing: WASM fast path with pure-Nix fallback ---
+  # --- Module resolution from lockfile ---
+  resolved = builtins.resolveGoModules {
+    lock = builtins.readFile goLock;
+  };
 
-  processLockfilePureNix = import ./process-lockfile.nix;
+  # --- Package graph from plugin (eval-time go list) ---
+  goPackagesResult = builtins.resolveGoPackages {
+    go = "${go}/bin/go";
+    inherit src tags subPackages moduleDir;
+  };
 
-  processed =
-    if builtins ? wasm then
-      builtins.wasm {
-        path = ./go2nix.wasm;
-        function = "process_lockfile";
-      } goLock
-    else
-      processLockfilePureNix goLock;
+  # --- Join: apply replace directives to module fetchPaths ---
+  modules = builtins.mapAttrs (
+    modKey: mod:
+    let
+      fetchPath = goPackagesResult.replacements.${modKey} or mod.path;
+    in
+    mod
+    // {
+      inherit fetchPath;
+      dirSuffix = "${helpers.escapeModPath fetchPath}@${mod.version}";
+    }
+  ) resolved.modules;
 
   # --- Third-party package set ---
   fetchModule = fetchers.fetchGoModule;
@@ -65,7 +78,7 @@ let
       src = fetchModule modKey { inherit (mod) hash fetchPath; };
     in
     mod // { dir = "${src}/${mod.dirSuffix}"; }
-  ) processed.modules;
+  ) modules;
 
   packages = builtins.mapAttrs (
     importPath: pkg:
@@ -80,11 +93,14 @@ let
       pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
       extraEnv = builtins.removeAttrs pkgOverride [ "nativeBuildInputs" ];
+
+      # Auto-add CC for CGO packages.
+      cgoBuildInputs = if pkg.isCgo or false then [ stdenv.cc ] else [ ];
     in
     stdenv.mkDerivation {
       name = pkg.drvName;
 
-      nativeBuildInputs = [ hooks.goModuleHook ] ++ extraNativeBuildInputs;
+      nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
       buildInputs = deps;
 
       env = {
@@ -94,7 +110,7 @@ let
       // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
       // extraEnv;
     }
-  ) processed.packages;
+  ) goPackagesResult.packages;
 
   require = builtins.attrValues packages;
 
@@ -114,6 +130,7 @@ let
     "pname"
     "version"
     "subPackages"
+    "tags"
     "ldflags"
     "gcflags"
     "CGO_ENABLED"

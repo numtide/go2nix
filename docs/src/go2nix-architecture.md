@@ -19,7 +19,7 @@ The system has two components:
 | Mode | How it works | Lockfile | Caching | Nix features |
 |------|-------------|----------|---------|--------------|
 | **Vendor** | `go build` with vendored deps | `[mod]` only | Per-module | None |
-| **DAG** | `go tool compile/link` per-package | `[mod]` + `[pkg]` | Per-package | None |
+| **DAG** | `go tool compile/link` per-package | `[mod]` only | Per-package | go-nix-plugin |
 | **Dynamic** | Recursive-nix, DAG at build time | `[mod]` only | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
 ### Vendor mode
@@ -35,6 +35,8 @@ See [vendor-mode.md](modes/vendor-mode.md) for internals.
 Each third-party Go package becomes its own Nix derivation. go2nix calls
 `go tool compile` and `go tool link` directly — bypassing `go build`. This
 gives Nix full control over the dependency graph at package granularity.
+The package graph is discovered at eval time by the go-nix-plugin
+(`builtins.resolveGoPackages`), which runs `go list` against the source tree.
 When a dependency changes, only affected packages rebuild.
 
 See [dag-mode.md](modes/dag-mode.md) for internals.
@@ -72,8 +74,6 @@ nix/
 ├── dag/                   # DAG mode
 │   ├── default.nix        #   buildGoApplicationDAGMode
 │   ├── fetch-go-module.nix#   FOD fetcher (GOMODCACHE layout)
-│   ├── process-lockfile.nix#  TOML → {modules, packages}
-│   ├── go2nix.wasm        #   Fast TOML parser (optional)
 │   └── hooks/             #   Setup hooks (compile, link, env)
 ├── vendor/                # Vendor mode
 │   ├── default.nix        #   buildGoApplicationVendorMode
@@ -138,7 +138,7 @@ Pure Nix utility functions:
 | When | What | Applies to | How |
 |------|------|-----------|-----|
 | Generation | MVS consistency | All modes | `go list -json -deps` resolves actual versions |
-| Nix eval | Missing packages | DAG only | Package not in `[pkg]` → error |
+| Nix eval | Package graph | DAG only | `builtins.resolveGoPackages` runs `go list` at eval time |
 | Build time | Lockfile consistency | DAG, dynamic | `go2nix check --lockfile` validates against `go.mod` |
 | Build time | Tidiness | Vendor only | `go mod graph` against GOMODCACHE from vendor tree |
 
