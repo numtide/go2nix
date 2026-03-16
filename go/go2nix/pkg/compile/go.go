@@ -31,6 +31,9 @@ func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	if opts.concurrency > 1 {
 		args = append(args, fmt.Sprintf("-c=%d", opts.concurrency))
 	}
+	if opts.pgoPreprofile != "" {
+		args = append(args, "-pgoprofile="+opts.pgoPreprofile)
+	}
 	args = append(args, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		args = append(args, embedFlag)

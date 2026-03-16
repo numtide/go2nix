@@ -31,6 +31,11 @@ compileGoPkgBuildPhase() {
     gcflagArgs=(--gc-flags "-shared")
   fi
 
+  local -a pgoArgs=()
+  if [ -n "${goPgoProfile:-}" ]; then
+    pgoArgs=(--pgo-profile "$goPgoProfile")
+  fi
+
   @go2nix@ compile-package \
     --import-cfg "$NIX_BUILD_TOP/importcfg" \
     --import-path "$goPackagePath" \
@@ -38,7 +43,8 @@ compileGoPkgBuildPhase() {
     --output "$out/$goPackagePath.a" \
     --trim-path "$NIX_BUILD_TOP" \
     @tagArg@ \
-    "${gcflagArgs[@]}"
+    "${gcflagArgs[@]}" \
+    "${pgoArgs[@]}"
 
   # Write importcfg entry for consumers of this package.
   echo "packagefile $goPackagePath=$out/$goPackagePath.a" >"$out/importcfg"

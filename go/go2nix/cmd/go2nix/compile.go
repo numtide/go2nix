@@ -19,10 +19,11 @@ func runCompilePackageCmd(args []string) {
 	trimPath := fs.String("trim-path", "", "path prefix to trim (default: $NIX_BUILD_TOP)")
 	pFlag := fs.String("p", "", "override -p flag (default: import-path)")
 	goVersion := fs.String("go-version", "", "Go language version for -lang (e.g., 1.21); auto-detected from go.mod if empty")
+	pgoProfile := fs.String("pgo-profile", "", "path to pprof CPU profile for PGO")
 	fs.Parse(args)
 
 	if *importPath == "" || *srcDir == "" || *output == "" || *importCfg == "" {
-		slog.Error("usage: go2nix compile-package --import-path PATH --src-dir DIR --output FILE --import-cfg FILE [--tags TAGS] [--trim-path PATH] [--p FLAG] [--go-version VER]")
+		slog.Error("usage: go2nix compile-package --import-path PATH --src-dir DIR --output FILE --import-cfg FILE [--tags TAGS] [--trim-path PATH] [--p FLAG] [--go-version VER] [--pgo-profile FILE]")
 		os.Exit(1)
 	}
 
@@ -36,6 +37,7 @@ func runCompilePackageCmd(args []string) {
 		Tags:       *tags,
 		GCFlags:    *gcflags,
 		GoVersion:  *goVersion,
+		PGOProfile: *pgoProfile,
 	}
 
 	if err := compile.CompileGoPackage(opts); err != nil {

@@ -24,14 +24,16 @@ type Options struct {
 	Tags       string // comma-separated build tags
 	GCFlags    string // extra flags for go tool compile (space-separated, e.g. "-race")
 	GoVersion  string // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
+	PGOProfile string // path to pprof CPU profile for PGO; empty disables PGO
 
 	// Resolved once by CompilePackage; avoids repeated go env subprocesses.
-	goroot      string
-	goos        string
-	goarch      string
-	asmArchDefs []string // arch-specific -D flags for go tool asm
-	trimRewrite string   // computed -trimpath rewrite in "old=>new;old2=>new2" format
-	concurrency int      // -c=N backend concurrency for go tool compile
+	goroot        string
+	goos          string
+	goarch        string
+	asmArchDefs   []string // arch-specific -D flags for go tool asm
+	trimRewrite   string   // computed -trimpath rewrite in "old=>new;old2=>new2" format
+	concurrency   int      // -c=N backend concurrency for go tool compile
+	pgoPreprofile string   // path to preprocessed PGO profile (output of go tool preprofile)
 }
 
 // CompileGoPackage compiles a single Go package (pure Go, assembly, or cgo).
@@ -67,6 +69,18 @@ func CompileGoPackage(opts Options) error {
 	// "github.com/foo/bar/file.go" instead of "/nix/store/xxx/file.go".
 	// Strips build temp dir (TrimPath) for generated files (go_asm.h, symabis, etc.).
 	opts.trimRewrite = opts.SrcDir + "=>" + opts.ImportPath + ";" + opts.TrimPath + "=>"
+
+	// Preprocess PGO profile if provided. go tool preprofile converts a
+	// pprof CPU profile into a text format (GO PREPROFILE V1) that the
+	// compiler reads more efficiently, avoiding redundant parsing across
+	// packages. Ships with Go 1.22+.
+	if opts.PGOProfile != "" {
+		uid := strings.ReplaceAll(opts.ImportPath, "/", "_")
+		opts.pgoPreprofile = filepath.Join(opts.TrimPath, "pgoprofile_"+uid)
+		if err := runIn("", "go", "tool", "preprofile", "-o", opts.pgoPreprofile, opts.PGOProfile); err != nil {
+			return fmt.Errorf("preprofile: %w", err)
+		}
+	}
 
 	slog.Debug("compile-package", "import-path", opts.ImportPath, "src", opts.SrcDir)
 

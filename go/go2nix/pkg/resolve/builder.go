@@ -57,6 +57,8 @@ func compileScript(go2nixBin string) string {
 	b.WriteString(" \\\n  ${gcflags:+--gc-flags \"$gcflags\"}")
 	// Go language version for -lang flag (from module's go.mod)
 	b.WriteString(" \\\n  ${goVersion:+--go-version \"$goVersion\"}")
+	// PGO profile for profile-guided optimization
+	b.WriteString(" \\\n  ${pgoProfile:+--pgo-profile \"$pgoProfile\"}")
 	b.WriteString("\n")
 	return b.String()
 }

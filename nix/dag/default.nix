@@ -31,6 +31,7 @@
   ldflags ? [ ],
   gcflags ? [ ],
   CGO_ENABLED ? null,
+  pgoProfile ? null,
   allowGoReference ? false,
   meta ? { },
   nativeBuildInputs ? [ ],
@@ -90,6 +91,7 @@ let
         goPackagePath = importPath;
         goPackageSrcDir = srcDir;
       }
+      // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
       // extraEnv;
     }
   ) processed.packages;
@@ -115,6 +117,7 @@ let
     "ldflags"
     "gcflags"
     "CGO_ENABLED"
+    "pgoProfile"
     "allowGoReference"
     "meta"
     "nativeBuildInputs"
@@ -155,6 +158,7 @@ stdenv.mkDerivation (
       goLockfile = "${goLock}";
       goPname = pname;
     }
-    // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { });
+    // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { })
+    // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { });
   }
 )

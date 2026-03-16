@@ -21,6 +21,7 @@ type CompileLocalOptions struct {
 	Tags       string
 	GCFlags    string
 	TrimPath   string
+	PGOProfile string // path to pprof CPU profile for PGO; empty disables PGO
 }
 
 // CompileLocalPackages discovers and compiles all local library packages
@@ -104,6 +105,7 @@ func CompileLocalPackages(opts CompileLocalOptions) error {
 				TrimPath:   opts.TrimPath,
 				Tags:       opts.Tags,
 				GCFlags:    opts.GCFlags,
+				PGOProfile: opts.PGOProfile,
 			})
 			if err != nil {
 				return fmt.Errorf("compiling %s: %w", p.ImportPath, err)

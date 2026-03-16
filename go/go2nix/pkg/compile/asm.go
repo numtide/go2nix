@@ -59,6 +59,9 @@ func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) erro
 	if opts.concurrency > 1 {
 		compileArgs = append(compileArgs, fmt.Sprintf("-c=%d", opts.concurrency))
 	}
+	if opts.pgoPreprofile != "" {
+		compileArgs = append(compileArgs, "-pgoprofile="+opts.pgoPreprofile)
+	}
 	compileArgs = append(compileArgs, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		compileArgs = append(compileArgs, embedFlag)

@@ -41,6 +41,7 @@ type Config struct {
 	LDFlags      string // linker flags
 	CGOEnabled   string // "0" or "1" to override cgo detection, empty for auto
 	GCFlags      string // extra flags for go tool compile
+	PGOProfile   string // store path to pprof CPU profile for PGO; empty disables PGO
 	Overrides    string // JSON-encoded packageOverrides
 	CACert       string // path to CA certificate bundle
 	NetrcFile    string // path to .netrc file for private module authentication
@@ -439,6 +440,12 @@ func createPackageDrv(
 	// Forward CGO_ENABLED if set
 	if cfg.CGOEnabled != "" {
 		drv.SetEnv("CGO_ENABLED", cfg.CGOEnabled)
+	}
+
+	// PGO profile — passed to every package's compile step.
+	if cfg.PGOProfile != "" {
+		drv.SetEnv("pgoProfile", cfg.PGOProfile)
+		drv.AddInputSrc(storeDirOf(cfg.PGOProfile))
 	}
 
 	// Forward gcflags. When building PIE, pass -shared to the compiler

@@ -62,6 +62,11 @@ linkGoBinaryBuildPhase() {
     gcflagArgs=(--gc-flags "$gcflags_val")
   fi
 
+  local -a pgoArgs=()
+  if [ -n "${goPgoProfile:-}" ]; then
+    pgoArgs=(--pgo-profile "$goPgoProfile")
+  fi
+
   # Pass 1: compile library packages in parallel (DAG-aware).
   @go2nix@ compile-packages \
     --import-cfg "$NIX_BUILD_TOP/importcfg" \
@@ -69,6 +74,7 @@ linkGoBinaryBuildPhase() {
     --trim-path "$NIX_BUILD_TOP" \
     @tagArg@ \
     "${gcflagArgs[@]}" \
+    "${pgoArgs[@]}" \
     "$goModuleRoot"
 
   # Set GOROOT so the linker embeds it as runtime.defaultGOROOT,
@@ -100,7 +106,8 @@ linkGoBinaryBuildPhase() {
       --output "$localdir/$importpath.a" \
       --trim-path "$NIX_BUILD_TOP" \
       @tagArg@ \
-      "${gcflagArgs[@]}"
+      "${gcflagArgs[@]}" \
+      "${pgoArgs[@]}"
 
     local linkflags=""
     if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then

@@ -36,6 +36,7 @@
   ldflags ? [ ],
   gcflags ? [ ],
   CGO_ENABLED ? null,
+  pgoProfile ? null,
   nativeBuildInputs ? [ ],
   moduleDir ? ".",
   packageOverrides ? { },
@@ -134,6 +135,7 @@ let
         } \
         --cacert ${cacert}/etc/ssl/certs/ca-bundle.crt \
         ${lib.optionalString (netrcFile != null) "--netrc-file ${netrcFile}"} \
+        ${lib.optionalString (pgoProfile != null) "--pgo-profile ${pgoProfile}"} \
         --output $out
     '';
 

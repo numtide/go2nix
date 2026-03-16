@@ -115,6 +115,14 @@ func TestLinkScriptGodebug(t *testing.T) {
 	}
 }
 
+func TestCompileScriptPGO(t *testing.T) {
+	script := compileScript("/nix/store/zzz-go2nix/bin/go2nix")
+
+	if !strings.Contains(script, `${pgoProfile:+--pgo-profile "$pgoProfile"}`) {
+		t.Error("missing pgoProfile conditional for PGO profile")
+	}
+}
+
 func TestCollectScript(t *testing.T) {
 	script := collectScript([]string{"/placeholder1", "/placeholder2"})
 

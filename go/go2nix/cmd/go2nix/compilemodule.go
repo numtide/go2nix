@@ -15,10 +15,11 @@ func runCompileModuleCmd(args []string) {
 	tags := fs.String("tags", "", "comma-separated build tags")
 	gcflags := fs.String("gc-flags", "", "extra flags for go tool compile (space-separated)")
 	trimPath := fs.String("trim-path", "", "path prefix to trim (default: $NIX_BUILD_TOP)")
+	pgoProfile := fs.String("pgo-profile", "", "path to pprof CPU profile for PGO")
 	fs.Parse(args)
 
 	if fs.NArg() != 1 || *importCfg == "" || *outDir == "" {
-		slog.Error("usage: go2nix compile-packages --import-cfg FILE --out-dir DIR [--tags TAGS] [--gc-flags FLAGS] [--trim-path PATH] <module-root>")
+		slog.Error("usage: go2nix compile-packages --import-cfg FILE --out-dir DIR [--tags TAGS] [--gc-flags FLAGS] [--trim-path PATH] [--pgo-profile FILE] <module-root>")
 		os.Exit(1)
 	}
 
@@ -29,6 +30,7 @@ func runCompileModuleCmd(args []string) {
 		Tags:       *tags,
 		GCFlags:    *gcflags,
 		TrimPath:   *trimPath,
+		PGOProfile: *pgoProfile,
 	}
 
 	if err := compile.CompileLocalPackages(opts); err != nil {

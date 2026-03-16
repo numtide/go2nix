@@ -25,6 +25,7 @@ func runResolveCmd(args []string) {
 	ldflags := fs.String("ldflags", "", "linker flags")
 	cgoEnabled := fs.String("cgo-enabled", "", "override CGO_ENABLED (0 or 1)")
 	gcflags := fs.String("gcflags", "", "extra flags for go tool compile")
+	pgoProfile := fs.String("pgo-profile", "", "store path to pprof CPU profile for PGO")
 	overrides := fs.String("overrides", "", "JSON-encoded packageOverrides")
 	cacert := fs.String("cacert", "", "path to CA certificate bundle")
 	netrcFile := fs.String("netrc-file", "", "path to .netrc file for private module authentication")
@@ -70,6 +71,7 @@ func runResolveCmd(args []string) {
 		LDFlags:      *ldflags,
 		CGOEnabled:   *cgoEnabled,
 		GCFlags:      *gcflags,
+		PGOProfile:   *pgoProfile,
 		Overrides:    *overrides,
 		CACert:       *cacert,
 		NetrcFile:    *netrcFile,
