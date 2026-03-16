@@ -76,6 +76,11 @@ func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) erro
 		ofiles = append(ofiles, objFile)
 	}
 
+	// Pack .syso (pre-compiled system object) files alongside assembly objects.
+	for _, s := range files.SysoFiles {
+		ofiles = append(ofiles, filepath.Join(opts.SrcDir, s))
+	}
+
 	// Pack all object files in a single call.
 	if len(ofiles) > 0 {
 		packArgs := append([]string{"tool", "pack", "r", opts.Output}, ofiles...)

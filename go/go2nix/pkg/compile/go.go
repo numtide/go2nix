@@ -3,6 +3,9 @@
 package compile
 
 import (
+	"fmt"
+	"path/filepath"
+
 	"github.com/numtide/go2nix/pkg/gofiles"
 )
 
@@ -24,5 +27,22 @@ func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	}
 	args = append(args, files.GoFiles...)
 
-	return runIn(opts.SrcDir, "go", args...)
+	if err := runIn(opts.SrcDir, "go", args...); err != nil {
+		return err
+	}
+
+	// Pack .syso (pre-compiled system object) files into the archive,
+	// matching cmd/go behavior (exec.go).
+	if len(files.SysoFiles) > 0 {
+		var sysoAbsPaths []string
+		for _, s := range files.SysoFiles {
+			sysoAbsPaths = append(sysoAbsPaths, filepath.Join(opts.SrcDir, s))
+		}
+		packArgs := append([]string{"tool", "pack", "r", opts.Output}, sysoAbsPaths...)
+		if err := runIn(opts.SrcDir, "go", packArgs...); err != nil {
+			return fmt.Errorf("pack syso: %w", err)
+		}
+	}
+
+	return nil
 }

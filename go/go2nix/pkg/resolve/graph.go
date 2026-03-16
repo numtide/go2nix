@@ -22,6 +22,7 @@ type ResolvedPkg struct {
 	FFiles     []string
 	SFiles     []string
 	HFiles     []string
+	SysoFiles  []string // .syso system object files
 	Imports    []string // all import paths (including stdlib)
 	IsLocal    bool
 	FodPath    *storepath.StorePath // FOD output path (third-party only)
@@ -59,6 +60,7 @@ func buildPackageGraph(
 			FFiles:     pkg.FFiles,
 			SFiles:     pkg.SFiles,
 			HFiles:     pkg.HFiles,
+			SysoFiles:  pkg.SysoFiles,
 			Name:       pkg.Name,
 			Imports:    pkg.Imports, // keep ALL imports (consumers check graph for stdlib vs non-stdlib)
 		}

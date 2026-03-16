@@ -219,8 +219,11 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		}
 	}
 
-	// Step 5: pack C/C++ objects and assembly objects.
+	// Step 5: pack C/C++ objects, assembly objects, and .syso files.
 	allOFiles := append(compiledOFiles, asmOFiles...)
+	for _, s := range files.SysoFiles {
+		allOFiles = append(allOFiles, filepath.Join(opts.SrcDir, s))
+	}
 	packArgs := append([]string{"tool", "pack", "r", opts.Output}, allOFiles...)
 	if err := runIn(opts.SrcDir, "go", packArgs...); err != nil {
 		return fmt.Errorf("pack: %w", err)

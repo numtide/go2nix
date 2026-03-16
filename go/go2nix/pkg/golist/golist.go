@@ -28,6 +28,7 @@ type Pkg struct {
 	FFiles     []string `json:"FFiles"` // .f, .F, .for, .f90 Fortran source files
 	SFiles     []string `json:"SFiles"`
 	HFiles     []string `json:"HFiles"`
+	SysoFiles  []string `json:"SysoFiles"` // .syso system object files
 	Standard   bool     `json:"Standard"`
 	DepOnly    bool     `json:"DepOnly"`
 	Imports    []string `json:"Imports"`

@@ -25,6 +25,7 @@ type PkgFiles struct {
 	CXXFiles   []string  `json:"cxx_files"`
 	FFiles     []string  `json:"f_files"` // .f, .F, .for, .f90 Fortran source files
 	HFiles     []string  `json:"h_files"`
+	SysoFiles  []string  `json:"syso_files"` // .syso system object files to pack into archive
 	EmbedFiles []string  `json:"embed_files"`
 	EmbedCfg   *EmbedCfg `json:"embed_cfg,omitempty"`
 	IsCommand  bool      `json:"is_command"`
@@ -62,6 +63,7 @@ func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 		CXXFiles:   nonNil(pkg.CXXFiles),
 		FFiles:     nonNil(pkg.FFiles),
 		HFiles:     nonNil(pkg.HFiles),
+		SysoFiles:  nonNil(pkg.SysoFiles),
 		EmbedFiles: nonNil(pkg.EmbedPatterns),
 		IsCommand:  pkg.IsCommand(),
 	}
