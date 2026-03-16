@@ -48,28 +48,33 @@ func TestAsmArchDefines(t *testing.T) {
 
 func TestAsmBaseArgs(t *testing.T) {
 	opts := Options{
+		ImportPath:  "example.com/foo",
 		PFlag:       "example.com/foo",
+		SrcDir:      "/nix/store/xxx-src",
 		TrimPath:    "/build",
 		goroot:      "/usr/local/go",
 		goos:        "linux",
 		goarch:      "amd64",
 		asmArchDefs: []string{"-D", "GOAMD64_v1"},
+		trimRewrite: "/nix/store/xxx-src=>example.com/foo;/build=>",
 	}
 
 	got := asmBaseArgs(opts)
 
-	// Check required flags are present.
-	expect := []struct {
-		flag, value string
-	}{
-		{"-p", "example.com/foo"},
-		{"-trimpath", "/build"},
+	// Check -trimpath uses the rewrite format (srcDir=>importPath;buildDir=>).
+	idx := slices.Index(got, "-trimpath")
+	if idx < 0 || idx+1 >= len(got) {
+		t.Fatalf("missing -trimpath flag in %v", got)
 	}
-	for _, e := range expect {
-		idx := slices.Index(got, e.flag)
-		if idx < 0 || idx+1 >= len(got) || got[idx+1] != e.value {
-			t.Errorf("expected %s %s in args %v", e.flag, e.value, got)
-		}
+	trimVal := got[idx+1]
+	if trimVal != "/nix/store/xxx-src=>example.com/foo;/build=>" {
+		t.Errorf("expected trimpath rewrite format, got %q", trimVal)
+	}
+
+	// Check -p flag.
+	pIdx := slices.Index(got, "-p")
+	if pIdx < 0 || pIdx+1 >= len(got) || got[pIdx+1] != "example.com/foo" {
+		t.Errorf("expected -p example.com/foo in args %v", got)
 	}
 
 	// Check -I includes both TrimPath and GOROOT/pkg/include.

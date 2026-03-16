@@ -15,7 +15,7 @@ func asmBaseArgs(opts Options) []string {
 	args := []string{
 		"tool", "asm",
 		"-p", opts.PFlag,
-		"-trimpath", opts.TrimPath,
+		"-trimpath", opts.trimRewrite,
 		"-I", opts.TrimPath,
 		"-I", filepath.Join(opts.goroot, "pkg", "include"),
 		"-D", "GOOS_" + opts.goos, "-D", "GOARCH_" + opts.goarch,

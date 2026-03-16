@@ -185,7 +185,7 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		"-importcfg", opts.ImportCfg,
 		"-p", opts.PFlag,
 		"-buildid", "", // deterministic empty buildID for Nix reproducibility
-		"-trimpath=" + opts.TrimPath,
+		"-trimpath=" + opts.trimRewrite,
 		"-pack",
 		"-o", opts.Output,
 	}

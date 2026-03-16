@@ -30,6 +30,7 @@ type Options struct {
 	goos        string
 	goarch      string
 	asmArchDefs []string // arch-specific -D flags for go tool asm
+	trimRewrite string   // computed -trimpath rewrite in "old=>new;old2=>new2" format
 }
 
 // CompileGoPackage compiles a single Go package (pure Go, assembly, or cgo).
@@ -55,6 +56,12 @@ func CompileGoPackage(opts Options) error {
 	if opts.GoVersion == "" {
 		opts.GoVersion = findGoVersion(opts.SrcDir)
 	}
+
+	// Compute -trimpath rewrite string matching cmd/go behavior (gc.go:243-310).
+	// Rewrites source dir to import path so debug info shows
+	// "github.com/foo/bar/file.go" instead of "/nix/store/xxx/file.go".
+	// Strips build temp dir (TrimPath) for generated files (go_asm.h, symabis, etc.).
+	opts.trimRewrite = opts.SrcDir + "=>" + opts.ImportPath + ";" + opts.TrimPath + "=>"
 
 	slog.Debug("compile-package", "import-path", opts.ImportPath, "src", opts.SrcDir)
 
