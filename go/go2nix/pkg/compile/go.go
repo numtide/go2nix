@@ -22,6 +22,12 @@ func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	if opts.GoVersion != "" {
 		args = append(args, "-lang=go"+opts.GoVersion)
 	}
+	// Pass -complete when the package has only Go source files (no C, C++,
+	// Fortran, or syso files), matching cmd/go behavior (gc.go:86-103).
+	// CgoFiles and SFiles are already zero here (routing in CompileGoPackage).
+	if len(files.CFiles) == 0 && len(files.CXXFiles) == 0 && len(files.FFiles) == 0 && len(files.SysoFiles) == 0 {
+		args = append(args, "-complete")
+	}
 	args = append(args, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		args = append(args, embedFlag)
