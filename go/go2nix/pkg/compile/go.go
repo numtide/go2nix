@@ -28,6 +28,9 @@ func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	if len(files.CFiles) == 0 && len(files.CXXFiles) == 0 && len(files.FFiles) == 0 && len(files.SysoFiles) == 0 {
 		args = append(args, "-complete")
 	}
+	if opts.concurrency > 1 {
+		args = append(args, fmt.Sprintf("-c=%d", opts.concurrency))
+	}
 	args = append(args, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		args = append(args, embedFlag)

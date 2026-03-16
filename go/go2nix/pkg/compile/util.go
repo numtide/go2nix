@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"golang.org/x/mod/modfile"
@@ -166,6 +167,29 @@ func LangVersion(v string) string {
 	}
 	minor, _, _ := strings.Cut(rest, ".")
 	return major + "." + minor
+}
+
+// gcBackendConcurrency returns the -c flag value for the Go compiler,
+// matching cmd/go/internal/work.gcBackendConcurrency (gc.go:181-239).
+// Enables concurrent backend compilation within a single go tool compile
+// invocation. Capped at min(4, GOMAXPROCS) since go2nix already handles
+// package-level parallelism. Respects GO19CONCURRENTCOMPILATION env var.
+func gcBackendConcurrency() int {
+	switch os.Getenv("GO19CONCURRENTCOMPILATION") {
+	case "0":
+		return 1
+	case "1":
+		// Explicitly enabled, continue.
+	case "":
+		// Default: enabled.
+	default:
+		return 1
+	}
+	c := runtime.GOMAXPROCS(0)
+	if c > 4 {
+		c = 4
+	}
+	return c
 }
 
 func extractPackageName(goFile string) string {

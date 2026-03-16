@@ -195,6 +195,9 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	if hasSFiles {
 		compileArgs = append(compileArgs, "-symabis", symabisPath, "-asmhdr", asmhdr)
 	}
+	if opts.concurrency > 1 {
+		compileArgs = append(compileArgs, fmt.Sprintf("-c=%d", opts.concurrency))
+	}
 	compileArgs = append(compileArgs, extraGCFlags(opts)...)
 	if embedFlag != "" {
 		compileArgs = append(compileArgs, embedFlag)

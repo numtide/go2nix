@@ -31,6 +31,7 @@ type Options struct {
 	goarch      string
 	asmArchDefs []string // arch-specific -D flags for go tool asm
 	trimRewrite string   // computed -trimpath rewrite in "old=>new;old2=>new2" format
+	concurrency int      // -c=N backend concurrency for go tool compile
 }
 
 // CompileGoPackage compiles a single Go package (pure Go, assembly, or cgo).
@@ -56,6 +57,10 @@ func CompileGoPackage(opts Options) error {
 	if opts.GoVersion == "" {
 		opts.GoVersion = findGoVersion(opts.SrcDir)
 	}
+
+	// Compute backend concurrency for go tool compile,
+	// matching cmd/go behavior (gc.go:181-239).
+	opts.concurrency = gcBackendConcurrency()
 
 	// Compute -trimpath rewrite string matching cmd/go behavior (gc.go:243-310).
 	// Rewrites source dir to import path so debug info shows
