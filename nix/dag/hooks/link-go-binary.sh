@@ -99,8 +99,17 @@ linkGoBinaryBuildPhase() {
       linkflags="-extld $extld -linkmode external"
     fi
 
-    # Word splitting is intentional: goLdflags and linkflags contain
-    # multiple space-separated flags.
+    # Propagate sanitizer flags (-race, -msan, -asan) from gcflags to the
+    # linker, matching cmd/go behavior (init.go forcedLdflags).
+    local sanitizer_linkflags=""
+    for flag in ${goGcflags:-}; do
+      case "$flag" in
+        -race|-msan|-asan) sanitizer_linkflags="$sanitizer_linkflags $flag" ;;
+      esac
+    done
+
+    # Word splitting is intentional: goLdflags, linkflags, and
+    # sanitizer_linkflags contain multiple space-separated flags.
     # shellcheck disable=SC2086
     @go@ tool link \
       -buildid=redacted \
@@ -108,6 +117,7 @@ linkGoBinaryBuildPhase() {
       -importcfg "$NIX_BUILD_TOP/importcfg" \
       ${goLdflags:-} \
       $linkflags \
+      $sanitizer_linkflags \
       -o "$NIX_BUILD_TOP/staging/bin/$binname" \
       "$localdir/$importpath.a"
   done

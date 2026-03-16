@@ -576,6 +576,20 @@ func createLinkDrv(
 
 	drv.SetEnv("importcfg_entries", strings.Join(importcfgEntries, "\n"))
 	drv.SetEnv("ldflags", cfg.LDFlags)
+
+	// Propagate sanitizer flags (-race, -msan, -asan) from gcflags to the
+	// linker, matching cmd/go behavior (init.go forcedLdflags).
+	var sanitizerFlags []string
+	for _, f := range strings.Fields(cfg.GCFlags) {
+		switch f {
+		case "-race", "-msan", "-asan":
+			sanitizerFlags = append(sanitizerFlags, f)
+		}
+	}
+	if len(sanitizerFlags) > 0 {
+		drv.SetEnv("sanitizerLinkFlags", strings.Join(sanitizerFlags, " "))
+	}
+
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
 
 	// Check if any package in the graph uses cgo — the linker needs CC for

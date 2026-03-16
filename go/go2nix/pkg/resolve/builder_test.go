@@ -96,6 +96,14 @@ func TestLinkScriptPIE(t *testing.T) {
 	}
 }
 
+func TestLinkScriptSanitizerFlags(t *testing.T) {
+	script := linkScript("/nix/store/xxx-go/bin/go", "myapp", "exe")
+
+	if !strings.Contains(script, "${sanitizerLinkFlags:+$sanitizerLinkFlags}") {
+		t.Error("missing sanitizerLinkFlags conditional for -race/-msan/-asan propagation")
+	}
+}
+
 func TestCollectScript(t *testing.T) {
 	script := collectScript([]string{"/placeholder1", "/placeholder2"})
 

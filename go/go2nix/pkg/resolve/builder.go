@@ -81,6 +81,8 @@ func linkScript(goStorePath, pname, buildMode string) string {
 	// External linker for cgo packages — uses CC or CXX depending on
 	// whether C++ files are present, matching Go's setextld (gc.go).
 	b.WriteString(" \\\n  ${extld:+-extld \"$extld\" -linkmode external}")
+	// Sanitizer flags (-race, -msan, -asan) propagated from gcflags
+	b.WriteString(" \\\n  ${sanitizerLinkFlags:+$sanitizerLinkFlags}")
 	// ldflags passed via env
 	b.WriteString(" \\\n  ${ldflags:+$ldflags}")
 	b.WriteString(" \\\n  $mainPkg/pkg.a\n")
