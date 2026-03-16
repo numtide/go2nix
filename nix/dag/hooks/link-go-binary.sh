@@ -30,9 +30,14 @@ linkGoBinaryConfigurePhase() {
       cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
     fi
   done
-  # Embed module info so go version -m shows dependencies.
-  @go2nix@ build-modinfo --lockfile "$goLockfile" --go "@go@" "$goModuleRoot" \
-    >>"$NIX_BUILD_TOP/importcfg"
+  # Embed module info (modinfo) and GODEBUG defaults.
+  # build-modinfo outputs:
+  #   modinfo "..." — appended to importcfg for go tool link
+  #   godebug <value> — captured for -X=runtime.godebugDefault= linker flag
+  local buildinfo_out
+  buildinfo_out=$(@go2nix@ build-modinfo --lockfile "$goLockfile" --go "@go@" "$goModuleRoot")
+  echo "$buildinfo_out" | grep '^modinfo ' >>"$NIX_BUILD_TOP/importcfg"
+  goGodebugDefault=$(echo "$buildinfo_out" | sed -n 's/^godebug //p')
 
   runHook postConfigure
 }
@@ -116,8 +121,14 @@ linkGoBinaryBuildPhase() {
       esac
     done
 
-    # Word splitting is intentional: goLdflags, linkflags, and
-    # sanitizer_linkflags contain multiple space-separated flags.
+    # GODEBUG default from go.mod's go directive (gc.go:624-626).
+    local godebug_linkflag=""
+    if [ -n "${goGodebugDefault:-}" ]; then
+      godebug_linkflag="-X=runtime.godebugDefault=$goGodebugDefault"
+    fi
+
+    # Word splitting is intentional: goLdflags, linkflags,
+    # sanitizer_linkflags, and godebug_linkflag contain space-separated flags.
     # shellcheck disable=SC2086
     @go@ tool link \
       -buildid=redacted \
@@ -126,6 +137,7 @@ linkGoBinaryBuildPhase() {
       ${goLdflags:-} \
       $linkflags \
       $sanitizer_linkflags \
+      $godebug_linkflag \
       -o "$NIX_BUILD_TOP/staging/bin/$binname" \
       "$localdir/$importpath.a"
   done

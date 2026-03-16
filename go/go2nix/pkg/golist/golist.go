@@ -29,9 +29,10 @@ type Pkg struct {
 	SFiles     []string `json:"SFiles"`
 	HFiles     []string `json:"HFiles"`
 	SysoFiles  []string `json:"SysoFiles"` // .syso system object files
-	Standard   bool     `json:"Standard"`
-	DepOnly    bool     `json:"DepOnly"`
-	Imports    []string `json:"Imports"`
+	Standard       bool     `json:"Standard"`
+	DepOnly        bool     `json:"DepOnly"`
+	Imports        []string `json:"Imports"`
+	DefaultGODEBUG string   `json:"DefaultGODEBUG"` // default GODEBUG for main packages
 
 	Module *Module `json:"Module"`
 }

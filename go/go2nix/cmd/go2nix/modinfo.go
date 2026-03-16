@@ -69,4 +69,10 @@ func runModinfoCmd(args []string) {
 	}
 
 	fmt.Println(line)
+
+	// Output GODEBUG default as a separate line for the link hook to parse.
+	// The linker embeds this via -X=runtime.godebugDefault=<value>.
+	if godebug := buildinfo.DefaultGODEBUG(moduleRoot); godebug != "" {
+		fmt.Printf("godebug %s\n", godebug)
+	}
 }

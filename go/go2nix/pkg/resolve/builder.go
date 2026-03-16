@@ -87,6 +87,8 @@ func linkScript(goStorePath, pname, buildMode string) string {
 	b.WriteString(" \\\n  ${extld:+-extld \"$extld\" -linkmode external}")
 	// Sanitizer flags (-race, -msan, -asan) propagated from gcflags
 	b.WriteString(" \\\n  ${sanitizerLinkFlags:+$sanitizerLinkFlags}")
+	// GODEBUG default from go.mod's go directive (gc.go:624-626)
+	b.WriteString(" \\\n  ${godebugDefault:+-X=runtime.godebugDefault=$godebugDefault}")
 	// ldflags passed via env
 	b.WriteString(" \\\n  ${ldflags:+$ldflags}")
 	b.WriteString(" \\\n  $mainPkg/pkg.a\n")

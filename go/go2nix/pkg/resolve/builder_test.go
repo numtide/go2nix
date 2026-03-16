@@ -107,6 +107,14 @@ func TestLinkScriptSanitizerFlags(t *testing.T) {
 	}
 }
 
+func TestLinkScriptGodebug(t *testing.T) {
+	script := linkScript("/nix/store/xxx-go/bin/go", "myapp", "exe")
+
+	if !strings.Contains(script, "${godebugDefault:+-X=runtime.godebugDefault=$godebugDefault}") {
+		t.Error("missing godebugDefault conditional for GODEBUG default linker flag")
+	}
+}
+
 func TestCollectScript(t *testing.T) {
 	script := collectScript([]string{"/placeholder1", "/placeholder2"})
 

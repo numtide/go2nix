@@ -606,6 +606,13 @@ func createLinkDrv(
 		drv.SetEnv("goroot", goroot)
 	}
 
+	// GODEBUG default from go.mod's go directive — the linker embeds
+	// this via -X=runtime.godebugDefault=<value> (gc.go:624-626).
+	// go list populates DefaultGODEBUG for main packages.
+	if mainPkg.DefaultGODEBUG != "" {
+		drv.SetEnv("godebugDefault", mainPkg.DefaultGODEBUG)
+	}
+
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
 
 	// Check if any package in the graph uses cgo — the linker needs CC for
