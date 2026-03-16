@@ -45,9 +45,25 @@
 let
   inherit (builtins) concatStringsSep;
 
-  # --- Module resolution from lockfile ---
-  resolved = builtins.resolveGoModules {
-    lock = builtins.readFile goLock;
+  # --- Module resolution from lockfile (pure-Nix TOML parsing) ---
+  lockfile = builtins.fromTOML (builtins.readFile goLock);
+  modTable = lockfile.mod or { };
+
+  parseModEntry =
+    modKey: hash:
+    let
+      parsed = builtins.match "(.+)@(.+)" modKey;
+      path = builtins.elemAt parsed 0;
+      version = builtins.elemAt parsed 1;
+    in
+    {
+      inherit hash path version;
+      fetchPath = path;
+      dirSuffix = "${helpers.escapeModPath path}@${version}";
+    };
+
+  resolved = {
+    modules = builtins.mapAttrs parseModEntry modTable;
   };
 
   # --- Package graph from plugin (eval-time go list) ---
@@ -60,12 +76,14 @@ let
   modules = builtins.mapAttrs (
     modKey: mod:
     let
-      fetchPath = goPackagesResult.replacements.${modKey} or mod.path;
+      repl = goPackagesResult.replacements.${modKey} or null;
+      fetchPath = if repl != null then repl.path else mod.path;
+      version = if repl != null && repl.version != "" then repl.version else mod.version;
     in
     mod
     // {
       inherit fetchPath;
-      dirSuffix = "${helpers.escapeModPath fetchPath}@${mod.version}";
+      dirSuffix = "${helpers.escapeModPath fetchPath}@${version}";
     }
   ) resolved.modules;
 
