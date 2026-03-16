@@ -77,6 +77,9 @@ func TestLinkScript(t *testing.T) {
 	if !strings.Contains(script, "$mainPkg/pkg.a") {
 		t.Error("missing main package archive reference")
 	}
+	if !strings.Contains(script, `export GOROOT="$goroot"`) {
+		t.Error("missing GOROOT export")
+	}
 	if !strings.Contains(script, "-buildid=") {
 		t.Error("missing -buildid flag")
 	}

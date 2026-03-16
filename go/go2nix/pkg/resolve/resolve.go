@@ -599,6 +599,13 @@ func createLinkDrv(
 		drv.SetEnv("sanitizerLinkFlags", strings.Join(sanitizerFlags, " "))
 	}
 
+	// Set GOROOT so the linker embeds runtime.defaultGOROOT,
+	// enabling runtime.GOROOT() in the resulting binary.
+	goroot := queryGoEnv(cfg.GoBin, "GOROOT")
+	if goroot != "" {
+		drv.SetEnv("goroot", goroot)
+	}
+
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
 
 	// Check if any package in the graph uses cgo — the linker needs CC for

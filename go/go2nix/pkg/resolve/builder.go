@@ -73,6 +73,10 @@ func linkScript(goStorePath, pname, buildMode string) string {
 	// Write importcfg for all transitive deps
 	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > $NIX_BUILD_TOP/importcfg\n\n")
 
+	// Set GOROOT so the linker embeds it as runtime.defaultGOROOT,
+	// enabling runtime.GOROOT() in the resulting binary.
+	b.WriteString("export GOROOT=\"$goroot\"\n\n")
+
 	// Link binary
 	fmt.Fprintf(&b, "%s tool link -o \"$out/bin/%s\"", goStorePath, pname)
 	b.WriteString(" \\\n  -importcfg $NIX_BUILD_TOP/importcfg")

@@ -66,6 +66,11 @@ linkGoBinaryBuildPhase() {
     "${gcflagArgs[@]}" \
     "$goModuleRoot"
 
+  # Set GOROOT so the linker embeds it as runtime.defaultGOROOT,
+  # enabling runtime.GOROOT() in the resulting binary.
+  export GOROOT
+  GOROOT=$(@go@ env GOROOT)
+
   # Pass 2: compile main packages and link.
   mkdir -p "$NIX_BUILD_TOP/staging/bin"
 
