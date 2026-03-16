@@ -17,6 +17,7 @@ import (
 	"golang.org/x/mod/module"
 
 	"github.com/nix-community/go-nix/pkg/storepath"
+	"github.com/numtide/go2nix/pkg/buildinfo"
 	"github.com/numtide/go2nix/pkg/compile"
 	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/lockfile"
@@ -574,6 +575,14 @@ func createLinkDrv(
 			fmt.Sprintf("packagefile %s=%s/%s.a", imp, cfg.StdlibPath, imp))
 	}
 
+	// Add modinfo so go version -m shows module dependencies.
+	modinfoLine, err := generateModinfo(cfg, sorted)
+	if err != nil {
+		slog.Warn("modinfo generation failed, skipping", "err", err)
+	} else {
+		importcfgEntries = append(importcfgEntries, modinfoLine)
+	}
+
 	drv.SetEnv("importcfg_entries", strings.Join(importcfgEntries, "\n"))
 	drv.SetEnv("ldflags", cfg.LDFlags)
 
@@ -770,6 +779,40 @@ func queryGoEnv(goBin, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// generateModinfo constructs the modinfo importcfg line from the package graph.
+func generateModinfo(cfg Config, sorted []*ResolvedPkg) (string, error) {
+	// Get Go toolchain version.
+	goVersion := queryGoEnv(cfg.GoBin, "GOVERSION")
+
+	// Collect unique third-party modules from the graph.
+	seen := make(map[string]bool)
+	var deps []buildinfo.ModDep
+	for _, pkg := range sorted {
+		if pkg.IsLocal || pkg.ModKey == "" {
+			continue
+		}
+		if seen[pkg.ModKey] {
+			continue
+		}
+		seen[pkg.ModKey] = true
+		dep := buildinfo.ModDep{
+			Path:    pkg.ModPath,
+			Version: pkg.Version,
+		}
+		// If the module is replaced (FetchPath differs from ModPath),
+		// record the replacement.
+		if pkg.FetchPath != pkg.ModPath {
+			dep.Replace = &buildinfo.ModDep{
+				Path:    pkg.FetchPath,
+				Version: pkg.Version,
+			}
+		}
+		deps = append(deps, dep)
+	}
+
+	return buildinfo.GenerateModinfo(cfg.Src, goVersion, deps)
 }
 
 // copyFile copies src to dst.

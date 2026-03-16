@@ -23,13 +23,16 @@ linkGoBinaryConfigurePhase() {
   goModulePath=$(awk '/^module /{print $2; exit}' "$goModuleRoot/go.mod")
   export goModulePath
 
-  # Build importcfg: stdlib + all third-party deps.
+  # Build importcfg: stdlib + all third-party deps + modinfo.
   cat "@stdlib@/importcfg" >"$NIX_BUILD_TOP/importcfg"
   for dep in $buildInputs; do
     if [ -f "$dep/importcfg" ]; then
       cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
     fi
   done
+  # Embed module info so go version -m shows dependencies.
+  @go2nix@ build-modinfo --lockfile "$goLockfile" --go "@go@" "$goModuleRoot" \
+    >>"$NIX_BUILD_TOP/importcfg"
 
   runHook postConfigure
 }

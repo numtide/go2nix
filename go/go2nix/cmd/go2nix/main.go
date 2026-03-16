@@ -34,9 +34,11 @@ func main() {
 		runCheckLockfileCmd(os.Args[2:])
 	case "resolve":
 		runResolveCmd(os.Args[2:])
+	case "build-modinfo":
+		runModinfoCmd(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
-		fmt.Fprintf(os.Stderr, "usage: go2nix <generate|list-files|list-packages|compile-package|compile-packages|check|resolve> [flags]\n")
+		fmt.Fprintf(os.Stderr, "usage: go2nix <generate|list-files|list-packages|compile-package|compile-packages|check|resolve|build-modinfo> [flags]\n")
 		os.Exit(1)
 	}
 }
