@@ -24,7 +24,6 @@ import (
 // mode selects the output format:
 //   - "dag": lockfile with [mod] sections (package graph resolved at eval time by plugin)
 //   - "dynamic": minimal lockfile with [mod] only
-//   - "vendor": v1 gomod2nix format (attrset mod values)
 func Generate(dirs []string, output string, jobs int, mode string) error {
 	cache, err := lockfile.Read(output)
 	if err != nil {
@@ -96,14 +95,6 @@ func Generate(dirs []string, output string, jobs int, mode string) error {
 	// Omit replace if empty.
 	if len(resultReplace) == 0 {
 		resultReplace = nil
-	}
-
-	// vendor mode: v1-style with attrset mod values, no [pkg] section.
-	if mode == "vendor" {
-		v2 := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace}
-		result := v2.ToGomod2nix()
-		slog.Info("writing lockfile (vendor format)", "mods", len(resultMod), "path", output)
-		return result.Write(output, lockfile.Gomod2nixHeader)
 	}
 
 	result := &lockfile.Lockfile{Mod: resultMod, Replace: resultReplace}

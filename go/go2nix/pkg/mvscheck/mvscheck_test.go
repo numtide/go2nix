@@ -2,12 +2,9 @@ package mvscheck
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"golang.org/x/mod/modfile"
 )
 
 func TestCheckLockfile(t *testing.T) {
@@ -113,117 +110,4 @@ require (
 			t.Errorf("missing modules should be sorted, got aaa at %d, zzz at %d:\n%s", idxA, idxZ, msg)
 		}
 	})
-}
-
-// TestCheck exercises Check() against a real vendor tree and the real `go`
-// toolchain. Tidy go.mod should pass; untidy should fail naming the version
-// MVS wanted but the require list didn't have.
-func TestCheck(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires network + go toolchain")
-	}
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go not on PATH")
-	}
-
-	dir := t.TempDir()
-	write := func(name, content string) {
-		full := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write("go.mod", `module example.com/mvscheck-test
-go 1.23
-require golang.org/x/tools v0.30.0
-`)
-	write("main.go", `package main
-import _ "golang.org/x/tools/go/packages"
-func main() {}
-`)
-
-	// Tidy + download.
-	for _, args := range [][]string{{"mod", "tidy"}, {"mod", "download"}} {
-		cmd := exec.Command("go", args...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("go %v: %v\n%s", args, err, out)
-		}
-	}
-
-	// Build gomod2nix-style symlink vendor tree.
-	gomodcache := strings.TrimSpace(runOrDie(t, dir, "go", "env", "GOMODCACHE"))
-	symlink := func(modPath, version string) {
-		src := filepath.Join(gomodcache, modPath+"@"+version)
-		dst := filepath.Join(dir, "vendor", modPath)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(src, dst); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	goModTidy, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-	mf, err := modfile.Parse("go.mod", goModTidy, nil)
-	if err != nil {
-		t.Fatalf("parsing tidied go.mod: %v", err)
-	}
-	for _, req := range mf.Require {
-		symlink(req.Mod.Path, req.Mod.Version)
-	}
-
-	// Tidy go.mod should pass.
-	if err := Check(dir); err != nil {
-		t.Fatalf("Check() on tidy module: %v", err)
-	}
-
-	// Untidy: lower x/mod version to trigger MVS mismatch.
-	var xmodTidy string
-	for _, req := range mf.Require {
-		if req.Mod.Path == "golang.org/x/mod" {
-			xmodTidy = req.Mod.Version
-			break
-		}
-	}
-	if xmodTidy == "" || xmodTidy == "v0.20.0" {
-		t.Skipf("test module doesn't have the expected x/mod edge (got %q)", xmodTidy)
-	}
-	untidy := strings.Replace(string(goModTidy),
-		"golang.org/x/mod "+xmodTidy,
-		"golang.org/x/mod v0.20.0",
-		1,
-	)
-	write("go.mod", untidy)
-
-	// Re-vendor x/mod at v0.20.0.
-	runOrDie(t, dir, "go", "mod", "download", "golang.org/x/mod@v0.20.0")
-	if err := os.Remove(filepath.Join(dir, "vendor/golang.org/x/mod")); err != nil {
-		t.Fatal(err)
-	}
-	symlink("golang.org/x/mod", "v0.20.0")
-
-	err = Check(dir)
-	if err == nil {
-		t.Fatalf("Check() on untidy module: want error, got nil")
-	}
-	for _, want := range []string{"golang.org/x/mod", xmodTidy, "not tidy"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error missing %q:\n%s", want, err)
-		}
-	}
-}
-
-func runOrDie(t *testing.T, dir string, name string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
-	}
-	return string(out)
 }

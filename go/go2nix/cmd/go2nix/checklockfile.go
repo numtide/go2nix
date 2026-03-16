@@ -10,7 +10,7 @@ import (
 
 func runCheckLockfileCmd(args []string) {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
-	lockfilePath := fs.String("lockfile", "", "path to go2nix.toml lockfile (lockfile consistency check)")
+	lockfilePath := fs.String("lockfile", "go2nix.toml", "path to go2nix.toml lockfile")
 	fs.Parse(args)
 
 	dir := "."
@@ -18,13 +18,7 @@ func runCheckLockfileCmd(args []string) {
 		dir = fs.Arg(0)
 	}
 
-	var err error
-	if *lockfilePath != "" {
-		err = mvscheck.CheckLockfile(dir, *lockfilePath)
-	} else {
-		err = mvscheck.Check(dir)
-	}
-	if err != nil {
+	if err := mvscheck.CheckLockfile(dir, *lockfilePath); err != nil {
 		slog.Error("check failed", "err", err)
 		os.Exit(1)
 	}

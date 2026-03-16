@@ -4,7 +4,7 @@ Technical reference for the go2nix build system.
 
 ## Overview
 
-go2nix builds Go applications in Nix with three modes that share the same
+go2nix builds Go applications in Nix with two modes that share the same
 Go CLI and lockfile infrastructure but differ in how they create derivations.
 
 The system has two components:
@@ -12,23 +12,14 @@ The system has two components:
 1. **A Go CLI** (`go2nix`) that generates lockfiles, discovers packages and
    files, compiles packages, and validates lockfile consistency.
 1. **A Nix library** that reads lockfiles and builds Go applications using
-   one of three modes.
+   one of two modes.
 
 ## Builder modes
 
 | Mode | How it works | Lockfile | Caching | Nix features |
 |------|-------------|----------|---------|--------------|
-| **Vendor** | `go build` with vendored deps | `[mod]` only | Per-module | None |
 | **DAG** | `go tool compile/link` per-package | `[mod]` only | Per-package | go-nix-plugin |
 | **Dynamic** | Recursive-nix, DAG at build time | `[mod]` only | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
-
-### Vendor mode
-
-Downloads modules, creates a vendor tree via symlinks, runs `go build`.
-Derived from [gomod2nix](https://github.com/nix-community/gomod2nix).
-Works everywhere. A change to any dependency rebuilds the entire application.
-
-See [vendor-mode.md](modes/vendor-mode.md) for internals.
 
 ### DAG mode
 
@@ -58,7 +49,6 @@ additionally asserts Nix >= 2.34 at eval time, but this check is separate from
 the auto-selection logic.) Use the explicit builders to override:
 
 ```nix
-goEnv.buildGoApplicationVendorMode { ... }
 goEnv.buildGoApplicationDAGMode { ... }
 goEnv.buildGoApplicationDynamicMode { ... }
 ```
@@ -75,13 +65,6 @@ nix/
 │   ├── default.nix        #   buildGoApplicationDAGMode
 │   ├── fetch-go-module.nix#   FOD fetcher (GOMODCACHE layout)
 │   └── hooks/             #   Setup hooks (compile, link, env)
-├── vendor/                # Vendor mode
-│   ├── default.nix        #   buildGoApplicationVendorMode
-│   ├── parser.nix         #   Pure-Nix go.mod parser
-│   ├── fetch.sh           #   Module fetch script
-│   ├── symlink/           #   Vendor symlink utility
-│   ├── install/           #   Dev dependency installer
-│   └── mvscheck/          #   MVS tidiness checker
 └── dynamic/               # Dynamic mode
     └── default.nix        #   buildGoApplicationDynamicMode
 ```
@@ -97,7 +80,7 @@ goEnv = import ./nix/mk-go-env.nix {
 };
 ```
 
-Creates a scope via `scope.nix` containing all three builders plus shared
+Creates a scope via `scope.nix` containing both builders plus shared
 toolchain.
 
 ### Package scope: scope.nix
@@ -110,7 +93,6 @@ Exposes:
 
 - `buildGoApplication` — auto-selects dynamic or DAG
 - `buildGoApplicationDAGMode`
-- `buildGoApplicationVendorMode`
 - `buildGoApplicationDynamicMode`
 - `go`, `go2nix`, `stdlib`, `hooks`, `fetchers`, `helpers`
 
@@ -140,7 +122,6 @@ Pure Nix utility functions:
 | Generation | MVS consistency | All modes | `go list -json -deps` resolves actual versions |
 | Nix eval | Package graph | DAG only | `builtins.resolveGoPackages` runs `go list` at eval time |
 | Build time | Lockfile consistency | DAG, dynamic | `go2nix check --lockfile` validates against `go.mod` |
-| Build time | Tidiness | Vendor only | `go mod graph` against GOMODCACHE from vendor tree |
 
 ## Further reading
 
@@ -148,5 +129,4 @@ Pure Nix utility functions:
 - [CLI reference](cli-reference.md)
 - [Compilation pipeline](internals/compilation-pipeline.md)
 - [DAG mode](modes/dag-mode.md)
-- [Vendor mode](modes/vendor-mode.md)
 - [Dynamic mode](internals/dynamic-derivations.md)

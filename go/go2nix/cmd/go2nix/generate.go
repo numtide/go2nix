@@ -13,13 +13,13 @@ func runGenerateCmd(args []string) {
 	fs := flag.NewFlagSet("generate", flag.ExitOnError)
 	output := fs.String("o", "go2nix.toml", "output lockfile path")
 	jobs := fs.Int("j", runtime.NumCPU(), "max parallel hash invocations")
-	mode := fs.String("mode", "dag", "builder mode: dag (default), dynamic, vendor")
+	mode := fs.String("mode", "dag", "builder mode: dag (default), dynamic")
 	fs.Parse(args)
 
 	switch *mode {
-	case "dag", "dynamic", "vendor":
+	case "dag", "dynamic":
 	default:
-		slog.Error("invalid mode", "mode", *mode, "valid", "dag, dynamic, vendor")
+		slog.Error("invalid mode", "mode", *mode, "valid", "dag, dynamic")
 		os.Exit(1)
 	}
 

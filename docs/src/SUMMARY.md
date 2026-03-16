@@ -5,7 +5,6 @@
 - [Lockfile Format](lockfile-format.md)
 - [Builder Modes](modes/README.md)
   - [DAG Mode](modes/dag-mode.md)
-  - [Vendor Mode](modes/vendor-mode.md)
   - [Dynamic Mode](modes/dynamic-mode.md)
 - [Internals](internals/README.md)
   - [Compilation Pipeline](internals/compilation-pipeline.md)

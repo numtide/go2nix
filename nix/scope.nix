@@ -3,8 +3,7 @@
 # Creates a self-referential package set via lib.makeScope.
 # Provides: go, go2nix, stdlib, hooks, fetchers, helpers, buildGoApplication.
 #
-# Three builder modes:
-#   - vendor:  vendor + go build (simple, works everywhere)
+# Two builder modes:
 #   - DAG:     eval-time per-package DAG (fine-grained caching)
 #   - dynamic: recursive-nix + CA derivations (best CI performance)
 {
@@ -29,8 +28,6 @@ lib.makeScope newScope (
     inherit (self) callPackage;
 
     buildGoApplicationDAGMode = callPackage ./dag { };
-
-    buildGoApplicationVendorMode = callPackage ./vendor { };
 
     buildGoApplicationDynamicMode' =
       if nixPackage != null then
@@ -70,7 +67,7 @@ lib.makeScope newScope (
         buildGoApplicationDAGMode;
 
     # Explicit access to each builder mode.
-    inherit buildGoApplicationDAGMode buildGoApplicationVendorMode;
+    inherit buildGoApplicationDAGMode;
     buildGoApplicationDynamicMode = buildGoApplicationDynamicMode';
   }
 )

@@ -15,15 +15,14 @@ go2nix generate [flags] [dir...]
 |------|---------|-------------|
 | `-o` | `go2nix.toml` | Output lockfile path |
 | `-j` | `NumCPU` | Max parallel hash invocations |
-| `--mode` | `dag` | Builder mode: `dag`, `dynamic`, `vendor` |
+| `--mode` | `dag` | Builder mode: `dag`, `dynamic` |
 
 Modes:
 
-| Mode | Format | Sections | Used by |
-|------|--------|----------|---------|
-| `dag` | v2 | `[mod]` + `[replace]` | DAG mode |
-| `dynamic` | v2 | `[mod]` + `[replace]` | Dynamic mode |
-| `vendor` | v1 | `[mod."key"]` attrset | Vendor mode |
+| Mode | Sections | Used by |
+|------|----------|---------|
+| `dag` | `[mod]` + `[replace]` | DAG mode |
+| `dynamic` | `[mod]` + `[replace]` | Dynamic mode |
 
 When no directory is given, defaults to `.`. Multiple directories produce a
 merged lockfile (monorepo support).
@@ -33,7 +32,6 @@ Examples:
 ```bash
 go2nix generate .                    # DAG mode (default, mod only)
 go2nix generate --mode=dynamic .     # Dynamic mode (mod only)
-go2nix generate --mode=vendor .      # Vendor-format lockfile
 go2nix generate -o lock.toml ./a ./b # Monorepo with two modules
 ```
 
@@ -47,11 +45,10 @@ go2nix check [flags] [dir]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--lockfile` | (none) | Path to lockfile for consistency check |
+| `--lockfile` | `go2nix.toml` | Path to lockfile for consistency check |
 
-Without `--lockfile`, runs a basic MVS tidiness check using `go mod graph`.
-With `--lockfile`, verifies that all `go.mod` requirements are present in the
-lockfile with correct versions.
+Verifies that all `go.mod` requirements are present in the lockfile with
+correct versions.
 
 ## compile-package
 

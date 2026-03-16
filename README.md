@@ -1,14 +1,13 @@
 # go2nix
 
-Nix-native Go builder with three packaging modes — from simple vendor builds to
-per-package derivations with fine-grained caching.
+Nix-native Go builder with two packaging modes — per-package derivations with
+fine-grained caching.
 
 ## Builder modes
 
 | Mode | How it works | Lockfile | Caching |
 |------|-------------|----------|---------|
-| **Vendor** | `go build` with vendored deps | `[mod]` only | Per-module |
-| **DAG** | `go tool compile/link` per-package | `[mod]` + `[pkg]` | Per-package |
+| **DAG** | `go tool compile/link` per-package | `[mod]` only | Per-package |
 | **Dynamic** | Recursive-nix, DAG at build time | `[mod]` only | Per-package |
 
 See [docs/src/go2nix-architecture.md](docs/src/go2nix-architecture.md) for details on
@@ -66,7 +65,6 @@ nix build
 goEnv.buildGoApplication { ... }
 
 # Explicitly use a specific mode:
-goEnv.buildGoApplicationVendorMode { ... }
 goEnv.buildGoApplicationDAGMode { ... }
 goEnv.buildGoApplicationDynamicMode { ... }
 ```
@@ -77,7 +75,6 @@ goEnv.buildGoApplicationDynamicMode { ... }
 |---------------------|----------------------------------------------------------------|
 | `go2nix generate` | Generate `go2nix.toml` lockfile |
 | `go2nix generate --mode=dynamic` | Lockfile with `[mod]` only (no `[pkg]`) |
-| `go2nix generate --mode=vendor` | Vendor-format lockfile |
 | `go2nix check` | Validate lockfile against `go.mod` |
 
 Run `go2nix generate -h` for all flags.
