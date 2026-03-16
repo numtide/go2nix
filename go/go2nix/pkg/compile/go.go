@@ -14,6 +14,7 @@ func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		"tool", "compile",
 		"-importcfg", opts.ImportCfg,
 		"-p", opts.PFlag,
+		"-buildid", "", // deterministic empty buildID for Nix reproducibility
 		"-trimpath=" + opts.TrimPath,
 		"-pack",
 		"-o", opts.Output,

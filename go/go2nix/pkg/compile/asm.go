@@ -46,6 +46,7 @@ func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) erro
 		"tool", "compile",
 		"-importcfg", opts.ImportCfg,
 		"-p", opts.PFlag,
+		"-buildid", "", // deterministic empty buildID for Nix reproducibility
 		"-trimpath=" + opts.TrimPath,
 		"-symabis", symabis,
 		"-asmhdr", asmhdr,

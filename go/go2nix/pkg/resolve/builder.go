@@ -76,6 +76,7 @@ func linkScript(goStorePath, pname, buildMode string) string {
 	// Link binary
 	fmt.Fprintf(&b, "%s tool link -o \"$out/bin/%s\"", goStorePath, pname)
 	b.WriteString(" \\\n  -importcfg $NIX_BUILD_TOP/importcfg")
+	b.WriteString(" \\\n  -buildid=")
 	fmt.Fprintf(&b, " \\\n  -buildmode=%s", buildMode)
 	// External linker for cgo packages — uses CC or CXX depending on
 	// whether C++ files are present, matching Go's setextld (gc.go).
