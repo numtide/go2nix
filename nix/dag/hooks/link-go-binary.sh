@@ -23,20 +23,23 @@ linkGoBinaryConfigurePhase() {
   goModulePath=$(awk '/^module /{print $2; exit}' "$goModuleRoot/go.mod")
   export goModulePath
 
-  # Build importcfg: stdlib + all third-party deps + modinfo.
+  # Build importcfg: stdlib + all third-party deps.
+  # NOTE: modinfo is a linker-only directive (cmd/link) and must NOT be present
+  # during compilation (cmd/compile rejects unknown directives). It is appended
+  # to the importcfg in the build phase, after compile-packages and before link.
   cat "@stdlib@/importcfg" >"$NIX_BUILD_TOP/importcfg"
   for dep in $buildInputs; do
     if [ -f "$dep/importcfg" ]; then
       cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
     fi
   done
-  # Embed module info (modinfo) and GODEBUG defaults.
+  # Compute module info (modinfo) and GODEBUG defaults.
   # build-modinfo outputs:
-  #   modinfo "..." — appended to importcfg for go tool link
-  #   godebug <value> — captured for -X=runtime.godebugDefault= linker flag
+  #   modinfo "..." — for go tool link importcfg
+  #   godebug <value> — for -X=runtime.godebugDefault= linker flag
   local buildinfo_out
   buildinfo_out=$(@go2nix@ build-modinfo --lockfile "$goLockfile" --go "@go@" "$goModuleRoot")
-  echo "$buildinfo_out" | grep '^modinfo ' >>"$NIX_BUILD_TOP/importcfg"
+  goModinfo=$(echo "$buildinfo_out" | grep '^modinfo ' || true)
   goGodebugDefault=$(echo "$buildinfo_out" | sed -n 's/^godebug //p')
 
   runHook postConfigure
@@ -134,13 +137,19 @@ linkGoBinaryBuildPhase() {
       godebug_linkflag="-X=runtime.godebugDefault=$goGodebugDefault"
     fi
 
+    # Build linker importcfg: compile importcfg + modinfo (linker-only directive).
+    cp "$NIX_BUILD_TOP/importcfg" "$NIX_BUILD_TOP/importcfg.link"
+    if [ -n "${goModinfo:-}" ]; then
+      echo "$goModinfo" >>"$NIX_BUILD_TOP/importcfg.link"
+    fi
+
     # Word splitting is intentional: goLdflags, linkflags,
     # sanitizer_linkflags, and godebug_linkflag contain space-separated flags.
     # shellcheck disable=SC2086
     @go@ tool link \
       -buildid=redacted \
       -buildmode="$go_buildmode" \
-      -importcfg "$NIX_BUILD_TOP/importcfg" \
+      -importcfg "$NIX_BUILD_TOP/importcfg.link" \
       ${goLdflags:-} \
       $linkflags \
       $sanitizer_linkflags \
