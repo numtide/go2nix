@@ -16,6 +16,10 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    go-nix-plugin = {
+      url = "git+ssh://forgejo@git.ntd.one/anthropic/go2nix-nix-plugin.git";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
