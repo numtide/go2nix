@@ -33,6 +33,7 @@
   ldflags ? [ ],
   gcflags ? [ ],
   CGO_ENABLED ? null,
+  goProxy ? null,
   pgoProfile ? null,
   allowGoReference ? false,
   meta ? { },
@@ -67,10 +68,15 @@ let
   };
 
   # --- Package graph from plugin (eval-time go list) ---
-  goPackagesResult = builtins.resolveGoPackages {
-    go = "${go}/bin/go";
-    inherit src tags subPackages moduleDir;
-  };
+  # goProxy defaults to "off": reads from the host's GOMODCACHE (populated
+  # by `go mod download`). No network access or writes during eval.
+  goPackagesResult = builtins.resolveGoPackages (
+    {
+      go = "${go}/bin/go";
+      inherit src tags subPackages moduleDir;
+    }
+    // (if goProxy != null then { inherit goProxy; } else { })
+  );
 
   # --- Join: apply replace directives to module fetchPaths ---
   modules = builtins.mapAttrs (
@@ -152,6 +158,7 @@ let
     "ldflags"
     "gcflags"
     "CGO_ENABLED"
+    "goProxy"
     "pgoProfile"
     "allowGoReference"
     "meta"
