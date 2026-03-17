@@ -35,7 +35,7 @@ goEnv.buildGoApplicationDynamicMode {
     rev = "v0.7.4";
     hash = "sha256-yKRh2kAWg8GJjEJ/yCJ88JoJSgYR3c3RafeYU3z3pNU=";
   };
-  goLock = ./go2nix-dynamic.toml;
+  goLock = ./go2nix.toml;
   pname = "nwg-drawer";
   version = "0.7.4";
   packageOverrides = {

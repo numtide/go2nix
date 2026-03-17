@@ -16,7 +16,7 @@ in
 goEnv.buildGoApplicationDynamicMode {
   pname = "dotool";
   version = "1.6";
-  goLock = ./go2nix-dynamic.toml;
+  goLock = ./go2nix.toml;
   src = pkgs.fetchgit {
     url = "https://git.sr.ht/~geb/dotool";
     rev = "180af21c46dcc848d93dbec2644c011f4eea1592";
