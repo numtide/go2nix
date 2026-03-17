@@ -80,10 +80,17 @@ linkGoBinaryBuildPhase() {
     "${pgoArgs[@]}" \
     "$goModuleRoot"
 
-  # Set GOROOT so the linker embeds it as runtime.defaultGOROOT,
-  # enabling runtime.GOROOT() in the resulting binary.
-  export GOROOT
-  GOROOT=$(@go@ env GOROOT)
+  # Resolve the linker binary before clearing GOROOT.
+  local goLinkTool
+  goLinkTool="$(@go@ env GOTOOLDIR)/link"
+
+  # Do not set GOROOT: the linker reads it from os.Getenv (buildcfg/cfg.go:23)
+  # and embeds it as runtime.defaultGOROOT (cmd/link main.go:180-186).
+  # We cannot use `go tool link` because the go command re-exports GOROOT
+  # from its binary path (cmd/go/main.go:305-311), overriding any empty value.
+  # Invoking the linker directly matches what `go build -trimpath` does
+  # internally (gc.go:676-678).
+  export GOROOT=""
 
   # Pass 2: compile main packages and link.
   mkdir -p "$NIX_BUILD_TOP/staging/bin"
@@ -146,7 +153,7 @@ linkGoBinaryBuildPhase() {
     # Word splitting is intentional: goLdflags, linkflags,
     # sanitizer_linkflags, and godebug_linkflag contain space-separated flags.
     # shellcheck disable=SC2086
-    @go@ tool link \
+    "$goLinkTool" \
       -buildid=redacted \
       -buildmode="$go_buildmode" \
       -importcfg "$NIX_BUILD_TOP/importcfg.link" \
