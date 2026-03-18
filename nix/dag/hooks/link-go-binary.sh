@@ -28,7 +28,7 @@ linkGoBinaryConfigurePhase() {
   # during compilation (cmd/compile rejects unknown directives). It is appended
   # to the importcfg in the build phase, after compile-packages and before link.
   cat "@stdlib@/importcfg" >"$NIX_BUILD_TOP/importcfg"
-  for dep in $buildInputs; do
+  for dep in ${buildInputs[@]}; do
     if [ -f "$dep/importcfg" ]; then
       cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
     fi

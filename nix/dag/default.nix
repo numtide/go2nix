@@ -141,6 +141,7 @@ let
       || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
     mkDeriv {
       name = pkg.drvName;
+      __structuredAttrs = true;
 
       nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
       buildInputs = deps;
@@ -190,6 +191,8 @@ in
 stdenv.mkDerivation (
   extraArgs
   // {
+    __structuredAttrs = true;
+
     inherit
       pname
       version

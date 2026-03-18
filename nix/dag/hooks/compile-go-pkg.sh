@@ -15,7 +15,7 @@ compileGoPkgBuildPhase() {
 
   # Build importcfg: stdlib + dependency .a files.
   cat "@stdlib@/importcfg" >"$NIX_BUILD_TOP/importcfg"
-  for dep in $buildInputs; do
+  for dep in ${buildInputs[@]}; do
     if [ -f "$dep/importcfg" ]; then
       cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
     fi
