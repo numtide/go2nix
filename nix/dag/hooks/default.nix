@@ -45,11 +45,14 @@ in
   # Hook for building and linking Go application binaries.
   # Derivations using this hook must set:
   #   env.goModuleRoot  — path containing go.mod
-  #   env.goModulePath  — Go module path (from go.mod)
   #   env.goSubPackages — space-separated sub-packages (default: ".")
+  #   env.goLockfile    — path to go2nix.toml lockfile
   #   env.goLdflags     — linker flags (optional)
+  #   env.goGcflags     — compiler flags (optional)
   #   env.goPname       — binary name for "." package (optional)
   #   buildInputs       — all third-party package derivations
+  #
+  # Note: goModulePath is extracted from go.mod at build time (see link-go-binary.sh).
   goAppHook = makeSetupHook {
     name = "go2nix-app-hook";
     propagatedBuildInputs = [

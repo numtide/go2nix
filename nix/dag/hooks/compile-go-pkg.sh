@@ -4,6 +4,7 @@
 # Expected environment variables (set via derivation `env`):
 #   goPackagePath   — import path of the package to compile
 #   goPackageSrcDir — absolute path to the source directory
+#   goGcflags       — extra compiler flags (optional)
 #
 # Dependencies are discovered from $buildInputs at build time.
 
@@ -23,12 +24,16 @@ compileGoPkgBuildPhase() {
   # Compile the package.
   mkdir -p "$out/$(dirname "$goPackagePath")"
 
-  # When building PIE, pass -shared to generate position-independent code,
-  # matching cmd/go's default behavior. buildMode is computed at Nix eval time
-  # from stdenv.hostPlatform.go.GOOS (see hooks/default.nix).
-  local -a gcflagArgs=()
+  # Build gcflags: PIE requires -shared, then append user gcflags if present.
+  # buildMode is computed at Nix eval time from stdenv.hostPlatform.go.GOOS
+  # (see hooks/default.nix), matching Go's internal/platform.DefaultPIE.
+  local gcflags_val="${goGcflags:-}"
   if [ "@buildMode@" = "pie" ]; then
-    gcflagArgs=(--gc-flags "-shared")
+    gcflags_val="-shared${gcflags_val:+ $gcflags_val}"
+  fi
+  local -a gcflagArgs=()
+  if [ -n "$gcflags_val" ]; then
+    gcflagArgs=(--gc-flags "$gcflags_val")
   fi
 
   local -a pgoArgs=()
