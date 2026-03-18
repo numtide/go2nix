@@ -22,7 +22,7 @@ else
   let
     plugin = inputs.go-nix-plugin.packages.${system}.go2nix-nix-plugin;
     nix = pkgs.nixVersions.nix_2_33;
-    go = pkgs.go;
+    inherit (pkgs) go;
 
     nixpkgsPath = pkgs.path;
     go2nixSrc = flake;

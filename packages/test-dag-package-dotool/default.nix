@@ -12,8 +12,7 @@
   ...
 }:
 if !(inputs.go-nix-plugin.packages.${system} ? go2nix-nix-plugin) then
-  pkgs.runCommand "test-dag-package-dotool-unsupported"
-    { meta.platforms = pkgs.lib.platforms.linux; }
+  pkgs.runCommand "test-dag-package-dotool-unsupported" { meta.platforms = pkgs.lib.platforms.linux; }
     ''
       echo "test-dag-package-dotool requires go-nix-plugin (Linux only)" >&2
       exit 1
@@ -22,7 +21,7 @@ else
   let
     plugin = inputs.go-nix-plugin.packages.${system}.go2nix-nix-plugin;
     nix = pkgs.nixVersions.nix_2_33;
-    go = pkgs.go;
+    inherit (pkgs) go;
 
     nixpkgsPath = pkgs.path;
     go2nixSrc = flake;

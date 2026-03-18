@@ -58,15 +58,15 @@ let
     if parsed == null then
       builtins.throw "go2nix lockfile: malformed module key '${modKey}' (expected 'path@version')"
     else
-    let
-      path = builtins.elemAt parsed 0;
-      version = builtins.elemAt parsed 1;
-    in
-    {
-      inherit hash path version;
-      fetchPath = path;
-      dirSuffix = "${helpers.escapeModPath path}@${version}";
-    };
+      let
+        path = builtins.elemAt parsed 0;
+        version = builtins.elemAt parsed 1;
+      in
+      {
+        inherit hash path version;
+        fetchPath = path;
+        dirSuffix = "${helpers.escapeModPath path}@${version}";
+      };
 
   lockfileModules = builtins.mapAttrs parseModEntry modTable;
 
@@ -76,7 +76,12 @@ let
   goPackagesResult = builtins.resolveGoPackages (
     {
       go = "${go}/bin/go";
-      inherit src tags subPackages moduleDir;
+      inherit
+        src
+        tags
+        subPackages
+        modRoot
+        ;
     }
     // (if goProxy != null then { inherit goProxy; } else { })
   );
@@ -117,7 +122,10 @@ let
       # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
       # Lookup order: exact import path, then module path, then empty.
       pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
-      knownOverrideAttrs = [ "nativeBuildInputs" "env" ];
+      knownOverrideAttrs = [
+        "nativeBuildInputs"
+        "env"
+      ];
       unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
       extraEnv = pkgOverride.env or { };
@@ -125,7 +133,8 @@ let
       # Auto-add CC for CGO packages.
       cgoBuildInputs = if pkg.isCgo or false then [ stdenv.cc ] else [ ];
     in
-    assert unknownAttrs == [ ]
+    assert
+      unknownAttrs == [ ]
       || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
     stdenv.mkDerivation {
       name = pkg.drvName;

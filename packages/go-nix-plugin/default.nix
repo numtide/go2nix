@@ -7,11 +7,8 @@
   system,
   ...
 }:
-if inputs.go-nix-plugin.packages.${system} ? go2nix-nix-plugin then
-  inputs.go-nix-plugin.packages.${system}.go2nix-nix-plugin
-else
-  # Placeholder for unsupported platforms (plugin requires Linux).
-  pkgs.runCommand "go-nix-plugin-unsupported" { meta.platforms = pkgs.lib.platforms.linux; } ''
+inputs.go-nix-plugin.packages.${system}.go2nix-nix-plugin
+  or (pkgs.runCommand "go-nix-plugin-unsupported" { meta.platforms = pkgs.lib.platforms.linux; } ''
     echo "go-nix-plugin is only available on Linux" >&2
     exit 1
-  ''
+  '')

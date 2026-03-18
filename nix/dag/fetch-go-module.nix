@@ -17,7 +17,11 @@
 let
   inherit (helpers) sanitizeName;
 in
-{ hash, fetchPath, version }:
+{
+  hash,
+  fetchPath,
+  version,
+}:
 stdenvNoCC.mkDerivation {
   name = "gomod-${sanitizeName fetchPath}-${version}";
 

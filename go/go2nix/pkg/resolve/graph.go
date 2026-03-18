@@ -12,23 +12,23 @@ import (
 
 // ResolvedPkg holds a resolved package with all info needed to create a derivation.
 type ResolvedPkg struct {
-	ImportPath string
-	ModKey     string   // "" for local packages (path@version)
-	ModPath    string   // original module path (before replace), "" for local
-	GoFiles    []string // .go source files (basenames)
-	CgoFiles   []string
-	CFiles     []string
-	CXXFiles   []string
-	FFiles     []string
-	SFiles     []string
-	HFiles     []string
-	SysoFiles  []string // .syso system object files
-	Imports    []string // all import paths (including stdlib)
-	IsLocal    bool
-	FodPath    *storepath.StorePath // FOD output path (third-party only)
-	FetchPath  string               // module fetch path (for source lookup within FOD)
-	Version    string
-	Subdir     string // package path relative to module root
+	ImportPath     string
+	ModKey         string   // "" for local packages (path@version)
+	ModPath        string   // original module path (before replace), "" for local
+	GoFiles        []string // .go source files (basenames)
+	CgoFiles       []string
+	CFiles         []string
+	CXXFiles       []string
+	FFiles         []string
+	SFiles         []string
+	HFiles         []string
+	SysoFiles      []string // .syso system object files
+	Imports        []string // all import paths (including stdlib)
+	IsLocal        bool
+	FodPath        *storepath.StorePath // FOD output path (third-party only)
+	FetchPath      string               // module fetch path (for source lookup within FOD)
+	Version        string
+	Subdir         string // package path relative to module root
 	Name           string // Go package name (e.g., "main", "ssh")
 	GoVersion      string // Go language version from module's go.mod (e.g., "1.21")
 	DefaultGODEBUG string // default GODEBUG for main packages
@@ -53,15 +53,15 @@ func buildPackageGraph(
 		}
 
 		rp := &ResolvedPkg{
-			ImportPath: pkg.ImportPath,
-			GoFiles:    pkg.GoFiles,
-			CgoFiles:   pkg.CgoFiles,
-			CFiles:     pkg.CFiles,
-			CXXFiles:   pkg.CXXFiles,
-			FFiles:     pkg.FFiles,
-			SFiles:     pkg.SFiles,
-			HFiles:     pkg.HFiles,
-			SysoFiles:  pkg.SysoFiles,
+			ImportPath:     pkg.ImportPath,
+			GoFiles:        pkg.GoFiles,
+			CgoFiles:       pkg.CgoFiles,
+			CFiles:         pkg.CFiles,
+			CXXFiles:       pkg.CXXFiles,
+			FFiles:         pkg.FFiles,
+			SFiles:         pkg.SFiles,
+			HFiles:         pkg.HFiles,
+			SysoFiles:      pkg.SysoFiles,
 			Name:           pkg.Name,
 			DefaultGODEBUG: pkg.DefaultGODEBUG,
 			Imports:        pkg.Imports, // keep ALL imports (consumers check graph for stdlib vs non-stdlib)

@@ -52,8 +52,7 @@ assert
     major = lib.versions.major nixPackage.version;
     minor = lib.versions.minor nixPackage.version;
   in
-  lib.assertMsg (lib.versionAtLeast "${major}.${minor}" "2.34")
-    "go2nix dynamic mode requires Nix >= 2.34 (v4 derivation JSON format), got ${nixPackage.version}";
+  lib.assertMsg (lib.versionAtLeast "${major}.${minor}" "2.34") "go2nix dynamic mode requires Nix >= 2.34 (v4 derivation JSON format), got ${nixPackage.version}";
 
 let
   moduleRoot = if moduleDir == "." then "${src}" else "${src}/${moduleDir}";

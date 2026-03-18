@@ -15,7 +15,7 @@ a restricted daemon inside the build sandbox.
 1. **Socket**: A Unix domain socket `.nix-socket` is created in `$TMPDIR`.
    The builder sees it via `NIX_REMOTE=unix://<sandbox-tmpdir>/.nix-socket`.
 
-2. **Accept loop**: A single daemon thread accepts connections. Each connection
+1. **Accept loop**: A single daemon thread accepts connections. Each connection
    spawns a **new worker thread** — there is no connection limit or pool:
 
    ```cpp
@@ -27,13 +27,14 @@ a restricted daemon inside the build sandbox.
    daemonWorkerThreads.push_back(std::move(workerThread));
    ```
 
-2. **Cleanup**: On builder exit, `stopDaemon()` joins all worker threads
+1. **Cleanup**: On builder exit, `stopDaemon()` joins all worker threads
    **sequentially** (line 1234-1237). Two FIXMEs in the source:
 
-3  ```cpp
-   // FIXME: should prune worker threads more quickly.
-   // FIXME: shutdown the client socket to speed up worker termination.
-   ```
+3 \`\`\`cpp
+// FIXME: should prune worker threads more quickly.
+// FIXME: shutdown the client socket to speed up worker termination.
+
+````
 
 ### RestrictedStore
 
@@ -58,24 +59,24 @@ the sandbox:
 
 ```cpp
 std::vector<KeyedBuildResult> RestrictedStore::buildPathsWithResults(...) {
-    // 1. Check all requested paths are allowed
-    for (auto & req : paths) {
-        if (!goal.isAllowed(req))
-            throw InvalidPath("cannot build '%s' in recursive Nix ...", ...);
-    }
+ // 1. Check all requested paths are allowed
+ for (auto & req : paths) {
+     if (!goal.isAllowed(req))
+         throw InvalidPath("cannot build '%s' in recursive Nix ...", ...);
+ }
 
-    // 2. Delegate to the real store
-    auto results = next->buildPathsWithResults(paths, buildMode);
+ // 2. Delegate to the real store
+ auto results = next->buildPathsWithResults(paths, buildMode);
 
-    // 3. Compute closure of ALL new output paths
-    StorePathSet closure;
-    next->computeFSClosure(newPaths, closure);    // <-- O(n) walk
-    for (auto & path : closure)
-        goal.addDependency(path);                 // <-- grows the whitelist
+ // 3. Compute closure of ALL new output paths
+ StorePathSet closure;
+ next->computeFSClosure(newPaths, closure);    // <-- O(n) walk
+ for (auto & path : closure)
+     goal.addDependency(path);                 // <-- grows the whitelist
 
-    return results;
+ return results;
 }
-```
+````
 
 **The `computeFSClosure` call is the scaling bottleneck.** It walks the entire
 reference graph of newly-built outputs. If you build packages one at a time in
@@ -112,9 +113,9 @@ restricted store overhead, and full path info caching.
 Each `nix derivation add` call:
 
 1. Spawns a `nix` CLI process (~20-26ms startup overhead alone)
-2. Opens a socket connection → spawns a worker thread on the daemon
-3. Parses JSON, computes derivation hash, writes `.drv` to store (~6-12ms)
-4. Worker thread stays alive until the connection closes
+1. Opens a socket connection → spawns a worker thread on the daemon
+1. Parses JSON, computes derivation hash, writes `.drv` to store (~6-12ms)
+1. Worker thread stays alive until the connection closes
 
 **Benchmarked on 32-core x86_64, Nix 2.31.3, SSD:**
 

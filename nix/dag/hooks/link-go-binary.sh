@@ -109,7 +109,7 @@ linkGoBinaryBuildPhase() {
   local sanitizer_linkflags=""
   for flag in ${goGcflags:-}; do
     case "$flag" in
-      -race|-msan|-asan) sanitizer_linkflags="$sanitizer_linkflags $flag" ;;
+    -race | -msan | -asan) sanitizer_linkflags="$sanitizer_linkflags $flag" ;;
     esac
   done
 

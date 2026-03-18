@@ -619,14 +619,14 @@ For our wrapper:
 
    This is a double-nested `Built`: the "out" output of (the "out" output of the wrapper derivation). The string value is a `DownstreamPlaceholder` (opaque hash).
 
-2. **At build time:** Nix resolves the chain:
+1. **At build time:** Nix resolves the chain:
 
    - Builds `xxx-myapp.drv.drv` (the wrapper) → runs `go2nix resolve` → output is a `.drv` file
    - Reads the `.drv` file from the wrapper's text-mode output
    - Builds that `.drv` (the link/collector) → transitively builds all package CAs → uses FODs from store
    - The "out" output of the link/collector is the final binary directory
 
-3. **Placeholder resolution:** The `DownstreamPlaceholder` from step 1 resolves to the final store path (e.g., `/nix/store/abc-golink-myapp/bin/myapp`).
+1. **Placeholder resolution:** The `DownstreamPlaceholder` from step 1 resolves to the final store path (e.g., `/nix/store/abc-golink-myapp/bin/myapp`).
 
 Consumers use `wrapperDrv.passthru.target` to get the binary reference.
 
@@ -635,8 +635,8 @@ Consumers use `wrapperDrv.passthru.target` to get the binary reference.
 Packages needing extra `nativeBuildInputs` (pkg-config, libfoo) are handled by `packageOverrides`:
 
 1. `packageOverrides` is serialized to JSON at eval time and passed via `--overrides`
-2. All `nativeBuildInputs` from overrides are added to the wrapper's `nativeBuildInputs` (so they're in the sandbox and their store paths are available for package derivations)
-3. `go2nix resolve` reads `--overrides` JSON. For matching import paths, adds the store paths to the package derivation's `inputSrcs`, `PATH`, and `PKG_CONFIG_PATH` env vars
+1. All `nativeBuildInputs` from overrides are added to the wrapper's `nativeBuildInputs` (so they're in the sandbox and their store paths are available for package derivations)
+1. `go2nix resolve` reads `--overrides` JSON. For matching import paths, adds the store paths to the package derivation's `inputSrcs`, `PATH`, and `PKG_CONFIG_PATH` env vars
 
 Example:
 

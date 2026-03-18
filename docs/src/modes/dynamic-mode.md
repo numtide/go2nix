@@ -125,12 +125,14 @@ The build-time logic lives in the `go2nix resolve` command
 ## Trade-offs
 
 **Pros:**
+
 - Small lockfile — only `[mod]` hashes (same as DAG mode)
 - No lockfile regeneration when import graph changes (only when modules change)
 - Per-package caching via CA derivations
 - CA deduplication — comment-only edits don't trigger rebuilds
 
 **Cons:**
+
 - Requires Nix >= 2.34 with experimental features (`recursive-nix`,
   `ca-derivations`, `dynamic-derivations`)
 - Build-time overhead from `nix derivation add` calls (~32ms each)

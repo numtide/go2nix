@@ -18,17 +18,17 @@ import (
 
 // Pkg matches one JSON record from `go list -json -deps`.
 type Pkg struct {
-	ImportPath string   `json:"ImportPath"`
-	Name       string   `json:"Name"`
-	Dir        string   `json:"Dir"`
-	GoFiles    []string `json:"GoFiles"`
-	CgoFiles   []string `json:"CgoFiles"`
-	CFiles     []string `json:"CFiles"`
-	CXXFiles   []string `json:"CXXFiles"`
-	FFiles     []string `json:"FFiles"` // .f, .F, .for, .f90 Fortran source files
-	SFiles     []string `json:"SFiles"`
-	HFiles     []string `json:"HFiles"`
-	SysoFiles  []string `json:"SysoFiles"` // .syso system object files
+	ImportPath     string   `json:"ImportPath"`
+	Name           string   `json:"Name"`
+	Dir            string   `json:"Dir"`
+	GoFiles        []string `json:"GoFiles"`
+	CgoFiles       []string `json:"CgoFiles"`
+	CFiles         []string `json:"CFiles"`
+	CXXFiles       []string `json:"CXXFiles"`
+	FFiles         []string `json:"FFiles"` // .f, .F, .for, .f90 Fortran source files
+	SFiles         []string `json:"SFiles"`
+	HFiles         []string `json:"HFiles"`
+	SysoFiles      []string `json:"SysoFiles"` // .syso system object files
 	Standard       bool     `json:"Standard"`
 	DepOnly        bool     `json:"DepOnly"`
 	Imports        []string `json:"Imports"`

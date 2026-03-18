@@ -28,6 +28,7 @@ compileGoPkgBuildPhase() {
   # buildMode is computed at Nix eval time from stdenv.hostPlatform.go.GOOS
   # (see hooks/default.nix), matching Go's internal/platform.DefaultPIE.
   local gcflags_val="${goGcflags:-}"
+  # shellcheck disable=SC2050  # @buildMode@ is substituted by makeSetupHook
   if [ "@buildMode@" = "pie" ]; then
     gcflags_val="-shared${gcflags_val:+ $gcflags_val}"
   fi

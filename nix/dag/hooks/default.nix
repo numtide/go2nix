@@ -15,7 +15,18 @@ let
   tagArg = if tagFlag == "" then "" else "--tags ${tagFlag}";
   goos = stdenv.hostPlatform.go.GOOS;
   # Match Go's internal/platform.DefaultPIE: PIE for darwin, windows, android, ios.
-  buildMode = if builtins.elem goos [ "darwin" "windows" "android" "ios" ] then "pie" else "exe";
+  buildMode =
+    if
+      builtins.elem goos [
+        "darwin"
+        "windows"
+        "android"
+        "ios"
+      ]
+    then
+      "pie"
+    else
+      "exe";
 
   setupGoEnv = makeSetupHook {
     name = "go2nix-setup-go-env";

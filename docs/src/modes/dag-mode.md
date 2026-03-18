@@ -44,8 +44,7 @@ so that FODs download from the correct path.
 
 ### 3. Module fetching (fetch-go-module.nix)
 
-Each module is a fixed-output derivation (FOD) that downloads via `go mod
-download` and produces a GOMODCACHE directory layout:
+Each module is a fixed-output derivation (FOD) that downloads via `go mod download` and produces a GOMODCACHE directory layout:
 
 ```
 $out/<escaped-path>@<version>/
@@ -82,8 +81,8 @@ The final derivation takes all third-party packages as `buildInputs` and
 uses `goAppHook` (`link-go-binary.sh`) to:
 
 1. Validate lockfile consistency
-2. Compile local packages
-3. Link the final binary
+1. Compile local packages
+1. Link the final binary
 
 ## Package overrides
 
@@ -123,6 +122,7 @@ nix/dag/
 ## Trade-offs
 
 **Pros:**
+
 - Fine-grained caching — changing one dependency doesn't rebuild everything
 - No experimental Nix features required
 - Small lockfile (just `[mod]` hashes, no `[pkg]` section)
@@ -130,6 +130,7 @@ nix/dag/
 - Automatic CGO detection and compiler injection
 
 **Cons:**
+
 - Requires the go-nix-plugin (provides `builtins.resolveGoPackages`)
 - Many small derivations can slow Nix evaluation on very large projects
 

@@ -46,8 +46,7 @@ The lockfile does not contain a package dependency graph. Instead:
 
 - **DAG mode** discovers the package graph at eval time via the go-nix-plugin
   (`builtins.resolveGoPackages`), which runs `go list` against the source tree.
-- **Dynamic mode** discovers the package graph at build time via `go list
-  -json -deps` inside a recursive-nix wrapper.
+- **Dynamic mode** discovers the package graph at build time via `go list -json -deps` inside a recursive-nix wrapper.
 
 Only module NAR hashes are required in the lockfile (for fixed-output
 derivations that fetch each module).

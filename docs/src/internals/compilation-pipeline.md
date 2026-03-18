@@ -12,9 +12,9 @@ cache key.
 The pipeline has three stages:
 
 1. **Standard library** — compiled once, shared across all builds
-2. **Third-party packages** — one derivation per package, compiled in
+1. **Third-party packages** — one derivation per package, compiled in
    dependency order
-3. **Local packages + link** — compiled and linked in the final derivation
+1. **Local packages + link** — compiled and linked in the final derivation
 
 ## Standard library (stdlib.nix)
 
@@ -25,6 +25,7 @@ GODEBUG=installgoroot=all GOROOT=. go install -v --trimpath std
 ```
 
 Output layout:
+
 ```
 $out/
 ├── fmt.a
@@ -42,9 +43,9 @@ Every Go compilation requires an `importcfg` file listing where to find
 dependency archives. go2nix threads this through the derivation graph:
 
 1. stdlib produces `$out/importcfg` with all stdlib entries
-2. Each third-party package produces `$out/importcfg` with one line:
+1. Each third-party package produces `$out/importcfg` with one line:
    `packagefile <import-path>=$out/<import-path>.a`
-3. At compile time, `importcfg` is assembled by concatenating stdlib's
+1. At compile time, `importcfg` is assembled by concatenating stdlib's
    file plus all dependency packages' files
 
 This is implemented in `compile-go-pkg.sh`:
@@ -64,8 +65,8 @@ Each third-party package derivation uses the `goModuleHook` setup hook
 (`compile-go-pkg.sh`). The hook:
 
 1. Assembles `importcfg` from stdlib + dependency packages
-2. Calls `go2nix compile-package` to compile the package
-3. Writes `$out/<import-path>.a` (the archive) and `$out/importcfg`
+1. Calls `go2nix compile-package` to compile the package
+1. Writes `$out/<import-path>.a` (the archive) and `$out/importcfg`
 
 The `go2nix compile-package` command:
 
@@ -82,10 +83,10 @@ The final application derivation uses the `goAppHook` setup hook
 (`link-go-binary.sh`). This hook:
 
 1. Validates lockfile consistency (`go2nix check --lockfile`)
-2. Assembles importcfg from stdlib + all third-party deps
-3. Compiles all local library packages in topological order
+1. Assembles importcfg from stdlib + all third-party deps
+1. Compiles all local library packages in topological order
    (`go2nix compile-packages`)
-4. For each sub-package in `subPackages`:
+1. For each sub-package in `subPackages`:
    - Compiles the `main` package
    - Links with `go tool link` to produce a binary
 
