@@ -1,12 +1,11 @@
-# Find Go packages in nixpkgs that use pkg-config (cgo external lib support).
+# Find Go packages in nixpkgs (built with buildGoModule).
 #
 # Returns a list of { name, pname, version, src_url, c_libs, native_tools }
-# for packages built with buildGoModule that have pkg-config in their
-# nativeBuildInputs or buildInputs.
+# for all packages that have goModules (i.e., built with buildGoModule).
 #
 # Usage:
-#   nix eval --impure --json --expr 'import ./scripts/find-go-pkgconfig.nix {}'
-#   nix eval --impure --json --expr 'import ./scripts/find-go-pkgconfig.nix { nixpkgsPath = /path/to/nixpkgs; }'
+#   nix eval --impure --json --expr 'import ./scripts/nixpkgs-go-find.nix {}'
+#   nix eval --impure --json --expr 'import ./scripts/nixpkgs-go-find.nix { nixpkgsPath = /path/to/nixpkgs; }'
 {
   nixpkgsPath ? <nixpkgs>,
 }:
@@ -90,26 +89,23 @@ let
             nbi = if nbiR.success then nbiR.value else [ ];
             bi = if biR.success then biR.value else [ ];
           in
-          if !(hasPkgConfig (nbi ++ bi)) then
-            [ ]
-          else
-            let
-              pnameR = tryEval (pkg.pname or name);
-              versionR = tryEval (pkg.version or "unknown");
-              srcUrlR = tryEval (
-                pkg.src.url or (if pkg.src ? urls && length pkg.src.urls > 0 then head pkg.src.urls else "")
-              );
-            in
-            [
-              {
-                inherit name;
-                pname = if pnameR.success then pnameR.value else name;
-                version = if versionR.success then versionR.value else "unknown";
-                src_url = if srcUrlR.success then srcUrlR.value else "";
-                c_libs = depNames bi;
-                native_tools = depNames nbi;
-              }
-            ];
+          let
+            pnameR = tryEval (pkg.pname or name);
+            versionR = tryEval (pkg.version or "unknown");
+            srcUrlR = tryEval (
+              pkg.src.url or (if pkg.src ? urls && length pkg.src.urls > 0 then head pkg.src.urls else "")
+            );
+          in
+          [
+            {
+              inherit name;
+              pname = if pnameR.success then pnameR.value else name;
+              version = if versionR.success then versionR.value else "unknown";
+              src_url = if srcUrlR.success then srcUrlR.value else "";
+              c_libs = depNames bi;
+              native_tools = depNames nbi;
+            }
+          ];
 
 in
 concatLists (map checkPkg (attrNames pkgs))

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Find Go packages in nixpkgs that use pkg-config.
+# Find all Go packages in nixpkgs (built with buildGoModule).
 # Uses nix evaluation for accurate results.
 #
 # Usage:
-#   ./scripts/find-go-pkgconfig                    # uses <nixpkgs> from NIX_PATH
-#   ./scripts/find-go-pkgconfig /path/to/nixpkgs   # uses specific nixpkgs path
+#   ./scripts/nixpkgs-go-find                    # uses <nixpkgs> from NIX_PATH
+#   ./scripts/nixpkgs-go-find /path/to/nixpkgs   # uses specific nixpkgs path
 #
 # Output: JSON array of { name, pname, version, src_url, c_libs, native_tools }
 set -euo pipefail
@@ -17,7 +17,7 @@ else
   expr="import ${SCRIPT_DIR}/nixpkgs-go-find.nix {}"
 fi
 
-echo "Evaluating nixpkgs for Go packages with pkg-config..." >&2
+echo "Evaluating nixpkgs for Go packages..." >&2
 echo "(this may take several minutes)" >&2
 
 nix eval --impure --json --expr "$expr" 2>/dev/null \
