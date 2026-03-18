@@ -38,7 +38,7 @@
   allowGoReference ? false,
   meta ? { },
   nativeBuildInputs ? [ ],
-  moduleDir ? ".",
+  modRoot ? ".",
   packageOverrides ? { },
   ...
 }@args:
@@ -159,7 +159,7 @@ let
     map (attrs: attrs.nativeBuildInputs or [ ]) (builtins.attrValues packageOverrides)
   );
 
-  moduleRoot = if moduleDir == "." then "${src}" else "${src}/${moduleDir}";
+  moduleRoot = if modRoot == "." then "${src}" else "${src}/${modRoot}";
   ldflagsStr = concatStringsSep " " ldflags;
   gcflagsStr = concatStringsSep " " gcflags;
 
@@ -179,7 +179,7 @@ let
     "allowGoReference"
     "meta"
     "nativeBuildInputs"
-    "moduleDir"
+    "modRoot"
     "packageOverrides"
   ];
 

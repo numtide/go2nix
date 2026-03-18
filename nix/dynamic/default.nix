@@ -38,7 +38,7 @@
   CGO_ENABLED ? null,
   pgoProfile ? null,
   nativeBuildInputs ? [ ],
-  moduleDir ? ".",
+  modRoot ? ".",
   packageOverrides ? { },
   ...
 }:
@@ -55,7 +55,7 @@ assert
   lib.assertMsg (lib.versionAtLeast "${major}.${minor}" "2.34") "go2nix dynamic mode requires Nix >= 2.34 (v4 derivation JSON format), got ${nixPackage.version}";
 
 let
-  moduleRoot = if moduleDir == "." then "${src}" else "${src}/${moduleDir}";
+  moduleRoot = if modRoot == "." then "${src}" else "${src}/${modRoot}";
 
   # Serialize packageOverrides to JSON for the resolve command.
   # Only pass nativeBuildInputs store paths — resolve adds them to derivation inputs.
