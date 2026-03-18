@@ -14,6 +14,7 @@
 #   }
 {
   stdenv,
+  stdenvNoCC,
   go,
   go2nix,
   lib,
@@ -130,13 +131,15 @@ let
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
       extraEnv = pkgOverride.env or { };
 
-      # Auto-add CC for CGO packages.
-      cgoBuildInputs = if pkg.isCgo or false then [ stdenv.cc ] else [ ];
+      # Auto-add CC for CGO packages; use stdenvNoCC for pure Go packages.
+      isCgo = pkg.isCgo or false;
+      cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
+      mkDeriv = if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation;
     in
     assert
       unknownAttrs == [ ]
       || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
-    stdenv.mkDerivation {
+    mkDeriv {
       name = pkg.drvName;
 
       nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
