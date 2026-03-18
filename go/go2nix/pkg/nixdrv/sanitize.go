@@ -26,9 +26,9 @@ func SanitizeName(s string) string {
 	return b.String()
 }
 
-// PkgDrvName returns the derivation name for a package: gopkg-<sanitized>.
-func PkgDrvName(importPath string) string {
-	return "gopkg-" + SanitizeName(importPath)
+// PkgDrvName returns the derivation name for a package: gopkg-<sanitized>-<version>.
+func PkgDrvName(importPath, version string) string {
+	return "gopkg-" + SanitizeName(importPath) + "-" + version
 }
 
 // ModDrvName returns the derivation name for a module FOD: gomod-<sanitized>.

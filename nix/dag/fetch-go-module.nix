@@ -17,13 +17,9 @@
 let
   inherit (helpers) sanitizeName;
 in
-modKey:
-{ hash, fetchPath }:
-let
-  version = builtins.elemAt (builtins.match ".*@(.*)" modKey) 0;
-in
+{ hash, fetchPath, version }:
 stdenvNoCC.mkDerivation {
-  name = "gomod-${sanitizeName modKey}";
+  name = "gomod-${sanitizeName fetchPath}-${version}";
 
   # Fixed-output derivation: content-addressed by NAR hash.
   outputHashAlgo = "sha256";

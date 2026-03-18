@@ -20,7 +20,7 @@ func TestSanitizeName(t *testing.T) {
 }
 
 func TestDrvNames(t *testing.T) {
-	if got := PkgDrvName("golang.org/x/crypto/ssh"); got != "gopkg-golang.org-x-crypto-ssh" {
+	if got := PkgDrvName("golang.org/x/crypto/ssh", "v0.17.0"); got != "gopkg-golang.org-x-crypto-ssh-v0.17.0" {
 		t.Errorf("PkgDrvName = %q", got)
 	}
 	if got := ModDrvName("golang.org/x/crypto@v0.17.0"); got != "gomod-golang.org-x-crypto_at_v0.17.0" {

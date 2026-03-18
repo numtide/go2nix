@@ -341,7 +341,8 @@ func createPackageDrv(
 	pkg *ResolvedPkg,
 	overrides map[string]PackageOverride,
 ) error {
-	drvName := nixdrv.PkgDrvName(pkg.ImportPath)
+	_, modVersion, _ := strings.Cut(pkg.ModKey, "@")
+	drvName := nixdrv.PkgDrvName(pkg.ImportPath, modVersion)
 	bashStorePath := storeDirOf(cfg.BashBin)
 	go2nixStorePath := storeDirOf(cfg.Go2NixBin)
 

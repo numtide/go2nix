@@ -1,4 +1,4 @@
-# go2nix/nix/build-go-application.nix — build a Go binary from source + lockfile.
+# go2nix/nix/dag/default.nix — build a Go binary from source + lockfile (DAG mode).
 #
 # Usage:
 #   goEnv.buildGoApplication {
@@ -63,9 +63,7 @@ let
       dirSuffix = "${helpers.escapeModPath path}@${version}";
     };
 
-  resolved = {
-    modules = builtins.mapAttrs parseModEntry modTable;
-  };
+  lockfileModules = builtins.mapAttrs parseModEntry modTable;
 
   # --- Package graph from plugin (eval-time go list) ---
   # goProxy defaults to "off": reads from the host's GOMODCACHE (populated
@@ -79,7 +77,7 @@ let
   );
 
   # --- Join: apply replace directives to module fetchPaths ---
-  modules = builtins.mapAttrs (
+  resolvedModules = builtins.mapAttrs (
     modKey: mod:
     let
       repl = goPackagesResult.replacements.${modKey} or null;
@@ -91,18 +89,16 @@ let
       inherit fetchPath;
       dirSuffix = "${helpers.escapeModPath fetchPath}@${version}";
     }
-  ) resolved.modules;
+  ) lockfileModules;
 
   # --- Third-party package set ---
-  fetchModule = fetchers.fetchGoModule;
-
   moduleInfo = builtins.mapAttrs (
-    modKey: mod:
+    _: mod:
     let
-      src = fetchModule modKey { inherit (mod) hash fetchPath; };
+      src = fetchers.fetchGoModule { inherit (mod) hash fetchPath version; };
     in
     mod // { dir = "${src}/${mod.dirSuffix}"; }
-  ) modules;
+  ) resolvedModules;
 
   packages = builtins.mapAttrs (
     importPath: pkg:
@@ -114,13 +110,18 @@ let
       deps = map (imp: packages.${imp}) pkg.imports;
 
       # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
+      # Lookup order: exact import path, then module path, then empty.
       pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
+      knownOverrideAttrs = [ "nativeBuildInputs" "env" ];
+      unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
-      extraEnv = builtins.removeAttrs pkgOverride [ "nativeBuildInputs" ];
+      extraEnv = pkgOverride.env or { };
 
       # Auto-add CC for CGO packages.
       cgoBuildInputs = if pkg.isCgo or false then [ stdenv.cc ] else [ ];
     in
+    assert unknownAttrs == [ ]
+      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
     stdenv.mkDerivation {
       name = pkg.drvName;
 
@@ -131,12 +132,13 @@ let
         goPackagePath = importPath;
         goPackageSrcDir = srcDir;
       }
+      // (if gcflagsStr != "" then { goGcflags = gcflagsStr; } else { })
       // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
       // extraEnv;
     }
   ) goPackagesResult.packages;
 
-  require = builtins.attrValues packages;
+  thirdPartyDeps = builtins.attrValues packages;
 
   # Collect nativeBuildInputs from packageOverrides for link-time availability.
   overrideNativeBuildInputs = builtins.concatLists (
@@ -179,7 +181,7 @@ stdenv.mkDerivation (
       ;
 
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
-    buildInputs = require;
+    buildInputs = thirdPartyDeps;
 
     disallowedReferences = lib.optional (!allowGoReference) go;
 
