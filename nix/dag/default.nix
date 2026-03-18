@@ -54,6 +54,11 @@ let
     modKey: hash:
     let
       parsed = builtins.match "(.+)@(.+)" modKey;
+    in
+    if parsed == null then
+      builtins.throw "go2nix lockfile: malformed module key '${modKey}' (expected 'path@version')"
+    else
+    let
       path = builtins.elemAt parsed 0;
       version = builtins.elemAt parsed 1;
     in
