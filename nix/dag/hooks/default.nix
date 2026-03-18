@@ -1,4 +1,4 @@
-# go2nix/nix/hooks/default.nix — setup hooks for Go compilation.
+# go2nix/nix/dag/hooks/default.nix — setup hooks for Go compilation.
 #
 # Two composite hooks:
 #   goModuleHook  — compile a third-party Go package

@@ -1,4 +1,4 @@
-# go2nix/nix/fetch-go-module.nix — fixed-output derivation to fetch a Go module.
+# go2nix/nix/dag/fetch-go-module.nix — fixed-output derivation to fetch a Go module.
 #
 # Downloads a module via the Go module proxy and produces the GOMODCACHE
 # directory structure as output.
