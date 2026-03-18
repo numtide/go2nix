@@ -52,11 +52,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1773738711,
-        "narHash": "sha256-OVZgB5mtTFnuJDd9ygbKsO7iAs+/HlJbz6HFXp5NbXk=",
+        "lastModified": 1773837005,
+        "narHash": "sha256-YUgxJprFTptjJBu8ehScoRw7jo9Pjh8PQzIZVgU2+a4=",
         "ref": "refs/heads/main",
-        "rev": "244e014658375fc27f3dcf320285e749a89f7c86",
-        "revCount": 16,
+        "rev": "95d746965878b13eda721db1887444925fe42c3e",
+        "revCount": 19,
         "type": "git",
         "url": "ssh://forgejo@git.ntd.one/anthropic/go2nix-nix-plugin.git"
       },
