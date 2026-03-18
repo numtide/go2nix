@@ -10,9 +10,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 )
 
@@ -158,6 +160,52 @@ func ListDeps(opts ListDepsOptions) ([]Pkg, error) {
 		pkgs = append(pkgs, pkg)
 	}
 	return pkgs, nil
+}
+
+// CollectGoModModules parses go.mod in dir and returns ModInfo for every
+// non-local module in the require block. This ensures platform-specific
+// and test-only indirect deps (which go list -deps may omit) are included.
+func CollectGoModModules(dir string) ([]ModInfo, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return nil, fmt.Errorf("reading go.mod: %w", err)
+	}
+	mf, err := modfile.Parse("go.mod", data, nil)
+	if err != nil {
+		return nil, fmt.Errorf("parsing go.mod: %w", err)
+	}
+
+	replaces := make(map[string]*modfile.Replace, len(mf.Replace))
+	for _, r := range mf.Replace {
+		replaces[r.Old.Path] = r
+	}
+
+	seen := map[string]bool{}
+	var mods []ModInfo
+	for _, req := range mf.Require {
+		modPath := req.Mod.Path
+		version := req.Mod.Version
+		fetchPath := modPath
+
+		if r, ok := replaces[modPath]; ok {
+			if r.New.Version == "" {
+				// Local replace — skip.
+				continue
+			}
+			version = r.New.Version
+			fetchPath = r.New.Path
+		}
+
+		key := module.Version{Path: modPath, Version: version}.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		mods = append(mods, ModInfo{Key: key, FetchPath: fetchPath, Version: version})
+	}
+	sort.Slice(mods, func(i, j int) bool { return mods[i].Key < mods[j].Key })
+	return mods, nil
 }
 
 // CollectModules deduplicates modules from a list of packages.

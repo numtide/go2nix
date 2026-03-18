@@ -31,26 +31,25 @@ func Generate(dirs []string, output string, jobs int, mode string) error {
 	}
 	slog.Info("cache loaded", "mods", len(cache.Mod), "pkgs", len(cache.Pkg))
 
-	allPkgMap := map[string]golist.Pkg{}
+	// Collect all modules from go.mod require blocks (with replaces applied).
+	// This is the authoritative source: go.mod lists all modules across all
+	// platforms, including indirect deps that go list -deps may omit on the
+	// current host (e.g. platform-specific or test-only transitive deps).
+	modKeys := make(map[string]bool)
+	var mods []golist.ModInfo
 	for _, dir := range dirs {
-		slog.Info("collecting packages", "dir", dir)
-		pkgs, err := golist.ListDeps(golist.ListDepsOptions{Dir: dir})
+		slog.Info("collecting modules", "dir", dir)
+		goModMods, err := golist.CollectGoModModules(dir)
 		if err != nil {
 			return fmt.Errorf("%s: %w", dir, err)
 		}
-		for _, pkg := range pkgs {
-			if _, ok := allPkgMap[pkg.ImportPath]; !ok {
-				allPkgMap[pkg.ImportPath] = pkg
+		for _, m := range goModMods {
+			if !modKeys[m.Key] {
+				modKeys[m.Key] = true
+				mods = append(mods, m)
 			}
 		}
 	}
-	slog.Info("packages found", "count", len(allPkgMap))
-
-	allPkgs := make([]golist.Pkg, 0, len(allPkgMap))
-	for _, pkg := range allPkgMap {
-		allPkgs = append(allPkgs, pkg)
-	}
-	mods := golist.CollectModules(allPkgs)
 	slog.Info("modules found", "count", len(mods))
 
 	var toHash []golist.ModInfo
