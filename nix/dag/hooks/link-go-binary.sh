@@ -33,6 +33,7 @@ linkGoBinaryConfigurePhase() {
       cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
     fi
   done
+
   # Compute module info (modinfo) and GODEBUG defaults.
   # build-modinfo outputs:
   #   modinfo "..." — for go tool link importcfg
@@ -92,6 +93,38 @@ linkGoBinaryBuildPhase() {
   # internally (gc.go:676-678).
   export GOROOT=""
 
+  # Compute link-time flags (invariant across sub-packages).
+  local linkflags=""
+  if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
+    # Use CXX when C++ files are present, matching Go's setextld (gc.go).
+    local extld="$CC"
+    if [ -f "$NIX_BUILD_TOP/.has_cxx" ]; then
+      extld="$CXX"
+    fi
+    linkflags="-extld $extld -linkmode external"
+  fi
+
+  # Propagate sanitizer flags (-race, -msan, -asan) from gcflags to the
+  # linker, matching cmd/go behavior (init.go forcedLdflags).
+  local sanitizer_linkflags=""
+  for flag in ${goGcflags:-}; do
+    case "$flag" in
+      -race|-msan|-asan) sanitizer_linkflags="$sanitizer_linkflags $flag" ;;
+    esac
+  done
+
+  # GODEBUG default from go.mod's go directive (gc.go:624-626).
+  local godebug_linkflag=""
+  if [ -n "${goGodebugDefault:-}" ]; then
+    godebug_linkflag="-X=runtime.godebugDefault=$goGodebugDefault"
+  fi
+
+  # Build linker importcfg: compile importcfg + modinfo (linker-only directive).
+  cp "$NIX_BUILD_TOP/importcfg" "$NIX_BUILD_TOP/importcfg.link"
+  if [ -n "${goModinfo:-}" ]; then
+    echo "$goModinfo" >>"$NIX_BUILD_TOP/importcfg.link"
+  fi
+
   # Pass 2: compile main packages and link.
   mkdir -p "$NIX_BUILD_TOP/staging/bin"
 
@@ -118,37 +151,6 @@ linkGoBinaryBuildPhase() {
       @tagArg@ \
       "${gcflagArgs[@]}" \
       "${pgoArgs[@]}"
-
-    local linkflags=""
-    if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
-      # Use CXX when C++ files are present, matching Go's setextld (gc.go).
-      local extld="$CC"
-      if [ -f "$NIX_BUILD_TOP/.has_cxx" ]; then
-        extld="$CXX"
-      fi
-      linkflags="-extld $extld -linkmode external"
-    fi
-
-    # Propagate sanitizer flags (-race, -msan, -asan) from gcflags to the
-    # linker, matching cmd/go behavior (init.go forcedLdflags).
-    local sanitizer_linkflags=""
-    for flag in ${goGcflags:-}; do
-      case "$flag" in
-        -race|-msan|-asan) sanitizer_linkflags="$sanitizer_linkflags $flag" ;;
-      esac
-    done
-
-    # GODEBUG default from go.mod's go directive (gc.go:624-626).
-    local godebug_linkflag=""
-    if [ -n "${goGodebugDefault:-}" ]; then
-      godebug_linkflag="-X=runtime.godebugDefault=$goGodebugDefault"
-    fi
-
-    # Build linker importcfg: compile importcfg + modinfo (linker-only directive).
-    cp "$NIX_BUILD_TOP/importcfg" "$NIX_BUILD_TOP/importcfg.link"
-    if [ -n "${goModinfo:-}" ]; then
-      echo "$goModinfo" >>"$NIX_BUILD_TOP/importcfg.link"
-    fi
 
     # Word splitting is intentional: goLdflags, linkflags,
     # sanitizer_linkflags, and godebug_linkflag contain space-separated flags.
