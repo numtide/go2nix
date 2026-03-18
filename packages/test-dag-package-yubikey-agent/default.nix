@@ -63,11 +63,12 @@ else
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
       echo "=== Building yubikey-agent (DAG mode) ==="
-      GOMODCACHE=${goModules} \
+      result=$(GOMODCACHE=${goModules} \
         nix-build ${go2nixSrc}/tests/packages/yubikey-agent/dag.nix \
         -I nixpkgs=${nixpkgsPath} \
         --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_nix_plugin.so" \
-        --no-out-link
+        --no-out-link)
 
+      $result/bin/yubikey-agent --help
       echo "PASS: yubikey-agent" > $out
     ''

@@ -11,6 +11,7 @@ in
 goEnv.buildGoApplicationDAGMode {
   pname = "dotool";
   version = "1.6";
+  ldflags = [ "-X main.Version=1.6" ];
   goLock = ./go2nix.toml;
   src = pkgs.fetchgit {
     url = "https://git.sr.ht/~geb/dotool";
