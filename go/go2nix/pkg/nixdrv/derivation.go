@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nix-community/go-nix/pkg/storepath"
+	"github.com/numtide/go2nix/internal/gonix/storepath"
 )
 
 // Derivation represents a Nix derivation in the format accepted by

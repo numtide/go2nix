@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sort"
 
-	gonixdrv "github.com/nix-community/go-nix/pkg/derivation"
-	"github.com/nix-community/go-nix/pkg/nixhash"
-	"github.com/nix-community/go-nix/pkg/storepath"
+	gonixdrv "github.com/numtide/go2nix/internal/gonix/derivation"
+	"github.com/numtide/go2nix/internal/gonix/nixhash"
+	"github.com/numtide/go2nix/internal/gonix/storepath"
 )
 
 // DrvPath computes the .drv store path for this derivation in-process,
@@ -84,15 +84,15 @@ func (d *Derivation) toGoNixDerivation() (*gonixdrv.Derivation, error) {
 	copy(inputSrcs, d.inputSrcs)
 	sort.Strings(inputSrcs)
 
-	// Build env — must include "name" (ATerm stores it in env,
-	// v4 JSON has it as a top-level field).
-	env := make(map[string]string, len(d.env)+1)
+	// Build env — v4 JSON does NOT include "name" in env; it's a top-level
+	// field. We use SetName() on the go-nix Derivation to provide the name
+	// without injecting it into the env map (which would change the ATerm hash).
+	env := make(map[string]string, len(d.env))
 	for k, v := range d.env {
 		env[k] = v
 	}
-	env["name"] = d.name
 
-	return &gonixdrv.Derivation{
+	gnd := &gonixdrv.Derivation{
 		Outputs:          outputs,
 		InputSources:     inputSrcs,
 		InputDerivations: inputDrvs,
@@ -100,7 +100,10 @@ func (d *Derivation) toGoNixDerivation() (*gonixdrv.Derivation, error) {
 		Builder:          d.builder,
 		Arguments:        d.args,
 		Env:              env,
-	}, nil
+	}
+	gnd.SetName(d.name)
+
+	return gnd, nil
 }
 
 // convertOutput maps a v4-JSON output to ATerm format.

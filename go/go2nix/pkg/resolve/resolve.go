@@ -18,7 +18,7 @@ import (
 	"golang.org/x/mod/module"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/nix-community/go-nix/pkg/storepath"
+	"github.com/numtide/go2nix/internal/gonix/storepath"
 	"github.com/numtide/go2nix/pkg/buildinfo"
 	"github.com/numtide/go2nix/pkg/compile"
 	"github.com/numtide/go2nix/pkg/golist"

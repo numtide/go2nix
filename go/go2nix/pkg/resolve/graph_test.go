@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nix-community/go-nix/pkg/storepath"
+	"github.com/numtide/go2nix/internal/gonix/storepath"
 	"github.com/numtide/go2nix/pkg/golist"
 )
 

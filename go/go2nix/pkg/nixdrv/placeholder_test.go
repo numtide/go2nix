@@ -3,7 +3,7 @@ package nixdrv
 import (
 	"testing"
 
-	"github.com/nix-community/go-nix/pkg/storepath"
+	"github.com/numtide/go2nix/internal/gonix/storepath"
 )
 
 // Test vectors from nix-ninja (crates/nix-libstore/src/placeholder.rs).

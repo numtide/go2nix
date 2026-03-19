@@ -3,8 +3,8 @@ package nixdrv
 import (
 	"testing"
 
-	gonixdrv "github.com/nix-community/go-nix/pkg/derivation"
-	"github.com/nix-community/go-nix/pkg/storepath"
+	gonixdrv "github.com/numtide/go2nix/internal/gonix/derivation"
+	"github.com/numtide/go2nix/internal/gonix/storepath"
 )
 
 func TestDrvPathCAFloating(t *testing.T) {
@@ -86,12 +86,7 @@ func TestDrvPathMatchesGoNix(t *testing.T) {
 	}
 
 	// go-nix derivation (ATerm format, directly)
-	gnEnv := make(map[string]string, len(env)+1)
-	for k, v := range env {
-		gnEnv[k] = v
-	}
-	gnEnv["name"] = name
-
+	// v4 JSON does NOT include "name" in env, so use SetName().
 	gnDrv := &gonixdrv.Derivation{
 		Outputs: map[string]*gonixdrv.Output{
 			"out": {HashAlgorithm: "r:sha256"},
@@ -101,8 +96,9 @@ func TestDrvPathMatchesGoNix(t *testing.T) {
 		Platform:         system,
 		Builder:          builder,
 		Arguments:        args,
-		Env:              gnEnv,
+		Env:              env,
 	}
+	gnDrv.SetName(name)
 
 	gnPathStr, err := gnDrv.DrvPath()
 	if err != nil {
@@ -141,6 +137,7 @@ func TestDrvPathFODMatchesGoNix(t *testing.T) {
 	}
 
 	// go-nix derivation with output paths computed manually
+	// v4 JSON does NOT include "name" in env, so use SetName().
 	gnDrv := &gonixdrv.Derivation{
 		Outputs: map[string]*gonixdrv.Output{
 			"out": {HashAlgorithm: "r:sha256", Hash: hexHash},
@@ -151,10 +148,10 @@ func TestDrvPathFODMatchesGoNix(t *testing.T) {
 		Builder:          builder,
 		Arguments:        []string{"-c", "cp -r $src $out"},
 		Env: map[string]string{
-			"name": name,
-			"out":  "",
+			"out": "",
 		},
 	}
+	gnDrv.SetName(name)
 
 	// Compute output paths (fills in Output.Path)
 	outputPaths, err := gnDrv.CalculateOutputPaths(nil)
@@ -197,6 +194,7 @@ func TestDrvPathWithInputDrvs(t *testing.T) {
 	}
 
 	// Also build the go-nix equivalent and compare
+	// v4 JSON does NOT include "name" in env, so use SetName().
 	gnDrv := &gonixdrv.Derivation{
 		Outputs: map[string]*gonixdrv.Output{
 			"out": {HashAlgorithm: "r:sha256"},
@@ -209,10 +207,9 @@ func TestDrvPathWithInputDrvs(t *testing.T) {
 		Platform:  "x86_64-linux",
 		Builder:   "/nix/store/w7jl0h7mwrrrcy2kgvk9c9h9142f1ca0-bash/bin/bash",
 		Arguments: []string{"-c", "echo linking"},
-		Env: map[string]string{
-			"name": "link-drv",
-		},
+		Env:       map[string]string{},
 	}
+	gnDrv.SetName("link-drv")
 
 	gnPathStr, err := gnDrv.DrvPath()
 	if err != nil {

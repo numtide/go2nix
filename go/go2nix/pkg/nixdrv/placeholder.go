@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nix-community/go-nix/pkg/nixbase32"
-	"github.com/nix-community/go-nix/pkg/storepath"
+	"github.com/numtide/go2nix/internal/gonix/nixbase32"
+	"github.com/numtide/go2nix/internal/gonix/storepath"
 )
 
 // Placeholder represents a Nix placeholder hash.
