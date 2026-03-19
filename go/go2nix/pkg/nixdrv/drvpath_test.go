@@ -118,6 +118,69 @@ func TestDrvPathMatchesGoNix(t *testing.T) {
 	}
 }
 
+func TestDrvPathFODMatchesGoNix(t *testing.T) {
+	// Verify FOD .drv path matches go-nix when output paths are filled in.
+	// This is the critical test: nix derivation add computes output paths for
+	// FODs and includes them in the .drv, which changes the ATerm hash.
+	name := "gomod-test-v1.0.0"
+	system := "x86_64-linux"
+	builder := "/nix/store/w7jl0h7mwrrrcy2kgvk9c9h9142f1ca0-bash/bin/bash"
+	sriHash := "sha256-n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+	hexHash := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+	// Our derivation
+	drv := NewDerivation(name, system, builder)
+	drv.AddArg("-c")
+	drv.AddArg("cp -r $src $out")
+	drv.AddFODOutput("out", "nar", sriHash)
+	drv.SetEnv("out", "")
+
+	ourPath, err := drv.DrvPath()
+	if err != nil {
+		t.Fatalf("our DrvPath: %v", err)
+	}
+
+	// go-nix derivation with output paths computed manually
+	gnDrv := &gonixdrv.Derivation{
+		Outputs: map[string]*gonixdrv.Output{
+			"out": {HashAlgorithm: "r:sha256", Hash: hexHash},
+		},
+		InputSources:     []string{},
+		InputDerivations: map[string][]string{},
+		Platform:         system,
+		Builder:          builder,
+		Arguments:        []string{"-c", "cp -r $src $out"},
+		Env: map[string]string{
+			"name": name,
+			"out":  "",
+		},
+	}
+
+	// Compute output paths (fills in Output.Path)
+	outputPaths, err := gnDrv.CalculateOutputPaths(nil)
+	if err != nil {
+		t.Fatalf("CalculateOutputPaths: %v", err)
+	}
+	for oname, opath := range outputPaths {
+		gnDrv.Outputs[oname].Path = opath
+		gnDrv.Env[oname] = opath
+	}
+
+	gnPathStr, err := gnDrv.DrvPath()
+	if err != nil {
+		t.Fatalf("go-nix DrvPath: %v", err)
+	}
+	gnSP, err := storepath.FromAbsolutePath(gnPathStr)
+	if err != nil {
+		t.Fatalf("parsing go-nix path: %v", err)
+	}
+
+	if ourPath.Absolute() != gnSP.Absolute() {
+		t.Errorf("FOD paths differ:\n  ours:   %s\n  go-nix: %s", ourPath.Absolute(), gnSP.Absolute())
+	}
+	t.Logf("FOD drv path (matched): %s", ourPath.Absolute())
+}
+
 func TestDrvPathWithInputDrvs(t *testing.T) {
 	// Test that input derivation conversion is correct
 	drv := NewDerivation("link-drv", "x86_64-linux",

@@ -23,12 +23,37 @@ func (d *Derivation) DrvPath() (*storepath.StorePath, error) {
 		return nil, fmt.Errorf("converting derivation %q: %w", d.name, err)
 	}
 
+	// For FODs, nix derivation add computes output paths and fills them
+	// into Output.Path and env[outputName] before writing the .drv file.
+	// The .drv path is the store path of the .drv file content, so we must
+	// match this by filling in the same values.
+	if isFOD(gnd) {
+		outputPaths, err := gnd.CalculateOutputPaths(nil)
+		if err != nil {
+			return nil, fmt.Errorf("computing FOD output paths for %q: %w", d.name, err)
+		}
+		for name, path := range outputPaths {
+			gnd.Outputs[name].Path = path
+			gnd.Env[name] = path
+		}
+	}
+
 	path, err := gnd.DrvPath()
 	if err != nil {
 		return nil, fmt.Errorf("computing drv path for %q: %w", d.name, err)
 	}
 
 	return storepath.FromAbsolutePath(path)
+}
+
+// isFOD returns true if the derivation is a fixed-output derivation
+// (single output named "out" with a known hash).
+func isFOD(d *gonixdrv.Derivation) bool {
+	if len(d.Outputs) != 1 {
+		return false
+	}
+	o, ok := d.Outputs["out"]
+	return ok && o.HashAlgorithm != "" && o.Hash != ""
 }
 
 // toGoNixDerivation converts from our v4-JSON-oriented Derivation to
