@@ -11,6 +11,7 @@ import (
 func runResolveCmd(args []string) {
 	fs := flag.NewFlagSet("resolve", flag.ExitOnError)
 	src := fs.String("src", "", "store path to Go source")
+	modRoot := fs.String("mod-root", ".", "subdirectory within src containing go.mod")
 	lockfilePath := fs.String("lockfile", "", "path to go2nix.toml lockfile")
 	system := fs.String("system", "", "Nix system (e.g., x86_64-linux)")
 	goBin := fs.String("go", "", "path to go binary")
@@ -57,6 +58,7 @@ func runResolveCmd(args []string) {
 
 	cfg := resolve.Config{
 		Src:          *src,
+		ModRoot:      *modRoot,
 		LockFile:     *lockfilePath,
 		System:       *system,
 		GoBin:        *goBin,

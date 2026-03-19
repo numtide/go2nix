@@ -55,8 +55,6 @@ assert
   lib.assertMsg (lib.versionAtLeast "${major}.${minor}" "2.34") "go2nix dynamic mode requires Nix >= 2.34 (v4 derivation JSON format), got ${nixPackage.version}";
 
 let
-  moduleRoot = if modRoot == "." then "${src}" else "${src}/${modRoot}";
-
   # Serialize packageOverrides to JSON for the resolve command.
   # Only pass nativeBuildInputs store paths — resolve adds them to derivation inputs.
   # Auto-expand .dev outputs (like stdenv's multiple-outputs.sh hook) so users
@@ -112,7 +110,8 @@ let
       export HOME=$TMPDIR
 
       go2nix resolve \
-        --src ${moduleRoot} \
+        --src ${src} \
+        --mod-root ${lib.escapeShellArg modRoot} \
         --lockfile ${goLock} \
         --system ${stdenv.hostPlatform.system} \
         --go ${go}/bin/go \

@@ -27,6 +27,7 @@ import (
 // Config holds all configuration for the resolve flow.
 type Config struct {
 	Src          string // store path to source
+	ModRoot      string // subdirectory within Src containing go.mod (default ".")
 	LockFile     string // path to go2nix.toml lockfile
 	System       string // e.g., "x86_64-linux"
 	GoBin        string // path to go binary
@@ -144,6 +145,12 @@ func Resolve(cfg Config) error {
 		subPkgs = strings.Split(cfg.SubPackages, ",")
 	}
 
+	// moduleRoot is the filesystem path where go.mod lives.
+	// cfg.Src is the raw store path (used for AddInputSrc); cfg.ModRoot
+	// is the subdirectory within it. We join them for filesystem operations
+	// but keep cfg.Src separate for store-path references.
+	moduleRoot := filepath.Join(cfg.Src, cfg.ModRoot)
+
 	golistEnv := []string{
 		"GOMODCACHE=" + gomodcache,
 		"GONOSUMCHECK=*",
@@ -164,7 +171,7 @@ func Resolve(cfg Config) error {
 	}
 
 	pkgs, err := golist.ListDeps(golist.ListDepsOptions{
-		Dir:       cfg.Src,
+		Dir:       moduleRoot,
 		GoBin:     cfg.GoBin,
 		Tags:      cfg.Tags,
 		Patterns:  subPkgs,
@@ -178,7 +185,7 @@ func Resolve(cfg Config) error {
 	slog.Info("packages discovered", "count", len(pkgs))
 
 	// Step 6: Build and topo-sort package graph
-	graph, err := buildPackageGraph(pkgs, fodPaths, cfg.Src)
+	graph, err := buildPackageGraph(pkgs, fodPaths, moduleRoot)
 	if err != nil {
 		return err
 	}
@@ -401,7 +408,7 @@ func createPackageDrv(
 	// Source location
 	if pkg.IsLocal {
 		drv.SetEnv("modSrc", cfg.Src)
-		drv.SetEnv("relDir", pkg.Subdir)
+		drv.SetEnv("relDir", filepath.Join(cfg.ModRoot, pkg.Subdir))
 		drv.AddInputSrc(cfg.Src)
 	} else {
 		drv.SetEnv("modSrc", pkg.FodPath.Absolute())
