@@ -4,7 +4,6 @@
 package resolve
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -369,74 +368,71 @@ func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
 	return g.Wait()
 }
 
-// registerDerivationsParallel registers package derivations with maximum parallelism
-// while respecting dependency ordering. Each package waits for its dependency drvs
-// to be registered, then registers itself. Validates in-process .drv paths match Nix.
-//
-// Goroutines are cheap (~4KB each), so we launch one per derivation immediately.
-// Most block on dependency channels. A separate semaphore limits concurrent
-// `nix derivation add` subprocess calls. Context cancellation prevents deadlocks
-// if any goroutine fails (dependents wake up via ctx.Done instead of waiting forever).
+// registerDerivationsParallel registers package derivations in parallel by topo level.
+// Each level contains packages whose dependencies are all in previous levels. All
+// packages within a level are registered concurrently, then we wait before starting
+// the next level. This ensures input drvs are visible on disk (through the build
+// sandbox bind mount) before dependents try to read them during hashDerivationModulo.
+// Validates that in-process .drv paths match what Nix returns.
 func registerDerivationsParallel(
 	nix *nixdrv.NixTool,
 	sorted []*ResolvedPkg,
 	drvs []*nixdrv.Derivation,
 	graph map[string]*ResolvedPkg,
 ) error {
-	// Create a "done" channel for each package drv. The channel is closed
-	// once the drv has been successfully registered with Nix.
-	done := make(map[string]chan struct{}, len(sorted))
+	// Compute topo level for each package.
+	// Level = max(dep levels) + 1; packages with no in-graph deps are level 0.
+	levels := make(map[string]int, len(sorted))
 	for _, pkg := range sorted {
-		done[pkg.ImportPath] = make(chan struct{})
+		maxDepLevel := -1
+		for _, imp := range pkg.Imports {
+			if lvl, ok := levels[imp]; ok && lvl > maxDepLevel {
+				maxDepLevel = lvl
+			}
+		}
+		levels[pkg.ImportPath] = maxDepLevel + 1
 	}
 
-	// Semaphore to limit concurrent nix subprocess calls.
-	sem := make(chan struct{}, max(runtime.NumCPU()*2, 16))
-
-	g, ctx := errgroup.WithContext(context.Background())
-
+	// Group packages by level.
+	maxLevel := 0
+	for _, lvl := range levels {
+		if lvl > maxLevel {
+			maxLevel = lvl
+		}
+	}
+	levelBuckets := make([][]*nixdrv.Derivation, maxLevel+1)
 	for i, pkg := range sorted {
-		drv := drvs[i]
-		g.Go(func() error {
-			// Wait for all non-stdlib dependency drvs to be registered.
-			for _, imp := range pkg.Imports {
-				ch, ok := done[imp]
-				if !ok {
-					continue // stdlib or not in graph
-				}
-				select {
-				case <-ch:
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			}
-
-			// Acquire semaphore slot for the nix subprocess call.
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			defer func() { <-sem }()
-
-			nixPath, err := nix.DerivationAdd(drv)
-			if err != nil {
-				return err
-			}
-			ourPath, err := drv.DrvPath()
-			if err != nil {
-				return fmt.Errorf("re-computing drv path: %w", err)
-			}
-			if nixPath.Absolute() != ourPath.Absolute() {
-				return fmt.Errorf("CA drv path mismatch:\n  ours: %s\n  nix:  %s\n  our aterm: %s",
-					ourPath.Absolute(), nixPath.Absolute(), drv.DebugATerm())
-			}
-
-			close(done[pkg.ImportPath])
-			return nil
-		})
+		lvl := levels[pkg.ImportPath]
+		levelBuckets[lvl] = append(levelBuckets[lvl], drvs[i])
 	}
-	return g.Wait()
+
+	// Register level by level: parallel within, sequential between.
+	concurrency := max(runtime.NumCPU()*2, 16)
+	for lvl, bucket := range levelBuckets {
+		g := new(errgroup.Group)
+		g.SetLimit(concurrency)
+		for _, drv := range bucket {
+			g.Go(func() error {
+				nixPath, err := nix.DerivationAdd(drv)
+				if err != nil {
+					return err
+				}
+				ourPath, err := drv.DrvPath()
+				if err != nil {
+					return fmt.Errorf("re-computing drv path: %w", err)
+				}
+				if nixPath.Absolute() != ourPath.Absolute() {
+					return fmt.Errorf("CA drv path mismatch:\n  ours: %s\n  nix:  %s\n  our aterm: %s",
+						ourPath.Absolute(), nixPath.Absolute(), drv.DebugATerm())
+				}
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return fmt.Errorf("level %d: %w", lvl, err)
+		}
+	}
+	return nil
 }
 
 // setupGOMODCACHE creates a temporary GOMODCACHE by merging all FOD outputs
