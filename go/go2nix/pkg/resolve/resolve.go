@@ -232,10 +232,23 @@ func Resolve(cfg Config) error {
 	}
 	slog.Info("package derivations built", "local", localCount, "thirdParty", thirdPartyCount, "elapsed", time.Since(t))
 
-	// Step 7b: Register all package derivations with the store in parallel.
+	// Step 7b: Register package derivations in topo order.
+	// Package drvs reference each other as input derivations. `nix derivation add`
+	// requires input drvs to already exist, so we register sequentially.
 	t = time.Now()
-	if err := registerDerivations(nix, pkgDrvs); err != nil {
-		return fmt.Errorf("registering package derivations: %w", err)
+	for _, drv := range pkgDrvs {
+		nixPath, err := nix.DerivationAdd(drv)
+		if err != nil {
+			return fmt.Errorf("registering package derivation: %w", err)
+		}
+		ourPath, err := drv.DrvPath()
+		if err != nil {
+			return fmt.Errorf("re-computing drv path: %w", err)
+		}
+		if nixPath.Absolute() != ourPath.Absolute() {
+			return fmt.Errorf("CA drv path mismatch:\n  ours: %s\n  nix:  %s\n  our aterm: %s",
+				ourPath.Absolute(), nixPath.Absolute(), drv.DebugATerm())
+		}
 	}
 	slog.Info("package derivations registered", "count", len(pkgDrvs), "elapsed", time.Since(t))
 
@@ -246,8 +259,10 @@ func Resolve(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if err := registerDerivations(nix, finalDrvs); err != nil {
-		return fmt.Errorf("registering final derivations: %w", err)
+	for _, drv := range finalDrvs {
+		if _, err := nix.DerivationAdd(drv); err != nil {
+			return fmt.Errorf("registering final derivation: %w", err)
+		}
 	}
 	slog.Info("link derivation created", "elapsed", time.Since(t))
 
