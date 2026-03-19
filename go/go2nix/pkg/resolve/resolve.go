@@ -364,8 +364,18 @@ func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
 				return fmt.Errorf("re-computing drv path: %w", err)
 			}
 			if nixPath.Absolute() != ourPath.Absolute() {
-				return fmt.Errorf("drv path mismatch for %s:\n  ours: %s\n  nix:  %s",
-					ourPath.Name, ourPath.Absolute(), nixPath.Absolute())
+				// Read the ATerm Nix wrote for comparison
+				nixATerm := "(could not read)"
+				if data, err := os.ReadFile(nixPath.Absolute()); err == nil {
+					nixATerm = string(data)
+				}
+				// Get our JSON for debugging
+				ourJSON := "(could not serialize)"
+				if data, err := drv.ToJSON(); err == nil {
+					ourJSON = string(data)
+				}
+				return fmt.Errorf("drv path mismatch for %s:\n  ours: %s\n  nix:  %s\n  nix aterm: %s\n  our json: %s",
+					ourPath.Name, ourPath.Absolute(), nixPath.Absolute(), nixATerm, ourJSON)
 			}
 			return nil
 		})
