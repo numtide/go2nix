@@ -1,6 +1,7 @@
 package nixdrv
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"sort"
@@ -154,4 +155,28 @@ func parseSRIHash(sri string) (algo string, hexHash string, err error) {
 		return "", "", fmt.Errorf("parsing SRI hash %q: %w", sri, err)
 	}
 	return h.Algo().String(), hex.EncodeToString(h.Digest()), nil
+}
+
+// DebugATerm returns the ATerm representation this derivation would produce,
+// after filling in FOD output paths. For debugging only.
+func (d *Derivation) DebugATerm() string {
+	gnd, err := d.toGoNixDerivation()
+	if err != nil {
+		return fmt.Sprintf("(conversion error: %v)", err)
+	}
+	if isFOD(gnd) {
+		outputPaths, err := gnd.CalculateOutputPaths(nil)
+		if err != nil {
+			return fmt.Sprintf("(output path error: %v)", err)
+		}
+		for name, path := range outputPaths {
+			gnd.Outputs[name].Path = path
+			gnd.Env[name] = path
+		}
+	}
+	var buf bytes.Buffer
+	if err := gnd.WriteDerivation(&buf); err != nil {
+		return fmt.Sprintf("(write error: %v)", err)
+	}
+	return buf.String()
 }
