@@ -4,6 +4,7 @@
 package resolve
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -234,10 +235,12 @@ func Resolve(cfg Config) error {
 	slog.Info("package derivations built", "local", localCount, "thirdParty", thirdPartyCount, "elapsed", time.Since(t))
 
 	// Step 7b: Register package derivations with the store in parallel.
-	// Nix does not validate that input drvs exist during `nix derivation add`
-	// (validation is purely structural), so all drvs can be registered concurrently.
+	// Nix validates that input drvs exist during `nix derivation add`, so we
+	// can't blast all drvs concurrently. Instead, each drv waits for its
+	// dependency drvs to be registered first, then registers itself. This gives
+	// maximum parallelism while respecting the dependency ordering constraint.
 	t = time.Now()
-	if err := registerDerivationsValidated(nix, pkgDrvs); err != nil {
+	if err := registerDerivationsParallel(nix, sorted, pkgDrvs, graph); err != nil {
 		return fmt.Errorf("registering package derivations: %w", err)
 	}
 	slog.Info("package derivations registered", "count", len(pkgDrvs), "elapsed", time.Since(t))
@@ -366,15 +369,56 @@ func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
 	return g.Wait()
 }
 
-// registerDerivationsValidated registers derivations in parallel with bounded
-// concurrency, and validates that our in-process .drv paths match what Nix returns.
-func registerDerivationsValidated(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
-	g := new(errgroup.Group)
-	// Use 2x CPU count for concurrency — these are I/O-bound subprocess calls,
-	// not CPU-bound, so we can exceed GOMAXPROCS. SQLite WAL handles contention.
-	g.SetLimit(max(runtime.NumCPU()*2, 16))
-	for _, drv := range drvs {
+// registerDerivationsParallel registers package derivations with maximum parallelism
+// while respecting dependency ordering. Each package waits for its dependency drvs
+// to be registered, then registers itself. Validates in-process .drv paths match Nix.
+//
+// Goroutines are cheap (~4KB each), so we launch one per derivation immediately.
+// Most block on dependency channels. A separate semaphore limits concurrent
+// `nix derivation add` subprocess calls. Context cancellation prevents deadlocks
+// if any goroutine fails (dependents wake up via ctx.Done instead of waiting forever).
+func registerDerivationsParallel(
+	nix *nixdrv.NixTool,
+	sorted []*ResolvedPkg,
+	drvs []*nixdrv.Derivation,
+	graph map[string]*ResolvedPkg,
+) error {
+	// Create a "done" channel for each package drv. The channel is closed
+	// once the drv has been successfully registered with Nix.
+	done := make(map[string]chan struct{}, len(sorted))
+	for _, pkg := range sorted {
+		done[pkg.ImportPath] = make(chan struct{})
+	}
+
+	// Semaphore to limit concurrent nix subprocess calls.
+	sem := make(chan struct{}, max(runtime.NumCPU()*2, 16))
+
+	g, ctx := errgroup.WithContext(context.Background())
+
+	for i, pkg := range sorted {
+		drv := drvs[i]
 		g.Go(func() error {
+			// Wait for all non-stdlib dependency drvs to be registered.
+			for _, imp := range pkg.Imports {
+				ch, ok := done[imp]
+				if !ok {
+					continue // stdlib or not in graph
+				}
+				select {
+				case <-ch:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+
+			// Acquire semaphore slot for the nix subprocess call.
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			defer func() { <-sem }()
+
 			nixPath, err := nix.DerivationAdd(drv)
 			if err != nil {
 				return err
@@ -387,6 +431,8 @@ func registerDerivationsValidated(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation
 				return fmt.Errorf("CA drv path mismatch:\n  ours: %s\n  nix:  %s\n  our aterm: %s",
 					ourPath.Absolute(), nixPath.Absolute(), drv.DebugATerm())
 			}
+
+			close(done[pkg.ImportPath])
 			return nil
 		})
 	}
