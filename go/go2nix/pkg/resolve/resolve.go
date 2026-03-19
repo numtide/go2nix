@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"golang.org/x/mod/module"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/numtide/go2nix/pkg/buildinfo"
@@ -120,12 +121,16 @@ func Resolve(cfg Config) error {
 	}
 	slog.Info("lockfile loaded", "modules", len(lock.Mod))
 
-	// Step 2: Create module FODs
+	// Step 2: Build module FOD derivations (in-process .drv path computation)
 	t := time.Now()
 	slog.Info("creating module FODs")
-	fodDrvPaths, err := createModuleFODs(cfg, nix, lock)
+	fodDrvPaths, fodDrvs, err := buildModuleFODs(cfg, lock)
 	if err != nil {
 		return err
+	}
+	// Register FODs with the store in parallel
+	if err := registerDerivations(nix, fodDrvs); err != nil {
+		return fmt.Errorf("registering FODs: %w", err)
 	}
 	slog.Info("module FODs created", "count", len(fodDrvPaths), "elapsed", time.Since(t))
 
@@ -205,9 +210,12 @@ func Resolve(cfg Config) error {
 	}
 	slog.Info("packages sorted", "count", len(sorted))
 
-	// Step 7: Create package CA derivations (in topo order)
+	// Step 7a: Build package derivation specs in topo order.
+	// .drv paths are computed in-process (microseconds per derivation)
+	// instead of shelling out to `nix derivation add` (~33ms each).
 	t = time.Now()
-	slog.Info("creating package derivations")
+	slog.Info("building package derivations")
+	var pkgDrvs []*nixdrv.Derivation
 	localCount := 0
 	thirdPartyCount := 0
 	for _, pkg := range sorted {
@@ -216,18 +224,30 @@ func Resolve(cfg Config) error {
 		} else {
 			thirdPartyCount++
 		}
-		if err := createPackageDrv(cfg, nix, graph, pkg, overrides); err != nil {
-			return fmt.Errorf("creating derivation for %s: %w", pkg.ImportPath, err)
+		drv, err := buildPackageDrv(cfg, nix, graph, pkg, overrides)
+		if err != nil {
+			return fmt.Errorf("building derivation for %s: %w", pkg.ImportPath, err)
 		}
+		pkgDrvs = append(pkgDrvs, drv)
 	}
-	slog.Info("package derivations created", "local", localCount, "thirdParty", thirdPartyCount, "elapsed", time.Since(t))
+	slog.Info("package derivations built", "local", localCount, "thirdParty", thirdPartyCount, "elapsed", time.Since(t))
 
-	// Step 8+9: Create link/collector derivation
+	// Step 7b: Register all package derivations with the store in parallel.
+	t = time.Now()
+	if err := registerDerivations(nix, pkgDrvs); err != nil {
+		return fmt.Errorf("registering package derivations: %w", err)
+	}
+	slog.Info("package derivations registered", "count", len(pkgDrvs), "elapsed", time.Since(t))
+
+	// Step 8+9: Build link/collector derivation specs
 	t = time.Now()
 	slog.Info("creating link derivation")
-	finalDrvPath, err := createFinalDrv(cfg, nix, graph, sorted)
+	finalDrvPath, finalDrvs, err := buildFinalDrv(cfg, graph, sorted)
 	if err != nil {
 		return err
+	}
+	if err := registerDerivations(nix, finalDrvs); err != nil {
+		return fmt.Errorf("registering final derivations: %w", err)
 	}
 	slog.Info("link derivation created", "elapsed", time.Since(t))
 
@@ -241,16 +261,18 @@ func Resolve(cfg Config) error {
 	return nil
 }
 
-// createModuleFODs creates a FOD derivation for each module in the lockfile.
-// Returns modKey → .drv StorePath.
-func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) (map[string]*storepath.StorePath, error) {
+// buildModuleFODs creates a FOD derivation for each module in the lockfile.
+// Computes .drv paths in-process (no subprocess calls).
+// Returns modKey → .drv StorePath plus the list of Derivations for parallel registration.
+func buildModuleFODs(cfg Config, lock *lockfile.Lockfile) (map[string]*storepath.StorePath, []*nixdrv.Derivation, error) {
 	result := make(map[string]*storepath.StorePath, len(lock.Mod))
+	drvs := make([]*nixdrv.Derivation, 0, len(lock.Mod))
 	bashStorePath := storeDirOf(cfg.BashBin)
 
 	for modKey, hash := range lock.Mod {
 		modPath, version, ok := strings.Cut(modKey, "@")
 		if !ok {
-			return nil, fmt.Errorf("invalid module key: %s", modKey)
+			return nil, nil, fmt.Errorf("invalid module key: %s", modKey)
 		}
 
 		fetchPath := modPath
@@ -280,13 +302,14 @@ func createModuleFODs(cfg Config, nix *nixdrv.NixTool, lock *lockfile.Lockfile) 
 			drv.AddInputSrc(storeDirOf(cfg.NetrcFile))
 		}
 
-		drvPath, err := nix.DerivationAdd(drv)
+		drvPath, err := drv.DrvPath()
 		if err != nil {
-			return nil, fmt.Errorf("creating FOD for %s: %w", modKey, err)
+			return nil, nil, fmt.Errorf("computing drv path for FOD %s: %w", modKey, err)
 		}
 		result[modKey] = drvPath
+		drvs = append(drvs, drv)
 	}
-	return result, nil
+	return result, drvs, nil
 }
 
 // buildFODs materializes all FODs in a single batched nix build call.
@@ -322,6 +345,20 @@ func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]*storepath.StorePath)
 		result[k] = paths[i]
 	}
 	return result, nil
+}
+
+// registerDerivations registers all derivations with the Nix store in parallel
+// via `nix derivation add`. The .drv paths have already been computed in-process;
+// this step writes the .drv files into the store so they can be built.
+func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
+	g := new(errgroup.Group)
+	for _, drv := range drvs {
+		g.Go(func() error {
+			_, err := nix.DerivationAdd(drv)
+			return err
+		})
+	}
+	return g.Wait()
 }
 
 // setupGOMODCACHE creates a temporary GOMODCACHE by merging all FOD outputs
@@ -371,14 +408,16 @@ func symlinkTree(src, dst string) error {
 	})
 }
 
-// createPackageDrv creates a CA derivation for a single package.
-func createPackageDrv(
+// buildPackageDrv builds a CA derivation for a single package and computes its
+// .drv path in-process. The derivation is returned for later parallel registration.
+// For local packages, nix.StoreAdd is called to add filtered source to the store.
+func buildPackageDrv(
 	cfg Config,
 	nix *nixdrv.NixTool,
 	graph map[string]*ResolvedPkg,
 	pkg *ResolvedPkg,
 	overrides map[string]PackageOverride,
-) error {
+) (*nixdrv.Derivation, error) {
 	_, modVersion, _ := strings.Cut(pkg.ModKey, "@")
 	drvName := nixdrv.PkgDrvName(pkg.ImportPath, modVersion)
 	bashStorePath := storeDirOf(cfg.BashBin)
@@ -435,14 +474,14 @@ func createPackageDrv(
 		pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
 		filteredDir, err := createFilteredPkgDir(pkgDir, pkg)
 		if err != nil {
-			return fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
+			return nil, fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
 		}
 		defer os.RemoveAll(filteredDir)
 
 		name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
 		pkgStorePath, err := nix.StoreAdd(name, filteredDir)
 		if err != nil {
-			return fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
+			return nil, fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
 		}
 		drv.SetEnv("modSrc", pkgStorePath.Absolute())
 		drv.SetEnv("relDir", ".")
@@ -451,7 +490,7 @@ func createPackageDrv(
 		drv.SetEnv("modSrc", pkg.FodPath.Absolute())
 		escapedPath, err := module.EscapePath(pkg.FetchPath)
 		if err != nil {
-			return fmt.Errorf("escaping module path %s: %w", pkg.FetchPath, err)
+			return nil, fmt.Errorf("escaping module path %s: %w", pkg.FetchPath, err)
 		}
 		relDir := escapedPath + "@" + pkg.Version
 		if pkg.Subdir != "" {
@@ -532,22 +571,21 @@ func createPackageDrv(
 		drv.AddInputSrc(p)
 	}
 
-	drvPath, err := nix.DerivationAdd(drv)
+	drvPath, err := drv.DrvPath()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("computing drv path for %s: %w", pkg.ImportPath, err)
 	}
 	pkg.DrvPath = drvPath
-	return nil
+	return drv, nil
 }
 
-// createFinalDrv creates the link (and optional collector) derivation.
-// Returns the final .drv path to copy to $out.
-func createFinalDrv(
+// buildFinalDrv creates the link (and optional collector) derivation.
+// Returns the final .drv path and all derivations for parallel registration.
+func buildFinalDrv(
 	cfg Config,
-	nix *nixdrv.NixTool,
 	graph map[string]*ResolvedPkg,
 	sorted []*ResolvedPkg,
-) (*storepath.StorePath, error) {
+) (*storepath.StorePath, []*nixdrv.Derivation, error) {
 	// Find main packages
 	var mainPkgs []*ResolvedPkg
 	for _, pkg := range sorted {
@@ -557,39 +595,46 @@ func createFinalDrv(
 	}
 
 	if len(mainPkgs) == 0 {
-		return nil, fmt.Errorf("no main packages found")
+		return nil, nil, fmt.Errorf("no main packages found")
 	}
 
-	// Create a link derivation for each main package
+	// Build a link derivation for each main package
 	var linkDrvPaths []*storepath.StorePath
 	var linkPlaceholders []string
+	var drvs []*nixdrv.Derivation
 
 	for _, mainPkg := range mainPkgs {
-		drvPath, err := createLinkDrv(cfg, nix, graph, sorted, mainPkg, len(mainPkgs))
+		drvPath, drv, err := buildLinkDrv(cfg, graph, sorted, mainPkg, len(mainPkgs))
 		if err != nil {
-			return nil, fmt.Errorf("creating link for %s: %w", mainPkg.ImportPath, err)
+			return nil, nil, fmt.Errorf("building link for %s: %w", mainPkg.ImportPath, err)
 		}
 		linkDrvPaths = append(linkDrvPaths, drvPath)
 		linkPlaceholders = append(linkPlaceholders, nixdrv.CAOutput(drvPath, "out").Render())
+		drvs = append(drvs, drv)
 	}
 
 	if len(linkDrvPaths) == 1 {
-		return linkDrvPaths[0], nil
+		return linkDrvPaths[0], drvs, nil
 	}
 
 	// Multiple binaries — create collector
-	return createCollectorDrv(cfg, nix, linkDrvPaths, linkPlaceholders)
+	collectorPath, collectorDrv, err := buildCollectorDrv(cfg, linkDrvPaths, linkPlaceholders)
+	if err != nil {
+		return nil, nil, err
+	}
+	drvs = append(drvs, collectorDrv)
+	return collectorPath, drvs, nil
 }
 
-// createLinkDrv creates a link derivation for a main package.
-func createLinkDrv(
+// buildLinkDrv builds a link derivation for a main package.
+// Returns the .drv path and the Derivation for parallel registration.
+func buildLinkDrv(
 	cfg Config,
-	nix *nixdrv.NixTool,
 	graph map[string]*ResolvedPkg,
 	sorted []*ResolvedPkg,
 	mainPkg *ResolvedPkg,
 	numMains int,
-) (*storepath.StorePath, error) {
+) (*storepath.StorePath, *nixdrv.Derivation, error) {
 	// For single binary, use pname. For multiple binaries, derive name from import path.
 	binName := cfg.PName
 	if numMains > 1 {
@@ -629,7 +674,7 @@ func createLinkDrv(
 	// Add all stdlib entries — the linker needs the full transitive closure.
 	stdlibImports, err := collectStdlibImports(cfg.StdlibPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, imp := range stdlibImports {
 		importcfgEntries = append(importcfgEntries,
@@ -716,16 +761,20 @@ func createLinkDrv(
 		drv.AddInputSrc(p)
 	}
 
-	return nix.DerivationAdd(drv)
+	drvPath, err := drv.DrvPath()
+	if err != nil {
+		return nil, nil, fmt.Errorf("computing link drv path: %w", err)
+	}
+	return drvPath, drv, nil
 }
 
-// createCollectorDrv creates a collector derivation merging multiple link outputs.
-func createCollectorDrv(
+// buildCollectorDrv builds a collector derivation merging multiple link outputs.
+// Returns the .drv path and Derivation for parallel registration.
+func buildCollectorDrv(
 	cfg Config,
-	nix *nixdrv.NixTool,
 	linkDrvPaths []*storepath.StorePath,
 	linkPlaceholders []string,
-) (*storepath.StorePath, error) {
+) (*storepath.StorePath, *nixdrv.Derivation, error) {
 	drvName := nixdrv.CollectDrvName(cfg.PName)
 	bashStorePath := storeDirOf(cfg.BashBin)
 
@@ -745,7 +794,11 @@ func createCollectorDrv(
 		drv.AddInputDrv(drvPath.Absolute(), "out")
 	}
 
-	return nix.DerivationAdd(drv)
+	drvPath, err := drv.DrvPath()
+	if err != nil {
+		return nil, nil, fmt.Errorf("computing collector drv path: %w", err)
+	}
+	return drvPath, drv, nil
 }
 
 // collectStdlibImports returns all stdlib import paths from the pre-compiled stdlib.
