@@ -350,12 +350,24 @@ func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]*storepath.StorePath)
 // registerDerivations registers all derivations with the Nix store in parallel
 // via `nix derivation add`. The .drv paths have already been computed in-process;
 // this step writes the .drv files into the store so they can be built.
+// It validates that the Nix-returned path matches our in-process computation.
 func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
 	g := new(errgroup.Group)
 	for _, drv := range drvs {
 		g.Go(func() error {
-			_, err := nix.DerivationAdd(drv)
-			return err
+			nixPath, err := nix.DerivationAdd(drv)
+			if err != nil {
+				return err
+			}
+			ourPath, err := drv.DrvPath()
+			if err != nil {
+				return fmt.Errorf("re-computing drv path: %w", err)
+			}
+			if nixPath.Absolute() != ourPath.Absolute() {
+				return fmt.Errorf("drv path mismatch for %s:\n  ours: %s\n  nix:  %s",
+					ourPath.Name, ourPath.Absolute(), nixPath.Absolute())
+			}
+			return nil
 		})
 	}
 	return g.Wait()
