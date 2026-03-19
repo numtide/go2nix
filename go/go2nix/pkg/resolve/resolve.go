@@ -405,14 +405,20 @@ func createPackageDrv(
 		drv.SetEnv("PKG_CONFIG_PATH", strings.Join(pkgConfigParts, ":"))
 	}
 
-	// Source location — scope per-package for granular CA invalidation.
-	// Each local package derivation references only its own directory rather than
-	// the entire source tree, so changing one .go file only invalidates the
-	// packages that contain it (and CA early-cutoff handles the rest).
+	// Source location — scope per-package at file level for granular CA
+	// invalidation. Each local package derivation references a store path
+	// containing only its compilation-relevant files (source + embed targets),
+	// so changing one .go file only invalidates the packages that contain it.
 	if pkg.IsLocal {
 		pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
+		filteredDir, err := createFilteredPkgDir(pkgDir, pkg)
+		if err != nil {
+			return fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
+		}
+		defer os.RemoveAll(filteredDir)
+
 		name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
-		pkgStorePath, err := nix.StoreAdd(name, pkgDir)
+		pkgStorePath, err := nix.StoreAdd(name, filteredDir)
 		if err != nil {
 			return fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
 		}
@@ -860,6 +866,66 @@ func generateModinfo(cfg Config, sorted []*ResolvedPkg) (string, error) {
 	}
 
 	return buildinfo.GenerateModinfo(filepath.Join(cfg.Src, cfg.ModRoot), goVersion, deps)
+}
+
+// createFilteredPkgDir creates a temporary directory containing only the files
+// needed to compile a package: source files (GoFiles, CgoFiles, etc.) and embed
+// targets. This enables file-level granularity for CA invalidation — changes to
+// unrelated files in the same directory tree won't affect this package's store hash.
+func createFilteredPkgDir(pkgDir string, pkg *ResolvedPkg) (string, error) {
+	tmpDir, err := os.MkdirTemp("", "gosrc-*")
+	if err != nil {
+		return "", err
+	}
+
+	// Collect all basenames (source files in the immediate package directory).
+	var files []string
+	files = append(files, pkg.GoFiles...)
+	files = append(files, pkg.CgoFiles...)
+	files = append(files, pkg.CFiles...)
+	files = append(files, pkg.CXXFiles...)
+	files = append(files, pkg.FFiles...)
+	files = append(files, pkg.SFiles...)
+	files = append(files, pkg.HFiles...)
+	files = append(files, pkg.SysoFiles...)
+
+	// Copy source files (basenames).
+	for _, f := range files {
+		if err := linkOrCopyFile(filepath.Join(pkgDir, f), filepath.Join(tmpDir, f)); err != nil {
+			os.RemoveAll(tmpDir)
+			return "", fmt.Errorf("copying %s: %w", f, err)
+		}
+	}
+
+	// Copy embed target files (may include subdirectory paths like "templates/index.html").
+	for _, f := range pkg.EmbedFiles {
+		dst := filepath.Join(tmpDir, f)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			os.RemoveAll(tmpDir)
+			return "", fmt.Errorf("creating dir for embed file %s: %w", f, err)
+		}
+		if err := linkOrCopyFile(filepath.Join(pkgDir, f), dst); err != nil {
+			os.RemoveAll(tmpDir)
+			return "", fmt.Errorf("copying embed file %s: %w", f, err)
+		}
+	}
+
+	return tmpDir, nil
+}
+
+// linkOrCopyFile creates dst as a hard link to src. Falls back to a regular
+// copy if hard linking fails (e.g., cross-device). Hard links avoid memory
+// overhead for large embed assets and are resolved to real file content by
+// nix store add.
+func linkOrCopyFile(src, dst string) error {
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o644)
 }
 
 // copyFile copies src to dst.
