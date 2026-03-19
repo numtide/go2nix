@@ -54,17 +54,14 @@ func writeArrayElems(writer io.Writer, quote bool, open []byte, closing []byte, 
 		}
 
 		if quote {
-			if _, err = writer.Write(quoteC); err != nil {
+			// Use escapeString to properly escape and quote the element.
+			// This handles newlines, backslashes, quotes, etc. in strings
+			// like builder arguments that can contain shell scripts.
+			if _, err = writer.Write(escapeStringB(elem)); err != nil {
 				return err
 			}
-		}
-
-		if _, err = writer.Write(unsafeBytes(elem)); err != nil {
-			return err
-		}
-
-		if quote {
-			if _, err = writer.Write(quoteC); err != nil {
+		} else {
+			if _, err = writer.Write(unsafeBytes(elem)); err != nil {
 				return err
 			}
 		}
