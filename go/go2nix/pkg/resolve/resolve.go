@@ -11,9 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
+	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/module"
 	"golang.org/x/sync/errgroup"
@@ -232,23 +233,12 @@ func Resolve(cfg Config) error {
 	}
 	slog.Info("package derivations built", "local", localCount, "thirdParty", thirdPartyCount, "elapsed", time.Since(t))
 
-	// Step 7b: Register package derivations in topo order.
-	// Package drvs reference each other as input derivations. `nix derivation add`
-	// requires input drvs to already exist, so we register sequentially.
+	// Step 7b: Register package derivations with the store in parallel.
+	// Nix does not validate that input drvs exist during `nix derivation add`
+	// (validation is purely structural), so all drvs can be registered concurrently.
 	t = time.Now()
-	for _, drv := range pkgDrvs {
-		nixPath, err := nix.DerivationAdd(drv)
-		if err != nil {
-			return fmt.Errorf("registering package derivation: %w", err)
-		}
-		ourPath, err := drv.DrvPath()
-		if err != nil {
-			return fmt.Errorf("re-computing drv path: %w", err)
-		}
-		if nixPath.Absolute() != ourPath.Absolute() {
-			return fmt.Errorf("CA drv path mismatch:\n  ours: %s\n  nix:  %s\n  our aterm: %s",
-				ourPath.Absolute(), nixPath.Absolute(), drv.DebugATerm())
-		}
+	if err := registerDerivationsValidated(nix, pkgDrvs); err != nil {
+		return fmt.Errorf("registering package derivations: %w", err)
 	}
 	slog.Info("package derivations registered", "count", len(pkgDrvs), "elapsed", time.Since(t))
 
@@ -371,6 +361,33 @@ func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
 		g.Go(func() error {
 			_, err := nix.DerivationAdd(drv)
 			return err
+		})
+	}
+	return g.Wait()
+}
+
+// registerDerivationsValidated registers derivations in parallel with bounded
+// concurrency, and validates that our in-process .drv paths match what Nix returns.
+func registerDerivationsValidated(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
+	g := new(errgroup.Group)
+	// Use 2x CPU count for concurrency — these are I/O-bound subprocess calls,
+	// not CPU-bound, so we can exceed GOMAXPROCS. SQLite WAL handles contention.
+	g.SetLimit(max(runtime.NumCPU()*2, 16))
+	for _, drv := range drvs {
+		g.Go(func() error {
+			nixPath, err := nix.DerivationAdd(drv)
+			if err != nil {
+				return err
+			}
+			ourPath, err := drv.DrvPath()
+			if err != nil {
+				return fmt.Errorf("re-computing drv path: %w", err)
+			}
+			if nixPath.Absolute() != ourPath.Absolute() {
+				return fmt.Errorf("CA drv path mismatch:\n  ours: %s\n  nix:  %s\n  our aterm: %s",
+					ourPath.Absolute(), nixPath.Absolute(), drv.DebugATerm())
+			}
+			return nil
 		})
 	}
 	return g.Wait()
