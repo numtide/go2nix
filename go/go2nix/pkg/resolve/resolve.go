@@ -149,6 +149,15 @@ func Resolve(cfg Config) error {
 		"GONOSUMCHECK=*",
 		"GOPROXY=off",
 		"GOFLAGS=-mod=readonly",
+		// The merged GOMODCACHE is assembled from symlinks to Nix store FOD
+		// outputs (see setupGOMODCACHE). Go's //go:embed rejects symlinks by
+		// default. This GODEBUG allows leaf-file symlinks to be followed.
+		// It does NOT cover directory symlinks or symlinks inside directory
+		// walks (those are silently skipped). A proper fix would copy files
+		// instead of symlinking them in setupGOMODCACHE.
+		// See: https://github.com/golang/go/issues/59924
+		//      https://github.com/golang/go/issues/44507
+		"GODEBUG=embedfollowsymlinks=1",
 	}
 	if cfg.CGOEnabled != "" {
 		golistEnv = append(golistEnv, "CGO_ENABLED="+cfg.CGOEnabled)
