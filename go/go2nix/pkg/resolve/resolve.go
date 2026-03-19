@@ -405,11 +405,20 @@ func createPackageDrv(
 		drv.SetEnv("PKG_CONFIG_PATH", strings.Join(pkgConfigParts, ":"))
 	}
 
-	// Source location
+	// Source location — scope per-package for granular CA invalidation.
+	// Each local package derivation references only its own directory rather than
+	// the entire source tree, so changing one .go file only invalidates the
+	// packages that contain it (and CA early-cutoff handles the rest).
 	if pkg.IsLocal {
-		drv.SetEnv("modSrc", cfg.Src)
-		drv.SetEnv("relDir", filepath.Join(cfg.ModRoot, pkg.Subdir))
-		drv.AddInputSrc(cfg.Src)
+		pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
+		name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
+		pkgStorePath, err := nix.StoreAdd(name, pkgDir)
+		if err != nil {
+			return fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
+		}
+		drv.SetEnv("modSrc", pkgStorePath.Absolute())
+		drv.SetEnv("relDir", ".")
+		drv.AddInputSrc(pkgStorePath.Absolute())
 	} else {
 		drv.SetEnv("modSrc", pkg.FodPath.Absolute())
 		escapedPath, err := module.EscapePath(pkg.FetchPath)
@@ -850,7 +859,7 @@ func generateModinfo(cfg Config, sorted []*ResolvedPkg) (string, error) {
 		deps = append(deps, dep)
 	}
 
-	return buildinfo.GenerateModinfo(cfg.Src, goVersion, deps)
+	return buildinfo.GenerateModinfo(filepath.Join(cfg.Src, cfg.ModRoot), goVersion, deps)
 }
 
 // copyFile copies src to dst.
