@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 	"sort"
 	"strings"
 
@@ -109,6 +110,8 @@ func Resolve(cfg Config) error {
 	}
 	_, _, cfg.allOverridePaths = discoverInputPaths(allOverrideInputs)
 
+	resolveStart := time.Now()
+
 	// Step 1: Read lockfile
 	slog.Info("reading lockfile", "path", cfg.LockFile)
 	lock, err := lockfile.Read(cfg.LockFile)
@@ -118,27 +121,34 @@ func Resolve(cfg Config) error {
 	slog.Info("lockfile loaded", "modules", len(lock.Mod))
 
 	// Step 2: Create module FODs
+	t := time.Now()
 	slog.Info("creating module FODs")
 	fodDrvPaths, err := createModuleFODs(cfg, nix, lock)
 	if err != nil {
 		return err
 	}
+	slog.Info("module FODs created", "count", len(fodDrvPaths), "elapsed", time.Since(t))
 
 	// Step 3: Materialize FODs (build them)
+	t = time.Now()
 	slog.Info("building module FODs", "count", len(fodDrvPaths))
 	fodPaths, err := buildFODs(nix, fodDrvPaths)
 	if err != nil {
 		return err
 	}
+	slog.Info("module FODs built", "elapsed", time.Since(t))
 
 	// Step 4: Set up GOMODCACHE
+	t = time.Now()
 	gomodcache, err := setupGOMODCACHE(fodPaths)
 	if err != nil {
 		return fmt.Errorf("setting up GOMODCACHE: %w", err)
 	}
 	defer os.RemoveAll(gomodcache)
+	slog.Info("GOMODCACHE set up", "elapsed", time.Since(t))
 
 	// Step 5: Discover packages
+	t = time.Now()
 	slog.Info("discovering packages")
 	subPkgs := []string{"./..."}
 	if cfg.SubPackages != "" {
@@ -182,7 +192,7 @@ func Resolve(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("discovering packages: %w", err)
 	}
-	slog.Info("packages discovered", "count", len(pkgs))
+	slog.Info("packages discovered", "count", len(pkgs), "elapsed", time.Since(t))
 
 	// Step 6: Build and topo-sort package graph
 	graph, err := buildPackageGraph(pkgs, fodPaths, moduleRoot)
@@ -196,22 +206,34 @@ func Resolve(cfg Config) error {
 	slog.Info("packages sorted", "count", len(sorted))
 
 	// Step 7: Create package CA derivations (in topo order)
+	t = time.Now()
 	slog.Info("creating package derivations")
+	localCount := 0
+	thirdPartyCount := 0
 	for _, pkg := range sorted {
+		if pkg.IsLocal {
+			localCount++
+		} else {
+			thirdPartyCount++
+		}
 		if err := createPackageDrv(cfg, nix, graph, pkg, overrides); err != nil {
 			return fmt.Errorf("creating derivation for %s: %w", pkg.ImportPath, err)
 		}
 	}
+	slog.Info("package derivations created", "local", localCount, "thirdParty", thirdPartyCount, "elapsed", time.Since(t))
 
 	// Step 8+9: Create link/collector derivation
+	t = time.Now()
 	slog.Info("creating link derivation")
 	finalDrvPath, err := createFinalDrv(cfg, nix, graph, sorted)
 	if err != nil {
 		return err
 	}
+	slog.Info("link derivation created", "elapsed", time.Since(t))
 
 	// Step 10: Copy .drv file to $out
 	slog.Info("writing output", "drv", finalDrvPath.Absolute(), "out", cfg.Output)
+	slog.Info("resolve total elapsed", "elapsed", time.Since(resolveStart))
 	if err := copyFile(finalDrvPath.Absolute(), cfg.Output); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
