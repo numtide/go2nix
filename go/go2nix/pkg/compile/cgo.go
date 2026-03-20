@@ -35,6 +35,7 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(cgowork)
 
 	cc := envOrDefault("CC", "gcc")
 	cxx := envOrDefault("CXX", "g++")
