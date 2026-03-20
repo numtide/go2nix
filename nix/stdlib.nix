@@ -11,8 +11,8 @@
   runCommandCC,
 }:
 runCommandCC "go-stdlib-${go.version}" { nativeBuildInputs = [ go ]; } ''
-  HOME=$NIX_BUILD_TOP/home
-  mkdir -p $HOME
+  HOME="$NIX_BUILD_TOP/home"
+  mkdir -p "$HOME"
 
   # Copy Go source tree so we can write to it.
   goroot="$(go env GOROOT)"
@@ -20,15 +20,15 @@ runCommandCC "go-stdlib-${go.version}" { nativeBuildInputs = [ go ]; } ''
   chmod -R +w .
 
   # Compile all stdlib packages.
-  GODEBUG=installgoroot=all GOROOT=$NIX_BUILD_TOP go install -v --trimpath std 2>&1
+  GODEBUG=installgoroot=all GOROOT="$NIX_BUILD_TOP" go install -v --trimpath std 2>&1
 
   # Collect .a files into $out and generate importcfg.
-  mkdir -p $out
-  cp -r pkg/*_*/* $out
+  mkdir -p "$out"
+  cp -r pkg/*_*/* "$out"
 
-  find $out -name '*.a' | sort | while read -r archive; do
+  find "$out" -name '*.a' | sort | while read -r archive; do
     rel="''${archive#"$out/"}"
     pkg="''${rel%.a}"
     echo "packagefile $pkg=$archive"
-  done > $out/importcfg
+  done > "$out/importcfg"
 ''
