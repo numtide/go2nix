@@ -4,6 +4,7 @@
 package testrunner
 
 import (
+	"bufio"
 	"fmt"
 	"log/slog"
 	"os"
@@ -99,8 +100,12 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg) error {
 		for _, f := range pkg.EmbedFiles {
 			src := filepath.Join(pkg.SrcDir, f)
 			dst := filepath.Join(mergedDir, f)
-			os.MkdirAll(filepath.Dir(dst), 0o755)
-			os.Symlink(src, dst)
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return fmt.Errorf("creating embed dir for %s: %w", f, err)
+			}
+			if err := os.Symlink(src, dst); err != nil && !os.IsExist(err) {
+				return fmt.Errorf("symlinking embed %s: %w", f, err)
+			}
 		}
 
 		if err := compile.CompileGoPackage(compile.Options{
@@ -123,14 +128,13 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg) error {
 		}
 	}
 
-	// Override the package entry in importcfg to point to the test archive
+	// Override the package entry in importcfg to point to the test archive.
+	// We rewrite the importcfg filtering out any existing entry for this
+	// package to avoid duplicate packagefile directives.
 	if internalArchive != "" {
-		f, err := os.OpenFile(testImportCfg, os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			return err
+		if err := overrideImportCfgEntry(testImportCfg, pkg.ImportPath, internalArchive); err != nil {
+			return fmt.Errorf("overriding importcfg for %s: %w", pkg.ImportPath, err)
 		}
-		fmt.Fprintf(f, "packagefile %s=%s\n", pkg.ImportPath, internalArchive)
-		f.Close()
 	}
 
 	// Step 2: Compile external test archive
@@ -165,8 +169,12 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(f, "packagefile %s=%s\n", pkg.ImportPath+"_test", externalArchive)
-		f.Close()
+		_, writeErr := fmt.Fprintf(f, "packagefile %s=%s\n", pkg.ImportPath+"_test", externalArchive)
+		if closeErr := f.Close(); writeErr != nil {
+			return writeErr
+		} else if closeErr != nil {
+			return closeErr
+		}
 	}
 
 	// Step 3: Generate test main
@@ -212,26 +220,26 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg) error {
 		return err
 	}
 
-	goLinkTool, err := goToolPath("link")
-	if err != nil {
-		return err
-	}
-
+	// Use `go tool link` rather than invoking the linker binary directly.
+	// The build phase invokes the linker directly to prevent GOROOT embedding
+	// in production binaries, but test binaries are ephemeral so this doesn't
+	// matter. Using `go tool link` matches how compile uses `go tool compile`.
 	linkArgs := []string{
+		"tool", "link",
 		"-buildid=redacted",
 		"-importcfg", linkImportCfg,
 		"-o", testBin,
 		testMainArchive,
 	}
-	cmd := exec.Command(goLinkTool, linkArgs...)
+	cmd := exec.Command("go", linkArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("linking test binary: %w\n%s", err, out)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("linking test binary: %w", err)
 	}
 
 	// Step 6: Run tests
-	testArgs := []string{}
+	var testArgs []string
 	if opts.CheckFlags != "" {
 		testArgs = strings.Fields(opts.CheckFlags)
 	}
@@ -247,12 +255,27 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg) error {
 	return nil
 }
 
-func goToolPath(tool string) (string, error) {
-	out, err := exec.Command("go", "env", "GOTOOLDIR").Output()
+// overrideImportCfgEntry rewrites the importcfg file, replacing (or adding)
+// the packagefile entry for importPath with the given archive path.
+// This avoids duplicate packagefile directives which have undefined behavior.
+func overrideImportCfgEntry(importCfgPath, importPath, archivePath string) error {
+	data, err := os.ReadFile(importCfgPath)
 	if err != nil {
-		return "", fmt.Errorf("go env GOTOOLDIR: %w", err)
+		return err
 	}
-	return filepath.Join(strings.TrimSpace(string(out)), tool), nil
+
+	prefix := "packagefile " + importPath + "="
+	var lines []string
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, prefix) {
+			lines = append(lines, line)
+		}
+	}
+	lines = append(lines, fmt.Sprintf("packagefile %s=%s", importPath, archivePath))
+
+	return os.WriteFile(importCfgPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
 
 func sanitize(s string) string {
