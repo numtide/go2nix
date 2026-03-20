@@ -19,9 +19,13 @@ import (
 
 // LocalPkg describes a local package with its files and location.
 type LocalPkg struct {
-	ImportPath string   `json:"import_path"`
-	SrcDir     string   `json:"src_dir"`
-	LocalDeps  []string `json:"local_deps"` // local-to-local dependency import paths
+	ImportPath   string   `json:"import_path"`
+	SrcDir       string   `json:"src_dir"`
+	LocalDeps    []string `json:"local_deps"` // local-to-local dependency import paths
+	TestGoFiles  []string `json:"test_go_files"`
+	XTestGoFiles []string `json:"xtest_go_files"`
+	TestImports  []string `json:"test_imports"`
+	XTestImports []string `json:"xtest_imports"`
 	gofiles.PkgFiles
 }
 
@@ -96,10 +100,14 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 			}
 
 			localPkg := &LocalPkg{
-				ImportPath: importPath,
-				SrcDir:     path,
-				LocalDeps:  local,
-				PkgFiles:   pf,
+				ImportPath:   importPath,
+				SrcDir:       path,
+				LocalDeps:    local,
+				TestGoFiles:  nonNil(pkg.TestGoFiles),
+				XTestGoFiles: nonNil(pkg.XTestGoFiles),
+				TestImports:  nonNil(pkg.TestImports),
+				XTestImports: nonNil(pkg.XTestImports),
+				PkgFiles:     pf,
 			}
 			pkgs[importPath] = localPkg
 			localDeps[importPath] = local
@@ -124,6 +132,13 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 	return toposort.Sort(pkgs, func(key string) []string {
 		return localDeps[key]
 	})
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func isLocalImport(imp string, prefixes []string) bool {
