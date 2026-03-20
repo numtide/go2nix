@@ -221,6 +221,7 @@ func Resolve(cfg Config) error {
 	// instead of shelling out to `nix derivation add` (~33ms each).
 	t = time.Now()
 	slog.Info("building package derivations")
+	pkgScript := compileScript(cfg.Go2NixBin)
 	var pkgDrvs []*nixdrv.Derivation
 	localCount := 0
 	thirdPartyCount := 0
@@ -230,7 +231,7 @@ func Resolve(cfg Config) error {
 		} else {
 			thirdPartyCount++
 		}
-		drv, err := buildPackageDrv(cfg, nix, graph, pkg, overrides)
+		drv, err := buildPackageDrv(cfg, nix, graph, pkg, overrides, pkgScript)
 		if err != nil {
 			return fmt.Errorf("building derivation for %s: %w", pkg.ImportPath, err)
 		}
@@ -507,6 +508,7 @@ func buildPackageDrv(
 	graph map[string]*ResolvedPkg,
 	pkg *ResolvedPkg,
 	overrides map[string]PackageOverride,
+	pkgScript string,
 ) (*nixdrv.Derivation, error) {
 	_, modVersion, _ := strings.Cut(pkg.ModKey, "@")
 	drvName := nixdrv.PkgDrvName(pkg.ImportPath, modVersion)
@@ -515,7 +517,7 @@ func buildPackageDrv(
 
 	drv := nixdrv.NewDerivation(drvName, cfg.System, bashStorePath+"/bin/bash")
 	drv.AddArg("-c")
-	drv.AddArg(compileScript(cfg.Go2NixBin))
+	drv.AddArg(pkgScript)
 	drv.AddCAOutput("out", "sha256", "nar")
 
 	drv.SetEnv("importPath", pkg.ImportPath)
