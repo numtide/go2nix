@@ -84,7 +84,10 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 				return nil
 			}
 
-			rel, _ := filepath.Rel(dir, path)
+			rel, err := filepath.Rel(dir, path)
+			if err != nil {
+				return fmt.Errorf("computing relative path for %s: %w", path, err)
+			}
 			importPath := importBase
 			if rel != "." {
 				importPath = importBase + "/" + rel
