@@ -502,126 +502,41 @@ func buildPackageDrv(
 	bashStorePath := storeDirOf(cfg.BashBin)
 	go2nixStorePath := storeDirOf(cfg.Go2NixBin)
 
-	script := compileScript(cfg.Go2NixBin)
-
 	drv := nixdrv.NewDerivation(drvName, cfg.System, bashStorePath+"/bin/bash")
 	drv.AddArg("-c")
-	drv.AddArg(script)
+	drv.AddArg(compileScript(cfg.Go2NixBin))
 	drv.AddCAOutput("out", "sha256", "nar")
 
-	// Set env vars
 	drv.SetEnv("importPath", pkg.ImportPath)
 	if pkg.Name == "main" {
 		drv.SetEnv("pflag", "main")
 	}
 
-	// PATH must include go, go2nix, and coreutils (mkdir, etc.)
-	goStoreDir := storeDirOf(cfg.GoBin)
-	pathParts := []string{goStoreDir + "/bin", go2nixStorePath + "/bin", cfg.coreutilsDir + "/bin"}
-	// Collect nativeBuildInputs from overrides, discover actual dirs and
-	// follow propagated-build-inputs for transitive dependencies.
-	var overrideStorePaths []string
-	if ov, ok := overrides[pkg.ImportPath]; ok {
-		overrideStorePaths = append(overrideStorePaths, ov.NativeBuildInputs...)
-	}
-	if pkg.ModPath != "" {
-		if ov, ok := overrides[pkg.ModPath]; ok {
-			overrideStorePaths = append(overrideStorePaths, ov.NativeBuildInputs...)
-		}
-	}
-	inputs := discoverInputPaths(overrideStorePaths)
-	pathParts = append(pathParts, inputs.BinDirs...)
-	var pkgConfigParts []string
-	pkgConfigParts = append(pkgConfigParts, inputs.PkgConfigDirs...)
+	// PATH and overrides
+	inputs := setupPkgOverrides(cfg, drv, pkg, overrides, go2nixStorePath)
 
-	// Add C compiler for cgo packages (needed even without overrides).
-	if len(pkg.CgoFiles) > 0 && cfg.ccDir != "" {
-		pathParts = append(pathParts, cfg.ccDir+"/bin")
-		drv.AddInputSrc(cfg.ccDir)
+	// Source location
+	if err := setupPkgSource(cfg, nix, drv, pkg); err != nil {
+		return nil, err
 	}
 
-	drv.SetEnv("PATH", strings.Join(pathParts, ":"))
-	if len(pkgConfigParts) > 0 {
-		drv.SetEnv("PKG_CONFIG_PATH", strings.Join(pkgConfigParts, ":"))
-	}
+	// Importcfg
+	buildImportcfg(cfg, drv, pkg, graph)
 
-	// Source location — scope per-package at file level for granular CA
-	// invalidation. Each local package derivation references a store path
-	// containing only its compilation-relevant files (source + embed targets),
-	// so changing one .go file only invalidates the packages that contain it.
-	if pkg.IsLocal {
-		pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
-		filteredDir, err := createFilteredPkgDir(pkgDir, pkg)
-		if err != nil {
-			return nil, fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
-		}
-		defer os.RemoveAll(filteredDir)
-
-		name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
-		pkgStorePath, err := nix.StoreAdd(name, filteredDir)
-		if err != nil {
-			return nil, fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
-		}
-		drv.SetEnv("modSrc", pkgStorePath.Absolute())
-		drv.SetEnv("relDir", ".")
-		drv.AddInputSrc(pkgStorePath.Absolute())
-	} else {
-		drv.SetEnv("modSrc", pkg.FodPath.Absolute())
-		escapedPath, err := module.EscapePath(pkg.FetchPath)
-		if err != nil {
-			return nil, fmt.Errorf("escaping module path %s: %w", pkg.FetchPath, err)
-		}
-		relDir := escapedPath + "@" + pkg.Version
-		if pkg.Subdir != "" {
-			relDir += "/" + pkg.Subdir
-		}
-		drv.SetEnv("relDir", relDir)
-		drv.AddInputSrc(pkg.FodPath.Absolute())
-	}
-
-	// Build importcfg entries.
-	// With -compiled, go list already includes cgo-generated implicit imports
-	// (runtime/cgo, syscall, unsafe) in the Imports field.
-	var importcfgEntries []string
-	for _, imp := range pkg.Imports {
-		dep, ok := graph[imp]
-		if !ok {
-			// Stdlib package
-			importcfgEntries = append(importcfgEntries,
-				fmt.Sprintf("packagefile %s=%s/%s.a", imp, cfg.StdlibPath, imp))
-			continue
-		}
-		// Non-stdlib dep — use CA placeholder
-		placeholder := nixdrv.CAOutput(dep.DrvPath, "out")
-		importcfgEntries = append(importcfgEntries,
-			fmt.Sprintf("packagefile %s=%s/pkg.a", imp, placeholder.Render()))
-		drv.AddInputDrv(dep.DrvPath.Absolute(), "out")
-	}
-	drv.SetEnv("importcfg_entries", strings.Join(importcfgEntries, "\n"))
-
-	// Forward build tags if set
+	// Forward optional compile flags
 	if cfg.Tags != "" {
 		drv.SetEnv("tags", cfg.Tags)
 	}
-
-	// Forward Go language version for -lang flag (from module's go.mod).
 	if pkg.GoVersion != "" {
 		drv.SetEnv("goVersion", compile.LangVersion(pkg.GoVersion))
 	}
-
-	// Forward CGO_ENABLED if set
 	if cfg.CGOEnabled != "" {
 		drv.SetEnv("CGO_ENABLED", cfg.CGOEnabled)
 	}
-
-	// PGO profile — passed to every package's compile step.
 	if cfg.PGOProfile != "" {
 		drv.SetEnv("pgoProfile", cfg.PGOProfile)
 		drv.AddInputSrc(storeDirOf(cfg.PGOProfile))
 	}
-
-	// Forward gcflags. When building PIE, pass -shared to the compiler
-	// so it generates position-independent code, matching cmd/go behavior.
 	gcflags := cfg.GCFlags
 	if cfg.buildMode == "pie" {
 		if gcflags != "" {
@@ -634,18 +549,14 @@ func buildPackageDrv(
 		drv.SetEnv("gcflags", gcflags)
 	}
 
-	// CA placeholder for out
-	// We don't know our own drv path yet, so use standard placeholder
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
 
-	// Input sources
+	// Common input sources
 	drv.AddInputSrc(bashStorePath)
 	drv.AddInputSrc(cfg.coreutilsDir)
 	drv.AddInputSrc(go2nixStorePath)
 	drv.AddInputSrc(storeDirOf(cfg.GoBin))
 	drv.AddInputSrc(cfg.StdlibPath)
-
-	// Package overrides (cgo) — add all discovered paths (including transitive).
 	for _, p := range inputs.All {
 		drv.AddInputSrc(p)
 	}
@@ -656,6 +567,108 @@ func buildPackageDrv(
 	}
 	pkg.DrvPath = drvPath
 	return drv, nil
+}
+
+// setupPkgOverrides configures PATH and PKG_CONFIG_PATH on the derivation
+// from package overrides (nativeBuildInputs) and cgo compiler requirements.
+func setupPkgOverrides(
+	cfg Config,
+	drv *nixdrv.Derivation,
+	pkg *ResolvedPkg,
+	overrides map[string]PackageOverride,
+	go2nixStorePath string,
+) InputPaths {
+	goStoreDir := storeDirOf(cfg.GoBin)
+	pathParts := []string{goStoreDir + "/bin", go2nixStorePath + "/bin", cfg.coreutilsDir + "/bin"}
+
+	var overrideStorePaths []string
+	if ov, ok := overrides[pkg.ImportPath]; ok {
+		overrideStorePaths = append(overrideStorePaths, ov.NativeBuildInputs...)
+	}
+	if pkg.ModPath != "" {
+		if ov, ok := overrides[pkg.ModPath]; ok {
+			overrideStorePaths = append(overrideStorePaths, ov.NativeBuildInputs...)
+		}
+	}
+	inputs := discoverInputPaths(overrideStorePaths)
+	pathParts = append(pathParts, inputs.BinDirs...)
+
+	if len(pkg.CgoFiles) > 0 && cfg.ccDir != "" {
+		pathParts = append(pathParts, cfg.ccDir+"/bin")
+		drv.AddInputSrc(cfg.ccDir)
+	}
+
+	drv.SetEnv("PATH", strings.Join(pathParts, ":"))
+	if len(inputs.PkgConfigDirs) > 0 {
+		drv.SetEnv("PKG_CONFIG_PATH", strings.Join(inputs.PkgConfigDirs, ":"))
+	}
+	return inputs
+}
+
+// setupPkgSource configures the source location (modSrc, relDir) on the derivation.
+// For local packages, creates a filtered store path with only compilation-relevant files.
+// For third-party packages, references the FOD output path.
+func setupPkgSource(
+	cfg Config,
+	nix *nixdrv.NixTool,
+	drv *nixdrv.Derivation,
+	pkg *ResolvedPkg,
+) error {
+	if pkg.IsLocal {
+		pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
+		filteredDir, err := createFilteredPkgDir(pkgDir, pkg)
+		if err != nil {
+			return fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
+		}
+		defer os.RemoveAll(filteredDir)
+
+		name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
+		pkgStorePath, err := nix.StoreAdd(name, filteredDir)
+		if err != nil {
+			return fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
+		}
+		drv.SetEnv("modSrc", pkgStorePath.Absolute())
+		drv.SetEnv("relDir", ".")
+		drv.AddInputSrc(pkgStorePath.Absolute())
+		return nil
+	}
+
+	drv.SetEnv("modSrc", pkg.FodPath.Absolute())
+	escapedPath, err := module.EscapePath(pkg.FetchPath)
+	if err != nil {
+		return fmt.Errorf("escaping module path %s: %w", pkg.FetchPath, err)
+	}
+	relDir := escapedPath + "@" + pkg.Version
+	if pkg.Subdir != "" {
+		relDir += "/" + pkg.Subdir
+	}
+	drv.SetEnv("relDir", relDir)
+	drv.AddInputSrc(pkg.FodPath.Absolute())
+	return nil
+}
+
+// buildImportcfg builds importcfg entries for a package derivation, mapping each
+// import to either a stdlib archive path or a CA placeholder for a non-stdlib dep.
+func buildImportcfg(
+	cfg Config,
+	drv *nixdrv.Derivation,
+	pkg *ResolvedPkg,
+	graph map[string]*ResolvedPkg,
+) {
+	var entries []string
+	for _, imp := range pkg.Imports {
+		dep, ok := graph[imp]
+		if !ok {
+			entries = append(entries,
+				fmt.Sprintf("packagefile %s=%s/%s.a", imp, cfg.StdlibPath, imp))
+			continue
+		}
+		placeholder := nixdrv.CAOutput(dep.DrvPath, "out")
+		entries = append(entries,
+			fmt.Sprintf("packagefile %s=%s/pkg.a", imp, placeholder.Render()))
+		drv.AddInputDrv(dep.DrvPath.Absolute(), "out")
+	}
+	drv.SetEnv("importcfg_entries", strings.Join(entries, "\n"))
 }
 
 // buildFinalDrv creates the link (and optional collector) derivation.
