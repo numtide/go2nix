@@ -3,11 +3,8 @@
 package golist
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -138,19 +135,19 @@ func ListDeps(opts ListDepsOptions) ([]Pkg, error) {
 	cmd.Env = append(os.Environ(), opts.Env...)
 	cmd.Stderr = os.Stderr
 
-	out, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		return nil, fmt.Errorf("go list stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("go list in %s: %w", opts.Dir, err)
 	}
 
 	var pkgs []Pkg
-	dec := json.NewDecoder(bytes.NewReader(out))
-	for {
+	dec := json.NewDecoder(stdout)
+	for dec.More() {
 		var pkg Pkg
 		if err := dec.Decode(&pkg); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
 			return nil, fmt.Errorf("decoding go list output: %w", err)
 		}
 		if pkg.Standard {
@@ -160,6 +157,10 @@ func ListDeps(opts ListDepsOptions) ([]Pkg, error) {
 			continue
 		}
 		pkgs = append(pkgs, pkg)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("go list in %s: %w", opts.Dir, err)
 	}
 	return pkgs, nil
 }
