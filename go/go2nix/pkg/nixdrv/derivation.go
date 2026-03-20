@@ -2,7 +2,6 @@ package nixdrv
 
 import (
 	"encoding/json"
-	"slices"
 	"sort"
 	"strings"
 
@@ -18,7 +17,7 @@ type Derivation struct {
 	args      []string
 	env       map[string]string
 	inputDrvs map[string]*InputDrv
-	inputSrcs []string
+	inputSrcs map[string]struct{}
 	outputs   map[string]*Output
 }
 
@@ -53,7 +52,7 @@ func NewDerivation(name, system, builder string) *Derivation {
 		args:      []string{},
 		env:       make(map[string]string),
 		inputDrvs: make(map[string]*InputDrv),
-		inputSrcs: []string{},
+		inputSrcs: make(map[string]struct{}),
 		outputs:   make(map[string]*Output),
 	}
 }
@@ -105,10 +104,7 @@ func (d *Derivation) AddInputDrv(drvPath string, outputs ...string) *Derivation 
 
 // AddInputSrc adds an input source path.
 func (d *Derivation) AddInputSrc(path string) *Derivation {
-	if slices.Contains(d.inputSrcs, path) {
-		return d
-	}
-	d.inputSrcs = append(d.inputSrcs, path)
+	d.inputSrcs[path] = struct{}{}
 	return d
 }
 
@@ -139,9 +135,9 @@ type inputsJSON struct {
 func (d *Derivation) toSerializable() derivationJSON {
 	// v4 format uses store basenames (without /nix/store/ prefix)
 	// for inputs.srcs and inputs.drvs keys.
-	srcs := make([]string, len(d.inputSrcs))
-	for i, s := range d.inputSrcs {
-		srcs[i] = storeBaseName(s)
+	srcs := make([]string, 0, len(d.inputSrcs))
+	for s := range d.inputSrcs {
+		srcs = append(srcs, storeBaseName(s))
 	}
 
 	drvs := make(map[string]*InputDrv, len(d.inputDrvs))

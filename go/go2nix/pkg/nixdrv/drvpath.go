@@ -81,8 +81,10 @@ func (d *Derivation) toGoNixDerivation() (*gonixdrv.Derivation, error) {
 	}
 
 	// Sort input sources
-	inputSrcs := make([]string, len(d.inputSrcs))
-	copy(inputSrcs, d.inputSrcs)
+	inputSrcs := make([]string, 0, len(d.inputSrcs))
+	for s := range d.inputSrcs {
+		inputSrcs = append(inputSrcs, s)
+	}
 	sort.Strings(inputSrcs)
 
 	// Build env — v4 JSON does NOT include "name" in env; it's a top-level
