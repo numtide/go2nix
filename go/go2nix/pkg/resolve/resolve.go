@@ -703,13 +703,19 @@ func buildFinalDrv(
 		return nil, nil, fmt.Errorf("no main packages found")
 	}
 
+	// Collect stdlib imports once (deterministic for a given stdlib path).
+	stdlibImports, err := collectStdlibImports(cfg.StdlibPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// Build a link derivation for each main package
 	var linkDrvPaths []*storepath.StorePath
 	var linkPlaceholders []string
 	var drvs []*nixdrv.Derivation
 
 	for _, mainPkg := range mainPkgs {
-		drvPath, drv, err := buildLinkDrv(cfg, graph, sorted, mainPkg, len(mainPkgs))
+		drvPath, drv, err := buildLinkDrv(cfg, graph, sorted, mainPkg, len(mainPkgs), stdlibImports)
 		if err != nil {
 			return nil, nil, fmt.Errorf("building link for %s: %w", mainPkg.ImportPath, err)
 		}
@@ -739,6 +745,7 @@ func buildLinkDrv(
 	sorted []*ResolvedPkg,
 	mainPkg *ResolvedPkg,
 	numMains int,
+	stdlibImports []string,
 ) (*storepath.StorePath, *nixdrv.Derivation, error) {
 	// For single binary, use pname. For multiple binaries, derive name from import path.
 	binName := cfg.PName
@@ -777,10 +784,6 @@ func buildLinkDrv(
 	}
 
 	// Add all stdlib entries — the linker needs the full transitive closure.
-	stdlibImports, err := collectStdlibImports(cfg.StdlibPath)
-	if err != nil {
-		return nil, nil, err
-	}
 	for _, imp := range stdlibImports {
 		importcfgEntries = append(importcfgEntries,
 			fmt.Sprintf("packagefile %s=%s/%s.a", imp, cfg.StdlibPath, imp))
