@@ -127,9 +127,19 @@ func narHashPath(path string) (string, error) {
 }
 
 func removeReadOnly(dir string) {
-	filepath.WalkDir(dir, func(path string, _ fs.DirEntry, _ error) error {
-		os.Chmod(path, 0o755)
+	// Go module cache dirs are read-only; chmod before removal.
+	// Errors are logged rather than returned since this is called
+	// via defer and cleanup failure is non-fatal.
+	filepath.WalkDir(dir, func(path string, _ fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := os.Chmod(path, 0o755); err != nil {
+			slog.Debug("chmod failed during cleanup", "path", path, "err", err)
+		}
 		return nil
 	})
-	os.RemoveAll(dir)
+	if err := os.RemoveAll(dir); err != nil {
+		slog.Warn("failed to remove temp dir", "dir", dir, "err", err)
+	}
 }
