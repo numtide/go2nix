@@ -70,16 +70,9 @@ type PackageOverride struct {
 	NativeBuildInputs []string `json:"nativeBuildInputs"`
 }
 
-// Resolve orchestrates the full dynamic derivation resolve flow.
-func Resolve(cfg Config) error {
-	nix := &nixdrv.NixTool{
-		NixBin: cfg.NixBin,
-		ExtraArgs: []string{
-			"--extra-experimental-features", "nix-command ca-derivations dynamic-derivations",
-		},
-	}
-
-	// Derive coreutils store path from the explicit binary path.
+// prepare derives internal fields from the user-provided Config values:
+// coreutils store path, CC/CXX paths for cgo, and default build mode.
+func (cfg *Config) prepare() {
 	cfg.coreutilsDir = storeDirOf(cfg.CoreutilsBin)
 
 	// Find CC/CXX for cgo packages (stdenv provides these in the cc-wrapper).
@@ -96,6 +89,18 @@ func Resolve(cfg Config) error {
 	// matching cmd/go's platform.DefaultPIE logic.
 	cfg.buildMode = resolveDefaultBuildMode(cfg.GoBin)
 	slog.Info("build mode", "mode", cfg.buildMode)
+}
+
+// Resolve orchestrates the full dynamic derivation resolve flow.
+func Resolve(cfg Config) error {
+	nix := &nixdrv.NixTool{
+		NixBin: cfg.NixBin,
+		ExtraArgs: []string{
+			"--extra-experimental-features", "nix-command ca-derivations dynamic-derivations",
+		},
+	}
+
+	cfg.prepare()
 
 	// Parse overrides
 	overrides := map[string]PackageOverride{}
