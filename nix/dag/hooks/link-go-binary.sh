@@ -179,6 +179,20 @@ linkGoBinaryInstallPhase() {
   runHook postInstall
 }
 
+linkGoBinaryCheckPhase() {
+  runHook preCheck
+
+  @go2nix@ test-packages \
+    --import-cfg "$NIX_BUILD_TOP/importcfg" \
+    --local-dir "$NIX_BUILD_TOP/local-pkgs" \
+    --trim-path "$NIX_BUILD_TOP" \
+    @tagArg@ \
+    ${goCheckFlags:+--check-flags "$goCheckFlags"} \
+    "$goModuleRoot"
+
+  runHook postCheck
+}
+
 # Consumed by Nix stdenv, not by this script.
 # shellcheck disable=SC2034
 configurePhase=linkGoBinaryConfigurePhase
@@ -186,5 +200,7 @@ configurePhase=linkGoBinaryConfigurePhase
 buildPhase=linkGoBinaryBuildPhase
 # shellcheck disable=SC2034
 installPhase=linkGoBinaryInstallPhase
+# shellcheck disable=SC2034
+checkPhase=linkGoBinaryCheckPhase
 # shellcheck disable=SC2034
 dontUnpack=1

@@ -41,6 +41,8 @@
   nativeBuildInputs ? [ ],
   modRoot ? ".",
   packageOverrides ? { },
+  doCheck ? true,
+  checkFlags ? [],
   ...
 }@args:
 
@@ -185,6 +187,8 @@ let
     "nativeBuildInputs"
     "modRoot"
     "packageOverrides"
+    "doCheck"
+    "checkFlags"
   ];
 
 in
@@ -198,6 +202,7 @@ stdenv.mkDerivation (
       version
       src
       meta
+      doCheck
       ;
 
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
@@ -223,6 +228,7 @@ stdenv.mkDerivation (
       goPname = pname;
     }
     // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { })
-    // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { });
+    // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
+    // (if checkFlags != [] then { goCheckFlags = concatStringsSep " " checkFlags; } else { });
   }
 )
