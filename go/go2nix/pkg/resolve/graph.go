@@ -49,10 +49,6 @@ func buildPackageGraph(
 ) (map[string]*ResolvedPkg, error) {
 	result := make(map[string]*ResolvedPkg, len(pkgs))
 	for _, pkg := range pkgs {
-		if pkg.Standard {
-			continue
-		}
-
 		rp := &ResolvedPkg{
 			ImportPath:     pkg.ImportPath,
 			GoFiles:        pkg.GoFiles,
