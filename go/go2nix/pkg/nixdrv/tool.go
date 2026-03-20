@@ -3,6 +3,7 @@ package nixdrv
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 
@@ -22,41 +23,23 @@ func (t *NixTool) DerivationAdd(drv *Derivation) (*storepath.StorePath, error) {
 		return nil, fmt.Errorf("serializing derivation %q: %w", drv.name, err)
 	}
 
-	args := append(t.baseArgs(), "derivation", "add")
-	cmd := exec.Command(t.NixBin, args...)
-	cmd.Stdin = bytes.NewReader(jsonData)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("nix derivation add for %q failed: %w\nstderr: %s\nJSON: %s",
-			drv.name, err, stderr.String(), string(jsonData))
+	out, err := t.run(bytes.NewReader(jsonData), "derivation", "add")
+	if err != nil {
+		return nil, fmt.Errorf("nix derivation add for %q: %w\nJSON: %s", drv.name, err, jsonData)
 	}
-
-	drvPath := strings.TrimSpace(stdout.String())
-	return storepath.FromAbsolutePath(drvPath)
+	return storepath.FromAbsolutePath(out)
 }
 
 // Build runs `nix build <installables> --no-link --print-out-paths` and returns output paths.
 func (t *NixTool) Build(installables ...string) ([]*storepath.StorePath, error) {
-	args := append(t.baseArgs(), "build")
-	args = append(args, "--no-link", "--print-out-paths")
-	args = append(args, installables...)
-
-	cmd := exec.Command(t.NixBin, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("nix build %v failed: %w\nstderr: %s",
-			installables, err, stderr.String())
+	args := append([]string{"build", "--no-link", "--print-out-paths"}, installables...)
+	out, err := t.run(nil, args...)
+	if err != nil {
+		return nil, fmt.Errorf("nix build %v: %w", installables, err)
 	}
 
 	var paths []*storepath.StorePath
-	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -72,23 +55,30 @@ func (t *NixTool) Build(installables ...string) ([]*storepath.StorePath, error) 
 
 // StoreAdd runs `nix store add --name <name> <path>` and returns the store path.
 func (t *NixTool) StoreAdd(name, path string) (*storepath.StorePath, error) {
-	args := append(t.baseArgs(), "store", "add", "--name", name, path)
-	cmd := exec.Command(t.NixBin, args...)
+	out, err := t.run(nil, "store", "add", "--name", name, path)
+	if err != nil {
+		return nil, fmt.Errorf("nix store add %q: %w", name, err)
+	}
+	return storepath.FromAbsolutePath(out)
+}
+
+// run executes a nix subcommand, returning trimmed stdout.
+// If stdin is non-nil it is piped to the process.
+// On failure the error includes stderr.
+func (t *NixTool) run(stdin io.Reader, args ...string) (string, error) {
+	cmdArgs := make([]string, len(t.ExtraArgs)+len(args))
+	copy(cmdArgs, t.ExtraArgs)
+	copy(cmdArgs[len(t.ExtraArgs):], args)
+
+	cmd := exec.Command(t.NixBin, cmdArgs...)
+	cmd.Stdin = stdin
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("nix store add %q failed: %w\nstderr: %s",
-			name, err, stderr.String())
+		return "", fmt.Errorf("%w\nstderr: %s", err, stderr.String())
 	}
-
-	return storepath.FromAbsolutePath(strings.TrimSpace(stdout.String()))
-}
-
-func (t *NixTool) baseArgs() []string {
-	args := make([]string, len(t.ExtraArgs))
-	copy(args, t.ExtraArgs)
-	return args
+	return strings.TrimSpace(stdout.String()), nil
 }
