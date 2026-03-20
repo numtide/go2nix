@@ -21,6 +21,10 @@ linkGoBinaryConfigurePhase() {
 
   # Extract module path from go.mod at build time (avoids Nix eval-time parsing).
   goModulePath=$(awk '/^module /{print $2; exit}' "$goModuleRoot/go.mod")
+  if [ -z "$goModulePath" ]; then
+    echo "go2nix: could not extract module path from $goModuleRoot/go.mod" >&2
+    exit 1
+  fi
   export goModulePath
 
   # Build importcfg: stdlib + all third-party deps.
