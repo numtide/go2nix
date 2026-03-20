@@ -50,6 +50,7 @@ type Config struct {
 	CACert       string // path to CA certificate bundle
 	NetrcFile    string // path to .netrc file for private module authentication
 	Output       string // $out path
+	NixJobs      int    // max concurrent nix derivation add calls; 0 = auto (NumCPU*2, min 16)
 
 	// coreutilsDir is the store path of coreutils, derived from CoreutilsBin.
 	coreutilsDir string
@@ -89,6 +90,10 @@ func (cfg *Config) prepare() {
 	// matching cmd/go's platform.DefaultPIE logic.
 	cfg.buildMode = resolveDefaultBuildMode(cfg.GoBin)
 	slog.Info("build mode", "mode", cfg.buildMode)
+
+	if cfg.NixJobs <= 0 {
+		cfg.NixJobs = max(runtime.NumCPU()*2, 16)
+	}
 }
 
 // Resolve orchestrates the full dynamic derivation resolve flow.
@@ -135,7 +140,7 @@ func Resolve(cfg Config) error {
 		return err
 	}
 	// Register FODs with the store in parallel
-	if err := registerDerivations(nix, fodDrvs); err != nil {
+	if err := registerDerivations(nix, fodDrvs, cfg.NixJobs); err != nil {
 		return fmt.Errorf("registering FODs: %w", err)
 	}
 	slog.Info("module FODs created", "count", len(fodDrvPaths), "elapsed", time.Since(t))
@@ -245,7 +250,7 @@ func Resolve(cfg Config) error {
 	// dependency drvs to be registered first, then registers itself. This gives
 	// maximum parallelism while respecting the dependency ordering constraint.
 	t = time.Now()
-	if err := registerDerivationsParallel(nix, sorted, pkgDrvs, graph); err != nil {
+	if err := registerDerivationsParallel(nix, sorted, pkgDrvs, graph, cfg.NixJobs); err != nil {
 		return fmt.Errorf("registering package derivations: %w", err)
 	}
 	slog.Info("package derivations registered", "count", len(pkgDrvs), "elapsed", time.Since(t))
@@ -363,8 +368,9 @@ func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]*storepath.StorePath)
 // registerDerivations registers all derivations with the Nix store in parallel
 // via `nix derivation add`. The .drv paths have already been computed in-process;
 // this step writes the .drv files into the store so they can be built.
-func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation) error {
+func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation, concurrency int) error {
 	g := new(errgroup.Group)
+	g.SetLimit(concurrency)
 	for _, drv := range drvs {
 		g.Go(func() error {
 			_, err := nix.DerivationAdd(drv)
@@ -385,6 +391,7 @@ func registerDerivationsParallel(
 	sorted []*ResolvedPkg,
 	drvs []*nixdrv.Derivation,
 	graph map[string]*ResolvedPkg,
+	concurrency int,
 ) error {
 	// Compute topo level for each package.
 	// Level = max(dep levels) + 1; packages with no in-graph deps are level 0.
@@ -413,7 +420,6 @@ func registerDerivationsParallel(
 	}
 
 	// Register level by level: parallel within, sequential between.
-	concurrency := max(runtime.NumCPU()*2, 16)
 	for lvl, bucket := range levelBuckets {
 		g := new(errgroup.Group)
 		g.SetLimit(concurrency)
