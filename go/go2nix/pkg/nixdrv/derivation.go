@@ -2,7 +2,8 @@ package nixdrv
 
 import (
 	"encoding/json"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/numtide/go2nix/internal/gonix/storepath"
@@ -175,14 +176,9 @@ func (s sortedMap[V]) MarshalJSON() ([]byte, error) {
 	if len(s.m) == 0 {
 		return []byte("{}"), nil
 	}
-	keys := make([]string, 0, len(s.m))
-	for k := range s.m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 
 	buf := []byte("{")
-	for i, k := range keys {
+	for i, k := range slices.Sorted(maps.Keys(s.m)) {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
@@ -206,10 +202,7 @@ func (s sortedMap[V]) MarshalJSON() ([]byte, error) {
 type sortedSlice []string
 
 func (s sortedSlice) MarshalJSON() ([]byte, error) {
-	cp := make([]string, len(s))
-	copy(cp, s)
-	sort.Strings(cp)
-	return json.Marshal([]string(cp))
+	return json.Marshal(slices.Sorted(slices.Values(s)))
 }
 
 func mergeUnique(a, b []string) []string {
