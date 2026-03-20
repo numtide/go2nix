@@ -107,11 +107,12 @@ func CompileGoPackage(opts Options) error {
 		if err != nil {
 			return fmt.Errorf("creating embedcfg: %w", err)
 		}
-		if err := json.NewEncoder(f).Encode(files.EmbedCfg); err != nil {
-			f.Close()
+		err = json.NewEncoder(f).Encode(files.EmbedCfg)
+		if closeErr := f.Close(); err != nil {
 			return fmt.Errorf("writing embedcfg: %w", err)
+		} else if closeErr != nil {
+			return fmt.Errorf("closing embedcfg: %w", closeErr)
 		}
-		f.Close()
 		embedFlag = "-embedcfg=" + embedPath
 	}
 
