@@ -446,18 +446,25 @@ func registerDerivationsParallel(
 // Each FOD output is a GOMODCACHE subtree (GOMODCACHE=$out). Multiple FODs
 // share directory prefixes (e.g., cache/download/golang.org/) but never share
 // leaf files since each FOD downloads a unique module@version. We walk each
-// FOD, create real directories for intermediate paths, and symlink leaf files.
+// FOD in parallel, create real directories for intermediate paths, and symlink
+// leaf files. MkdirAll is safe to call concurrently (idempotent), and leaf
+// files are unique per FOD so symlinks won't collide.
 func setupGOMODCACHE(fodPaths map[string]*storepath.StorePath) (string, error) {
 	gomodcache, err := os.MkdirTemp("", "gomodcache-")
 	if err != nil {
 		return "", err
 	}
+	g := new(errgroup.Group)
+	g.SetLimit(max(runtime.NumCPU(), 8))
 	for _, fodPath := range fodPaths {
 		src := fodPath.Absolute()
-		if err := symlinkTree(src, gomodcache); err != nil {
-			os.RemoveAll(gomodcache)
-			return "", fmt.Errorf("merging FOD %s: %w", fodPath.Absolute(), err)
-		}
+		g.Go(func() error {
+			return symlinkTree(src, gomodcache)
+		})
+	}
+	if err := g.Wait(); err != nil {
+		os.RemoveAll(gomodcache)
+		return "", fmt.Errorf("merging FODs: %w", err)
 	}
 	return gomodcache, nil
 }
@@ -465,14 +472,18 @@ func setupGOMODCACHE(fodPaths map[string]*storepath.StorePath) (string, error) {
 // symlinkTree recursively walks src and mirrors its structure into dst.
 // Directories are created as real directories; files are symlinked.
 func symlinkTree(src, dst string) error {
+	// Compute prefix length once to avoid filepath.Rel per entry.
+	// src is always a clean absolute path from the Nix store.
+	srcPrefix := src + "/"
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
+		var rel string
+		if path == src {
+			return nil // skip root
 		}
+		rel = path[len(srcPrefix):]
 		target := filepath.Join(dst, rel)
 
 		if d.IsDir() {
