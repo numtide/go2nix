@@ -14,10 +14,10 @@ func TestFodScript(t *testing.T) {
 		"",
 	)
 
-	if !strings.Contains(script, "GOMODCACHE=$out") {
-		t.Error("missing GOMODCACHE=$out")
+	if !strings.Contains(script, `GOMODCACHE="$out"`) {
+		t.Error("missing GOMODCACHE=\"$out\"")
 	}
-	if !strings.Contains(script, `mod download "golang.org/x/crypto@v0.17.0"`) {
+	if !strings.Contains(script, `mod download 'golang.org/x/crypto@v0.17.0'`) {
 		t.Error("missing go mod download command")
 	}
 	if !strings.Contains(script, "SSL_CERT_FILE") {
@@ -37,11 +37,26 @@ func TestFodScriptWithNetrc(t *testing.T) {
 		"/nix/store/zzz-netrc/netrc",
 	)
 
-	if !strings.Contains(script, "cp /nix/store/zzz-netrc/netrc $HOME/.netrc") {
+	if !strings.Contains(script, "cp '/nix/store/zzz-netrc/netrc' \"$HOME/.netrc\"") {
 		t.Error("missing netrc copy")
 	}
-	if !strings.Contains(script, "chmod 600 $HOME/.netrc") {
+	if !strings.Contains(script, `chmod 600 "$HOME/.netrc"`) {
 		t.Error("missing netrc chmod")
+	}
+}
+
+func TestFodScriptQuotesSpecialChars(t *testing.T) {
+	script := fodScript(
+		"/nix/store/xxx-go/bin/go",
+		"example.com/foo's-bar",
+		"v1.0.0",
+		"",
+		"",
+	)
+
+	// Single quote in fetchPath must be escaped
+	if !strings.Contains(script, `'example.com/foo'\''s-bar@v1.0.0'`) {
+		t.Errorf("fetchPath with single quote not properly escaped:\n%s", script)
 	}
 }
 
@@ -68,13 +83,13 @@ func TestCompileScript(t *testing.T) {
 func TestLinkScript(t *testing.T) {
 	script := linkScript("/nix/store/xxx-go/bin/go", "myapp", "exe")
 
-	if !strings.Contains(script, "go tool link") {
+	if !strings.Contains(script, "tool link") {
 		t.Error("missing go tool link")
 	}
-	if !strings.Contains(script, "\"$out/bin/myapp\"") {
-		t.Error("missing output binary path")
+	if !strings.Contains(script, `"$out/bin/"'myapp'`) {
+		t.Errorf("missing output binary path:\n%s", script)
 	}
-	if !strings.Contains(script, "$mainPkg/pkg.a") {
+	if !strings.Contains(script, `"$mainPkg/pkg.a"`) {
 		t.Error("missing main package archive reference")
 	}
 	if !strings.Contains(script, `export GOROOT="$goroot"`) {
@@ -83,7 +98,7 @@ func TestLinkScript(t *testing.T) {
 	if !strings.Contains(script, "-buildid=") {
 		t.Error("missing -buildid flag")
 	}
-	if !strings.Contains(script, "-buildmode=exe") {
+	if !strings.Contains(script, "-buildmode='exe'") {
 		t.Error("missing -buildmode=exe")
 	}
 	if !strings.Contains(script, `${extld:+-extld "$extld" -linkmode external}`) {
@@ -94,7 +109,7 @@ func TestLinkScript(t *testing.T) {
 func TestLinkScriptPIE(t *testing.T) {
 	script := linkScript("/nix/store/xxx-go/bin/go", "myapp", "pie")
 
-	if !strings.Contains(script, "-buildmode=pie") {
+	if !strings.Contains(script, "-buildmode='pie'") {
 		t.Error("missing -buildmode=pie")
 	}
 }
@@ -126,10 +141,10 @@ func TestCompileScriptPGO(t *testing.T) {
 func TestCollectScript(t *testing.T) {
 	script := collectScript([]string{"/placeholder1", "/placeholder2"})
 
-	if !strings.Contains(script, "cp /placeholder1/bin/*") {
-		t.Error("missing first placeholder copy")
+	if !strings.Contains(script, "'/placeholder1'/bin/*") {
+		t.Errorf("missing first placeholder copy:\n%s", script)
 	}
-	if !strings.Contains(script, "cp /placeholder2/bin/*") {
-		t.Error("missing second placeholder copy")
+	if !strings.Contains(script, "'/placeholder2'/bin/*") {
+		t.Errorf("missing second placeholder copy:\n%s", script)
 	}
 }

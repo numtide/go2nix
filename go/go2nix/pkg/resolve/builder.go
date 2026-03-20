@@ -5,23 +5,29 @@ import (
 	"strings"
 )
 
+// shellQuote wraps a string in single quotes, escaping any embedded
+// single quotes. This prevents shell injection in generated scripts.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 // fodScript generates the bash builder script for a module FOD.
 // Matches fetch-go-module.nix behavior.
 func fodScript(goStorePath, fetchPath, version, cacertPath, netrcFile string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
-	b.WriteString("export HOME=$TMPDIR\n")
-	b.WriteString("export GOMODCACHE=$out\n")
+	b.WriteString("export HOME=\"$TMPDIR\"\n")
+	b.WriteString("export GOMODCACHE=\"$out\"\n")
 	b.WriteString("export GOSUMDB=off\n")
 	b.WriteString("export GONOSUMCHECK='*'\n")
 	if cacertPath != "" {
-		fmt.Fprintf(&b, "export SSL_CERT_FILE=%s\n", cacertPath)
+		fmt.Fprintf(&b, "export SSL_CERT_FILE=%s\n", shellQuote(cacertPath))
 	}
 	if netrcFile != "" {
-		fmt.Fprintf(&b, "cp %s $HOME/.netrc\n", netrcFile)
-		b.WriteString("chmod 600 $HOME/.netrc\n")
+		fmt.Fprintf(&b, "cp %s \"$HOME/.netrc\"\n", shellQuote(netrcFile))
+		b.WriteString("chmod 600 \"$HOME/.netrc\"\n")
 	}
-	fmt.Fprintf(&b, "%s mod download \"%s@%s\"\n", goStorePath, fetchPath, version)
+	fmt.Fprintf(&b, "%s mod download %s\n", shellQuote(goStorePath), shellQuote(fetchPath+"@"+version))
 	return b.String()
 }
 
@@ -32,20 +38,20 @@ func fodScript(goStorePath, fetchPath, version, cacertPath, netrcFile string) st
 func compileScript(go2nixBin string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
-	b.WriteString("export HOME=$TMPDIR\n")
-	b.WriteString("mkdir -p $out\n\n")
+	b.WriteString("export HOME=\"$TMPDIR\"\n")
+	b.WriteString("mkdir -p \"$out\"\n\n")
 
 	// Write importcfg from env var (placeholders resolved by Nix at build time).
 	// Use absolute path since compile-package changes CWD to srcdir.
-	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > $NIX_BUILD_TOP/importcfg\n\n")
+	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > \"$NIX_BUILD_TOP/importcfg\"\n\n")
 
 	// Source directory: modSrc/relDir for third-party, srcRoot/relDir for local
 	b.WriteString("srcdir=\"$modSrc/$relDir\"\n\n")
 
 	// Compile using go2nix compile-package
-	fmt.Fprintf(&b, "%s compile-package", go2nixBin)
+	fmt.Fprintf(&b, "%s compile-package", shellQuote(go2nixBin))
 	b.WriteString(" \\\n  --import-path \"$importPath\"")
-	b.WriteString(" \\\n  --import-cfg $NIX_BUILD_TOP/importcfg")
+	b.WriteString(" \\\n  --import-cfg \"$NIX_BUILD_TOP/importcfg\"")
 	b.WriteString(" \\\n  --src-dir \"$srcdir\"")
 	b.WriteString(" \\\n  --output \"$out/pkg.a\"")
 	b.WriteString(" \\\n  --trim-path \"$NIX_BUILD_TOP\"")
@@ -69,21 +75,22 @@ func compileScript(go2nixBin string) string {
 func linkScript(goStorePath, pname, buildMode string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
-	b.WriteString("export HOME=$TMPDIR\n")
-	b.WriteString("mkdir -p $out/bin\n\n")
+	b.WriteString("export HOME=\"$TMPDIR\"\n")
+	b.WriteString("mkdir -p \"$out/bin\"\n\n")
 
 	// Write importcfg for all transitive deps
-	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > $NIX_BUILD_TOP/importcfg\n\n")
+	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > \"$NIX_BUILD_TOP/importcfg\"\n\n")
 
 	// Set GOROOT so the linker embeds it as runtime.defaultGOROOT,
 	// enabling runtime.GOROOT() in the resulting binary.
 	b.WriteString("export GOROOT=\"$goroot\"\n\n")
 
-	// Link binary
-	fmt.Fprintf(&b, "%s tool link -o \"$out/bin/%s\"", goStorePath, pname)
-	b.WriteString(" \\\n  -importcfg $NIX_BUILD_TOP/importcfg")
+	// Link binary. pname is validated by Nix (store path component) so
+	// it cannot contain shell metacharacters, but we quote defensively.
+	fmt.Fprintf(&b, "%s tool link -o \"$out/bin/\"%s", shellQuote(goStorePath), shellQuote(pname))
+	b.WriteString(" \\\n  -importcfg \"$NIX_BUILD_TOP/importcfg\"")
 	b.WriteString(" \\\n  -buildid=")
-	fmt.Fprintf(&b, " \\\n  -buildmode=%s", buildMode)
+	fmt.Fprintf(&b, " \\\n  -buildmode=%s", shellQuote(buildMode))
 	// External linker for cgo packages — uses CC or CXX depending on
 	// whether C++ files are present, matching Go's setextld (gc.go).
 	b.WriteString(" \\\n  ${extld:+-extld \"$extld\" -linkmode external}")
@@ -93,7 +100,7 @@ func linkScript(goStorePath, pname, buildMode string) string {
 	b.WriteString(" \\\n  ${godebugDefault:+-X=runtime.godebugDefault=$godebugDefault}")
 	// ldflags passed via env
 	b.WriteString(" \\\n  ${ldflags:+$ldflags}")
-	b.WriteString(" \\\n  $mainPkg/pkg.a\n")
+	b.WriteString(" \\\n  \"$mainPkg/pkg.a\"\n")
 	return b.String()
 }
 
@@ -102,9 +109,11 @@ func linkScript(goStorePath, pname, buildMode string) string {
 func collectScript(placeholders []string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
-	b.WriteString("mkdir -p $out/bin\n")
+	b.WriteString("mkdir -p \"$out/bin\"\n")
 	for _, ph := range placeholders {
-		fmt.Fprintf(&b, "cp %s/bin/* $out/bin/\n", ph)
+		// Placeholders are Nix store path hashes (e.g., "/1abc..."), safe
+		// by construction, but we quote defensively.
+		fmt.Fprintf(&b, "cp %s/bin/* \"$out/bin/\"\n", shellQuote(ph))
 	}
 	return b.String()
 }
