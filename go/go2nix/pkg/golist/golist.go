@@ -28,8 +28,10 @@ type Pkg struct {
 	SFiles         []string `json:"SFiles"`
 	HFiles         []string `json:"HFiles"`
 	SysoFiles      []string `json:"SysoFiles"`      // .syso system object files
-	EmbedPatterns  []string `json:"EmbedPatterns"`  // //go:embed patterns
-	EmbedFiles     []string `json:"EmbedFiles"`     // resolved files matching embed patterns
+	SwigFiles      []string `json:"SwigFiles"`      // .swig files
+	SwigCXXFiles   []string `json:"SwigCXXFiles"`   // .swigcxx files
+	EmbedPatterns  []string `json:"EmbedPatterns"`   // //go:embed patterns
+	EmbedFiles     []string `json:"EmbedFiles"`      // resolved files matching embed patterns
 	Standard       bool     `json:"Standard"`
 	DepOnly        bool     `json:"DepOnly"`
 	Imports        []string `json:"Imports"`
@@ -107,7 +109,6 @@ type ListDepsOptions struct {
 	Tags      string   // build tags (comma-separated)
 	Patterns  []string // patterns to list (default: ["./..."])
 	KeepLocal bool     // if true, include local packages in results
-	Compiled  bool     // if true, pass -compiled to include cgo-generated imports in Imports
 }
 
 // ListDeps runs `go list -json -deps` and returns packages.
@@ -122,9 +123,6 @@ func ListDeps(opts ListDepsOptions) ([]Pkg, error) {
 	}
 
 	args := []string{"list", "-json", "-deps"}
-	if opts.Compiled {
-		args = append(args, "-compiled")
-	}
 	if opts.Tags != "" {
 		args = append(args, "-tags", opts.Tags)
 	}
@@ -162,7 +160,42 @@ func ListDeps(opts ListDepsOptions) ([]Pkg, error) {
 	if err := cmd.Wait(); err != nil {
 		return nil, fmt.Errorf("go list in %s: %w", opts.Dir, err)
 	}
+	injectCgoImports(pkgs)
 	return pkgs, nil
+}
+
+// injectCgoImports adds the implicit imports that cgo/swig translation
+// introduces, matching cmd/go/internal/load.(*Package).resolveInternal
+// (src/cmd/go/internal/load/pkg.go:1910-1929).
+//
+// Without this, we would need `go list -compiled`, which triggers actual
+// cgo+gcc compilation for every cgo package (~10-15s overhead). Instead,
+// we run plain `go list` (fast) and synthetically inject the same imports.
+//
+// The Go compiler's cgo tool generates files that import these packages:
+//   - "unsafe"      — always, for C pointer conversions
+//   - "runtime/cgo" — for cgo runtime support (e.g., C.CString, callbacks)
+//   - "syscall"     — for errno handling in cgo calls
+//
+// The upstream code skips runtime/cgo and syscall for certain stdlib packages
+// (cgoExclude/cgoSyscallExclude) to avoid circular dependencies. Since go2nix
+// only compiles non-stdlib packages (stdlib is pre-compiled), this exclusion
+// does not apply.
+func injectCgoImports(pkgs []Pkg) {
+	for i := range pkgs {
+		if len(pkgs[i].CgoFiles) == 0 && len(pkgs[i].SwigFiles) == 0 && len(pkgs[i].SwigCXXFiles) == 0 {
+			continue
+		}
+		seen := make(map[string]bool, len(pkgs[i].Imports)+3)
+		for _, imp := range pkgs[i].Imports {
+			seen[imp] = true
+		}
+		for _, imp := range []string{"unsafe", "runtime/cgo", "syscall"} {
+			if !seen[imp] {
+				pkgs[i].Imports = append(pkgs[i].Imports, imp)
+			}
+		}
+	}
 }
 
 // CollectGoModModules parses go.mod in dir and returns ModInfo for every

@@ -203,7 +203,6 @@ func Resolve(cfg Config) error {
 		Patterns:  subPkgs,
 		Env:       golistEnv,
 		KeepLocal: true,
-		Compiled:  true,
 	})
 	if err != nil {
 		return fmt.Errorf("discovering packages: %w", err)

@@ -56,6 +56,51 @@ func TestCollectModules(t *testing.T) {
 	}
 }
 
+func TestInjectCgoImports(t *testing.T) {
+	pkgs := []Pkg{
+		{ImportPath: "pure/go", Imports: []string{"fmt", "os"}},
+		{ImportPath: "uses/cgo", CgoFiles: []string{"bridge.go"}, Imports: []string{"fmt", "unsafe"}},
+		{ImportPath: "uses/swig", SwigFiles: []string{"lib.swig"}, Imports: []string{"fmt"}},
+		{ImportPath: "uses/swigcxx", SwigCXXFiles: []string{"lib.swigcxx"}, Imports: []string{"runtime/cgo", "syscall", "unsafe"}},
+	}
+	injectCgoImports(pkgs)
+
+	// Pure Go: unchanged
+	if len(pkgs[0].Imports) != 2 {
+		t.Errorf("pure/go: expected 2 imports, got %v", pkgs[0].Imports)
+	}
+
+	// Cgo: already has "unsafe", should add "runtime/cgo" and "syscall"
+	cgoImports := make(map[string]bool)
+	for _, imp := range pkgs[1].Imports {
+		cgoImports[imp] = true
+	}
+	for _, want := range []string{"fmt", "unsafe", "runtime/cgo", "syscall"} {
+		if !cgoImports[want] {
+			t.Errorf("uses/cgo: missing import %q, got %v", want, pkgs[1].Imports)
+		}
+	}
+	if len(pkgs[1].Imports) != 4 {
+		t.Errorf("uses/cgo: expected 4 imports, got %v", pkgs[1].Imports)
+	}
+
+	// Swig: should add all 3
+	swigImports := make(map[string]bool)
+	for _, imp := range pkgs[2].Imports {
+		swigImports[imp] = true
+	}
+	for _, want := range []string{"fmt", "unsafe", "runtime/cgo", "syscall"} {
+		if !swigImports[want] {
+			t.Errorf("uses/swig: missing import %q, got %v", want, pkgs[2].Imports)
+		}
+	}
+
+	// SwigCXX: already has all 3, should not duplicate
+	if len(pkgs[3].Imports) != 3 {
+		t.Errorf("uses/swigcxx: expected 3 imports (no duplicates), got %v", pkgs[3].Imports)
+	}
+}
+
 func TestModInfoReplaced(t *testing.T) {
 	m := ModInfo{Key: "old/mod@v1.0.0", FetchPath: "new/mod", Version: "v1.0.0"}
 	if got := m.Replaced(); got != "new/mod" {
