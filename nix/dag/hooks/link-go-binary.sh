@@ -182,11 +182,23 @@ linkGoBinaryInstallPhase() {
 linkGoBinaryCheckPhase() {
   runHook preCheck
 
+  # Build gcflags for test compilation, matching the build phase logic.
+  local test_gcflags="${goGcflags:-}"
+  local go_buildmode="@buildMode@"
+  if [ "$go_buildmode" = "pie" ]; then
+    test_gcflags="-shared${test_gcflags:+ $test_gcflags}"
+  fi
+  local -a testGcflagArgs=()
+  if [ -n "$test_gcflags" ]; then
+    testGcflagArgs=(--gc-flags "$test_gcflags")
+  fi
+
   @go2nix@ test-packages \
     --import-cfg "$NIX_BUILD_TOP/importcfg" \
     --local-dir "$NIX_BUILD_TOP/local-pkgs" \
     --trim-path "$NIX_BUILD_TOP" \
     @tagArg@ \
+    "${testGcflagArgs[@]}" \
     ${goCheckFlags:+--check-flags "$goCheckFlags"} \
     "$goModuleRoot"
 
