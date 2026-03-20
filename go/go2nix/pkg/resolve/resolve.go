@@ -683,6 +683,9 @@ func buildImportcfg(
 				fmt.Sprintf("packagefile %s=%s/%s.a", imp, cfg.StdlibPath, imp))
 			continue
 		}
+		if dep.DrvPath == nil {
+			return fmt.Errorf("dependency %s has no derivation path (graph construction bug)", imp)
+		}
 		placeholder, err := nixdrv.CAOutput(dep.DrvPath, "out")
 		if err != nil {
 			return fmt.Errorf("computing placeholder for %s: %w", imp, err)
@@ -780,6 +783,9 @@ func buildLinkDrv(
 	drv.AddCAOutput("out", "sha256", "nar")
 
 	// Main package placeholder
+	if mainPkg.DrvPath == nil {
+		return nil, nil, fmt.Errorf("main package %s has no derivation path", mainPkg.ImportPath)
+	}
 	mainPlaceholder, err := nixdrv.CAOutput(mainPkg.DrvPath, "out")
 	if err != nil {
 		return nil, nil, fmt.Errorf("computing main package placeholder: %w", err)
@@ -794,6 +800,9 @@ func buildLinkDrv(
 	for _, pkg := range sorted {
 		if pkg.Name == "main" && pkg != mainPkg {
 			continue // skip other main packages
+		}
+		if pkg.DrvPath == nil {
+			return nil, nil, fmt.Errorf("package %s has no derivation path", pkg.ImportPath)
 		}
 		placeholder, err := nixdrv.CAOutput(pkg.DrvPath, "out")
 		if err != nil {
