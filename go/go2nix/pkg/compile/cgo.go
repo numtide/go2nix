@@ -163,17 +163,12 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 
 	// Step 4a: if .s (Plan 9 assembly) files exist, generate symabis.
 	hasGoAsm := len(goAsmFiles) > 0
-	var symabisPath string
-	asmhdr := filepath.Join(opts.TrimPath, "go_asm.h")
+	var symabisPath, asmhdr string
 	if hasGoAsm {
-		if err := os.WriteFile(asmhdr, nil, 0o644); err != nil {
+		var err error
+		asmhdr, symabisPath, err = generateSymabis(opts, uid, goAsmFiles)
+		if err != nil {
 			return err
-		}
-		symabisPath = filepath.Join(opts.TrimPath, "symabis_"+uid)
-		asmArgs := append(asmBaseArgs(opts), "-gensymabis", "-o", symabisPath)
-		asmArgs = append(asmArgs, goAsmFiles...)
-		if err := runIn(opts.SrcDir, "go", asmArgs...); err != nil {
-			return fmt.Errorf("gensymabis: %w", err)
 		}
 	}
 
