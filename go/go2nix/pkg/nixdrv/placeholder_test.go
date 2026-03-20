@@ -21,7 +21,10 @@ func TestCAOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := CAOutput(drvPath, "out")
+	p, err := CAOutput(drvPath, "out")
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := "/0c6rn30q4frawknapgwq386zq358m8r6msvywcvc89n6m5p2dgbz"
 	if got := p.Render(); got != want {
 		t.Errorf("CAOutput(foo.drv, \"out\").Render() = %q, want %q", got, want)
@@ -34,7 +37,10 @@ func TestDynamicOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	caPlaceholder := CAOutput(drvPath, "out")
+	caPlaceholder, err := CAOutput(drvPath, "out")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Then create a dynamic placeholder from it
 	dynPlaceholder := DynamicOutput(caPlaceholder, "out")
