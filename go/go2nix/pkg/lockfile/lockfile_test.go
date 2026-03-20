@@ -15,7 +15,6 @@ func TestRoundtrip(t *testing.T) {
 		Mod: map[string]string{
 			"github.com/foo/bar@v1.2.3": "sha256-aaa=",
 		},
-		Pkg: map[string]map[string][]string{},
 	}
 	if err := orig.Write(path, Header); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -30,7 +29,7 @@ func TestRoundtrip(t *testing.T) {
 	}
 }
 
-func TestRoundtripAllFields(t *testing.T) {
+func TestRoundtripWithReplace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lock.toml")
 
@@ -40,11 +39,6 @@ func TestRoundtripAllFields(t *testing.T) {
 		},
 		Replace: map[string]string{
 			"github.com/foo/bar@v1.2.3": "github.com/foo/bar-fork",
-		},
-		Pkg: map[string]map[string][]string{
-			"github.com/foo/bar@v1.2.3": {
-				"github.com/foo/bar": {"github.com/baz/qux", "github.com/x/y"},
-			},
 		},
 	}
 	if err := orig.Write(path, Header); err != nil {
@@ -59,15 +53,6 @@ func TestRoundtripAllFields(t *testing.T) {
 	if got.Replace["github.com/foo/bar@v1.2.3"] != "github.com/foo/bar-fork" {
 		t.Errorf("replace: got %q, want %q", got.Replace["github.com/foo/bar@v1.2.3"], "github.com/foo/bar-fork")
 	}
-
-	pkgMap := got.Pkg["github.com/foo/bar@v1.2.3"]
-	if pkgMap == nil {
-		t.Fatal("expected pkg group for github.com/foo/bar@v1.2.3")
-	}
-	imports := pkgMap["github.com/foo/bar"]
-	if len(imports) != 2 || imports[0] != "github.com/baz/qux" || imports[1] != "github.com/x/y" {
-		t.Errorf("imports: got %v, want [github.com/baz/qux github.com/x/y]", imports)
-	}
 }
 
 func TestRoundtripOmitReplace(t *testing.T) {
@@ -78,7 +63,6 @@ func TestRoundtripOmitReplace(t *testing.T) {
 		Mod: map[string]string{
 			"github.com/foo/bar@v1.0.0": "sha256-aaa=",
 		},
-		Pkg: map[string]map[string][]string{},
 	}
 	if err := orig.Write(path, Header); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -124,38 +108,6 @@ key = "oops"
 	}
 	if !strings.Contains(err.Error(), "unknown keys") {
 		t.Errorf("expected 'unknown keys' in error, got: %v", err)
-	}
-}
-
-func TestMinimalLockfileOmitsPkg(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "lock.toml")
-
-	// Minimal lockfile: Pkg is nil (not empty map)
-	orig := &Lockfile{
-		Mod: map[string]string{
-			"github.com/foo/bar@v1.0.0": "sha256-aaa=",
-		},
-	}
-	if err := orig.Write(path, Header); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "[pkg]") {
-		t.Error("nil Pkg should be omitted from output")
-	}
-
-	// Should still be readable
-	got, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if got.Mod["github.com/foo/bar@v1.0.0"] != "sha256-aaa=" {
-		t.Errorf("hash mismatch: %+v", got.Mod)
 	}
 }
 

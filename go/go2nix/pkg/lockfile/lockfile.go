@@ -12,9 +12,8 @@ import (
 
 // Lockfile holds the parsed go2nix v2 lockfile.
 type Lockfile struct {
-	Mod     map[string]string              `toml:"mod"`
-	Replace map[string]string              `toml:"replace,omitempty"`
-	Pkg     map[string]map[string][]string `toml:"pkg,omitempty"`
+	Mod     map[string]string `toml:"mod"`
+	Replace map[string]string `toml:"replace,omitempty"`
 }
 
 // Read reads a lockfile from path. Returns an empty lockfile if the file
@@ -23,7 +22,6 @@ func Read(path string) (*Lockfile, error) {
 	lf := &Lockfile{
 		Mod:     map[string]string{},
 		Replace: map[string]string{},
-		Pkg:     map[string]map[string][]string{},
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {

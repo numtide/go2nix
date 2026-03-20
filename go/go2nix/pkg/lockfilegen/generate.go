@@ -29,7 +29,7 @@ func Generate(dirs []string, output string, jobs int, mode string) error {
 	if err != nil {
 		return fmt.Errorf("reading existing lockfile: %w", err)
 	}
-	slog.Info("cache loaded", "mods", len(cache.Mod), "pkgs", len(cache.Pkg))
+	slog.Info("cache loaded", "mods", len(cache.Mod))
 
 	// Collect all modules from go.mod require blocks (with replaces applied).
 	// This is the authoritative source: go.mod lists all modules across all
