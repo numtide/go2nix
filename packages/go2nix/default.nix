@@ -7,7 +7,7 @@ pkgs.buildGoModule {
   pname = "go2nix";
   version = "0-unstable";
 
-  src = ../../go/go2nix;
+  src = pkgs.lib.sources.cleanSource ../../go/go2nix;
 
   subPackages = [ "cmd/go2nix" ];
 
