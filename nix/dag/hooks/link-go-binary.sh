@@ -101,9 +101,13 @@ linkGoBinaryBuildPhase() {
   local linkflags=""
   if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
     # Use CXX when C++ files are present, matching Go's setextld (gc.go).
-    local extld="$CC"
+    local extld="${CC:-}"
     if [ -f "$NIX_BUILD_TOP/.has_cxx" ]; then
-      extld="$CXX"
+      extld="${CXX:-}"
+    fi
+    if [ -z "$extld" ]; then
+      echo "go2nix: cgo package requires CC (or CXX) but none is set" >&2
+      exit 1
     fi
     linkflags="-extld $extld -linkmode external"
   fi
