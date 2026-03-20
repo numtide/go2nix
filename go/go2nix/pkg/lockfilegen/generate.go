@@ -21,10 +21,7 @@ import (
 )
 
 // Generate creates a go2nix lockfile from the given project directories.
-// mode selects the output format:
-//   - "dag": lockfile with [mod] sections (package graph resolved at eval time by plugin)
-//   - "dynamic": minimal lockfile with [mod] only
-func Generate(dirs []string, output string, jobs int, mode string) error {
+func Generate(dirs []string, output string, jobs int) error {
 	cache, err := lockfile.Read(output)
 	if err != nil {
 		return fmt.Errorf("reading existing lockfile: %w", err)
