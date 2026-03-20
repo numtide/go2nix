@@ -174,31 +174,31 @@ func TestDiscoverInputPaths(t *testing.T) {
 	// pkgC: bin only
 	os.MkdirAll(filepath.Join(pkgC, "bin"), 0o755)
 
-	binDirs, pkgConfigDirs, allPaths := discoverInputPaths([]string{pkgA, pkgC})
+	result := discoverInputPaths([]string{pkgA, pkgC})
 
-	// binDirs: pkgA/bin, pkgC/bin
-	if len(binDirs) != 2 {
-		t.Fatalf("expected 2 binDirs, got %d: %v", len(binDirs), binDirs)
+	// BinDirs: pkgA/bin, pkgC/bin
+	if len(result.BinDirs) != 2 {
+		t.Fatalf("expected 2 BinDirs, got %d: %v", len(result.BinDirs), result.BinDirs)
 	}
-	if binDirs[0] != pkgA+"/bin" || binDirs[1] != pkgC+"/bin" {
-		t.Errorf("binDirs = %v, want [%s %s]", binDirs, pkgA+"/bin", pkgC+"/bin")
+	if result.BinDirs[0] != pkgA+"/bin" || result.BinDirs[1] != pkgC+"/bin" {
+		t.Errorf("BinDirs = %v, want [%s %s]", result.BinDirs, pkgA+"/bin", pkgC+"/bin")
 	}
 
-	// pkgConfigDirs: pkgA/lib/pkgconfig, pkgB/lib/pkgconfig (transitive)
-	if len(pkgConfigDirs) != 2 {
-		t.Fatalf("expected 2 pkgConfigDirs, got %d: %v", len(pkgConfigDirs), pkgConfigDirs)
+	// PkgConfigDirs: pkgA/lib/pkgconfig, pkgB/lib/pkgconfig (transitive)
+	if len(result.PkgConfigDirs) != 2 {
+		t.Fatalf("expected 2 PkgConfigDirs, got %d: %v", len(result.PkgConfigDirs), result.PkgConfigDirs)
 	}
-	if pkgConfigDirs[0] != pkgA+"/lib/pkgconfig" || pkgConfigDirs[1] != pkgB+"/lib/pkgconfig" {
-		t.Errorf("pkgConfigDirs = %v, want [%s %s]", pkgConfigDirs,
+	if result.PkgConfigDirs[0] != pkgA+"/lib/pkgconfig" || result.PkgConfigDirs[1] != pkgB+"/lib/pkgconfig" {
+		t.Errorf("PkgConfigDirs = %v, want [%s %s]", result.PkgConfigDirs,
 			pkgA+"/lib/pkgconfig", pkgB+"/lib/pkgconfig")
 	}
 
-	// allPaths: pkgA, pkgB (transitive), pkgC — in walk order
-	if len(allPaths) != 3 {
-		t.Fatalf("expected 3 allPaths, got %d: %v", len(allPaths), allPaths)
+	// All: pkgA, pkgB (transitive), pkgC — in walk order
+	if len(result.All) != 3 {
+		t.Fatalf("expected 3 All, got %d: %v", len(result.All), result.All)
 	}
-	if allPaths[0] != pkgA || allPaths[1] != pkgB || allPaths[2] != pkgC {
-		t.Errorf("allPaths = %v, want [%s %s %s]", allPaths, pkgA, pkgB, pkgC)
+	if result.All[0] != pkgA || result.All[1] != pkgB || result.All[2] != pkgC {
+		t.Errorf("All = %v, want [%s %s %s]", result.All, pkgA, pkgB, pkgC)
 	}
 }
 
@@ -216,9 +216,9 @@ func TestDiscoverInputPathsCyclic(t *testing.T) {
 	os.WriteFile(filepath.Join(pkgY, "nix-support", "propagated-build-inputs"),
 		[]byte(pkgX), 0o644)
 
-	_, _, allPaths := discoverInputPaths([]string{pkgX})
-	if len(allPaths) != 2 {
-		t.Fatalf("expected 2 allPaths (cycle handled), got %d: %v", len(allPaths), allPaths)
+	result := discoverInputPaths([]string{pkgX})
+	if len(result.All) != 2 {
+		t.Fatalf("expected 2 All (cycle handled), got %d: %v", len(result.All), result.All)
 	}
 }
 

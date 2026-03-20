@@ -115,7 +115,7 @@ func Resolve(cfg Config) error {
 	for _, ov := range overrides {
 		allOverrideInputs = append(allOverrideInputs, ov.NativeBuildInputs...)
 	}
-	_, _, cfg.allOverridePaths = discoverInputPaths(allOverrideInputs)
+	cfg.allOverridePaths = discoverInputPaths(allOverrideInputs).All
 
 	resolveStart := time.Now()
 
@@ -529,10 +529,10 @@ func buildPackageDrv(
 			overrideStorePaths = append(overrideStorePaths, ov.NativeBuildInputs...)
 		}
 	}
-	binDirs, pkgConfigDirs, allInputPaths := discoverInputPaths(overrideStorePaths)
-	pathParts = append(pathParts, binDirs...)
+	inputs := discoverInputPaths(overrideStorePaths)
+	pathParts = append(pathParts, inputs.BinDirs...)
 	var pkgConfigParts []string
-	pkgConfigParts = append(pkgConfigParts, pkgConfigDirs...)
+	pkgConfigParts = append(pkgConfigParts, inputs.PkgConfigDirs...)
 
 	// Add C compiler for cgo packages (needed even without overrides).
 	if len(pkg.CgoFiles) > 0 && cfg.ccDir != "" {
@@ -646,7 +646,7 @@ func buildPackageDrv(
 	drv.AddInputSrc(cfg.StdlibPath)
 
 	// Package overrides (cgo) — add all discovered paths (including transitive).
-	for _, p := range allInputPaths {
+	for _, p := range inputs.All {
 		drv.AddInputSrc(p)
 	}
 
@@ -926,10 +926,18 @@ func storeDirOf(path string) string {
 	return path
 }
 
+// InputPaths holds the discovered paths from inspecting store paths.
+type InputPaths struct {
+	BinDirs       []string // directories containing executables (e.g., /nix/store/xxx/bin)
+	PkgConfigDirs []string // directories containing .pc files (e.g., /nix/store/xxx/lib/pkgconfig)
+	All           []string // all store paths (including transitive propagated-build-inputs)
+}
+
 // discoverInputPaths inspects store paths to determine which environment
 // directories they provide, and follows nix-support/propagated-build-inputs
 // for transitive dependencies.
-func discoverInputPaths(storePaths []string) (binDirs, pkgConfigDirs, allPaths []string) {
+func discoverInputPaths(storePaths []string) InputPaths {
+	var result InputPaths
 	visited := make(map[string]bool)
 	var walk func(string)
 	walk = func(p string) {
@@ -937,13 +945,13 @@ func discoverInputPaths(storePaths []string) (binDirs, pkgConfigDirs, allPaths [
 			return
 		}
 		visited[p] = true
-		allPaths = append(allPaths, p)
+		result.All = append(result.All, p)
 
 		if isDir(p + "/bin") {
-			binDirs = append(binDirs, p+"/bin")
+			result.BinDirs = append(result.BinDirs, p+"/bin")
 		}
 		if isDir(p + "/lib/pkgconfig") {
-			pkgConfigDirs = append(pkgConfigDirs, p+"/lib/pkgconfig")
+			result.PkgConfigDirs = append(result.PkgConfigDirs, p+"/lib/pkgconfig")
 		}
 
 		// Follow propagated-build-inputs (space-separated store paths).
@@ -958,7 +966,7 @@ func discoverInputPaths(storePaths []string) (binDirs, pkgConfigDirs, allPaths [
 	for _, sp := range storePaths {
 		walk(sp)
 	}
-	return
+	return result
 }
 
 // isDir returns true if path exists and is a directory.
