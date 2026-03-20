@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/build"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -66,6 +67,7 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 	walkDir := func(dir string, importBase string) error {
 		return filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
+				slog.Debug("skipping directory", "path", path, "err", walkErr)
 				return nil
 			}
 			if !d.IsDir() {
@@ -78,6 +80,7 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 
 			pkg, importErr := ctx.ImportDir(path, build.IgnoreVendor)
 			if importErr != nil {
+				slog.Debug("skipping directory (no Go package)", "path", path, "err", importErr)
 				return nil
 			}
 
