@@ -5,13 +5,12 @@
 #
 # Linux-only: the Nix plugin is platform-specific.
 {
-  inputs,
   flake,
   pkgs,
   system,
   ...
 }:
-if !(inputs.go-nix-plugin.packages.${system} ? go2nix-nix-plugin) then
+if !(flake.packages.${system} ? go-nix-plugin) then
   pkgs.runCommand "test-dag-package-yubikey-agent-unsupported"
     { meta.platforms = pkgs.lib.platforms.linux; }
     ''
@@ -20,7 +19,7 @@ if !(inputs.go-nix-plugin.packages.${system} ? go2nix-nix-plugin) then
     ''
 else
   let
-    plugin = inputs.go-nix-plugin.packages.${system}.go2nix-nix-plugin;
+    plugin = flake.packages.${system}.go-nix-plugin;
     nix = pkgs.nixVersions.nix_2_33;
     inherit (pkgs) go;
 
@@ -66,7 +65,7 @@ else
       result=$(GOMODCACHE=${goModules} \
         nix-build ${go2nixSrc}/tests/packages/yubikey-agent/dag.nix \
         -I nixpkgs=${nixpkgsPath} \
-        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_nix_plugin.so" \
+        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
         --no-out-link)
 
       $result/bin/yubikey-agent --help

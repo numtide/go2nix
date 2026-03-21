@@ -1,5 +1,7 @@
 # go2nix
 
+> **⚠️ Experimental** — APIs and lockfile formats may change without notice.
+
 Nix-native Go builder with two packaging modes — per-package derivations with
 fine-grained caching.
 

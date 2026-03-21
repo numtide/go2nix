@@ -1,70 +1,5 @@
 {
   "nodes": {
-    "blueprint": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ],
-        "systems": "systems"
-      },
-      "locked": {
-        "lastModified": 1771437256,
-        "narHash": "sha256-bLqwib+rtyBRRVBWhMuBXPCL/OThfokA+j6+uH7jDGU=",
-        "owner": "numtide",
-        "repo": "blueprint",
-        "rev": "06ee7190dc2620ea98af9eb225aa9627b68b0e33",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "blueprint",
-        "type": "github"
-      }
-    },
-    "blueprint_2": {
-      "inputs": {
-        "nixpkgs": [
-          "go-nix-plugin",
-          "nixpkgs"
-        ],
-        "systems": "systems_2"
-      },
-      "locked": {
-        "lastModified": 1771437256,
-        "narHash": "sha256-bLqwib+rtyBRRVBWhMuBXPCL/OThfokA+j6+uH7jDGU=",
-        "owner": "numtide",
-        "repo": "blueprint",
-        "rev": "06ee7190dc2620ea98af9eb225aa9627b68b0e33",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "blueprint",
-        "type": "github"
-      }
-    },
-    "go-nix-plugin": {
-      "inputs": {
-        "blueprint": "blueprint_2",
-        "nixpkgs": [
-          "nixpkgs"
-        ],
-        "treefmt-nix": "treefmt-nix"
-      },
-      "locked": {
-        "lastModified": 1773837005,
-        "narHash": "sha256-YUgxJprFTptjJBu8ehScoRw7jo9Pjh8PQzIZVgU2+a4=",
-        "ref": "refs/heads/main",
-        "rev": "95d746965878b13eda721db1887444925fe42c3e",
-        "revCount": 19,
-        "type": "git",
-        "url": "ssh://forgejo@git.ntd.one/anthropic/go2nix-nix-plugin.git"
-      },
-      "original": {
-        "type": "git",
-        "url": "ssh://forgejo@git.ntd.one/anthropic/go2nix-nix-plugin.git"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1773597492,
@@ -83,64 +18,11 @@
     },
     "root": {
       "inputs": {
-        "blueprint": "blueprint",
-        "go-nix-plugin": "go-nix-plugin",
         "nixpkgs": "nixpkgs",
-        "treefmt-nix": "treefmt-nix_2"
-      }
-    },
-    "systems": {
-      "locked": {
-        "lastModified": 1681028828,
-        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
-        "owner": "nix-systems",
-        "repo": "default",
-        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-systems",
-        "repo": "default",
-        "type": "github"
-      }
-    },
-    "systems_2": {
-      "locked": {
-        "lastModified": 1681028828,
-        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
-        "owner": "nix-systems",
-        "repo": "default",
-        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-systems",
-        "repo": "default",
-        "type": "github"
+        "treefmt-nix": "treefmt-nix"
       }
     },
     "treefmt-nix": {
-      "inputs": {
-        "nixpkgs": [
-          "go-nix-plugin",
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1773297127,
-        "narHash": "sha256-6E/yhXP7Oy/NbXtf1ktzmU8SdVqJQ09HC/48ebEGBpk=",
-        "owner": "numtide",
-        "repo": "treefmt-nix",
-        "rev": "71b125cd05fbfd78cab3e070b73544abe24c5016",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "treefmt-nix",
-        "type": "github"
-      }
-    },
-    "treefmt-nix_2": {
       "inputs": {
         "nixpkgs": [
           "nixpkgs"

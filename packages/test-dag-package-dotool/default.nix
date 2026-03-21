@@ -5,13 +5,12 @@
 #
 # Linux-only: the Nix plugin is platform-specific.
 {
-  inputs,
   flake,
   pkgs,
   system,
   ...
 }:
-if !(inputs.go-nix-plugin.packages.${system} ? go2nix-nix-plugin) then
+if !(flake.packages.${system} ? go-nix-plugin) then
   pkgs.runCommand "test-dag-package-dotool-unsupported" { meta.platforms = pkgs.lib.platforms.linux; }
     ''
       echo "test-dag-package-dotool requires go-nix-plugin (Linux only)" >&2
@@ -19,7 +18,7 @@ if !(inputs.go-nix-plugin.packages.${system} ? go2nix-nix-plugin) then
     ''
 else
   let
-    plugin = inputs.go-nix-plugin.packages.${system}.go2nix-nix-plugin;
+    plugin = flake.packages.${system}.go-nix-plugin;
     nix = pkgs.nixVersions.nix_2_33;
     inherit (pkgs) go;
 
@@ -64,7 +63,7 @@ else
       result=$(GOMODCACHE=${goModules} \
         nix-build ${go2nixSrc}/tests/packages/dotool/dag.nix \
         -I nixpkgs=${nixpkgsPath} \
-        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_nix_plugin.so" \
+        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
         --no-out-link)
 
       $result/bin/dotool --version

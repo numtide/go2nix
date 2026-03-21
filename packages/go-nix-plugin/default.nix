@@ -1,14 +1,42 @@
-# Re-export the go-nix-plugin from the flake input.
-# Provides builtins.resolveGoPackages for DAG mode.
-# Linux-only: the Nix plugin uses dlopen and is platform-specific.
-{
-  inputs,
-  pkgs,
-  system,
-  ...
-}:
-inputs.go-nix-plugin.packages.${system}.go2nix-nix-plugin
-  or (pkgs.runCommand "go-nix-plugin-unsupported" { meta.platforms = pkgs.lib.platforms.linux; } ''
-    echo "go-nix-plugin is only available on Linux" >&2
-    exit 1
-  '')
+{ pkgs, ... }:
+
+let
+  inherit (pkgs) lib stdenv rustPlatform pkg-config cmake boost nlohmann_json nixVersions;
+  nixComponents = nixVersions.nix_2_34.libs;
+
+  core = rustPlatform.buildRustPackage {
+    pname = "go2nix-nix-plugin-core";
+    version = "0.1.0";
+    src = ./rust;
+    cargoLock.lockFile = ./rust/Cargo.lock;
+    doCheck = false;
+  };
+in
+stdenv.mkDerivation {
+  pname = "go2nix-nix-plugin";
+  version = "0.1.0";
+
+  src = ./plugin;
+
+  nativeBuildInputs = [
+    pkg-config
+    cmake
+  ];
+
+  buildInputs = [
+    nixComponents.nix-expr
+    nixComponents.nix-store
+    boost
+    nlohmann_json
+  ];
+
+  cmakeFlags = [
+    "-DRUST_LIB_DIR=${core}/lib"
+  ];
+
+  meta = {
+    description = "Nix plugin for resolving Go module dependencies";
+    license = lib.licenses.mit;
+    platforms = lib.platforms.linux ++ lib.platforms.darwin;
+  };
+}
