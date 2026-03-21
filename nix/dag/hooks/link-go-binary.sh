@@ -27,10 +27,10 @@ linkGoBinaryConfigurePhase() {
   fi
   export goModulePath
 
-  # Build importcfg: use pre-built bundle (stdlib + all third-party deps).
+  # Build importcfg: use pre-built bundle (stdlib + all third-party + local deps).
   # NOTE: modinfo is a linker-only directive (cmd/link) and must NOT be present
   # during compilation (cmd/compile rejects unknown directives). It is appended
-  # to the importcfg in the build phase, after compile-packages and before link.
+  # to the importcfg in the build phase, before link.
   # The bundle is passed as the sole buildInput (depsImportcfg derivation).
   local importcfg_bundle=""
   for dep in ${buildInputs[@]}; do
@@ -61,8 +61,8 @@ linkGoBinaryConfigurePhase() {
 linkGoBinaryBuildPhase() {
   runHook preBuild
 
-  local localdir="$NIX_BUILD_TOP/local-pkgs"
-  mkdir -p "$localdir"
+  local maindir="$NIX_BUILD_TOP/main-pkgs"
+  mkdir -p "$maindir"
 
   # Build mode is computed at Nix eval time from stdenv.hostPlatform.go.GOOS
   # (see hooks/default.nix), matching Go's internal/platform.DefaultPIE.
@@ -82,16 +82,6 @@ linkGoBinaryBuildPhase() {
   if [ -n "${goPgoProfile:-}" ]; then
     pgoArgs=(--pgo-profile "$goPgoProfile")
   fi
-
-  # Pass 1: compile library packages in parallel (DAG-aware).
-  @go2nix@ compile-packages \
-    --import-cfg "$NIX_BUILD_TOP/importcfg" \
-    --out-dir "$localdir" \
-    --trim-path "$NIX_BUILD_TOP" \
-    @tagArg@ \
-    "${gcflagArgs[@]}" \
-    "${pgoArgs[@]}" \
-    "$goModuleRoot"
 
   # Resolve the linker binary before clearing GOROOT.
   local goLinkTool
@@ -162,7 +152,7 @@ linkGoBinaryBuildPhase() {
       --import-cfg "$NIX_BUILD_TOP/importcfg" \
       --import-path "main" \
       --src-dir "$srcdir" \
-      --output "$localdir/$importpath.a" \
+      --output "$maindir/$importpath.a" \
       --trim-path "$NIX_BUILD_TOP" \
       @tagArg@ \
       "${gcflagArgs[@]}" \
@@ -180,7 +170,7 @@ linkGoBinaryBuildPhase() {
       $sanitizer_linkflags \
       $godebug_linkflag \
       -o "$NIX_BUILD_TOP/staging/bin/$binname" \
-      "$localdir/$importpath.a"
+      "$maindir/$importpath.a"
   done
 
   runHook postBuild
