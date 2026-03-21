@@ -8,30 +8,61 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/a07d4ce6bee67d7c838a8a5796e75dff9caa21ef";
-    blueprint = {
-      url = "github:numtide/blueprint";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    go-nix-plugin = {
-      url = "git+ssh://forgejo@git.ntd.one/anthropic/go2nix-nix-plugin.git";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
   outputs =
-    inputs:
+    { self, nixpkgs, treefmt-nix }:
     let
-      blueprintOutputs = inputs.blueprint {
-        inherit inputs;
-        nixpkgs.config.allowUnfree = true;
-      };
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system (import nixpkgs { inherit system; }));
     in
-    blueprintOutputs
-    // {
+    {
+      packages = forAllSystems (system: pkgs:
+        let
+          callPkg = path: pkgs.callPackage path { };
+          callPkgWith = path: args: pkgs.callPackage path args;
+          flake = self;
+        in
+        {
+          default = callPkg ./packages/go2nix/default.nix;
+          go2nix = callPkg ./packages/go2nix/default.nix;
+          docs = callPkg ./packages/docs/default.nix;
+          go-nix-plugin = callPkg ./packages/go-nix-plugin/default.nix;
+
+          test-dag-package-dotool = callPkgWith ./packages/test-dag-package-dotool/default.nix {
+            inherit flake system;
+          };
+          test-dag-package-nwg-drawer = callPkgWith ./packages/test-dag-package-nwg-drawer/default.nix {
+            inherit flake system;
+          };
+          test-dag-package-vinegar = callPkgWith ./packages/test-dag-package-vinegar/default.nix {
+            inherit flake system;
+          };
+          test-dag-package-yubikey-agent = callPkgWith ./packages/test-dag-package-yubikey-agent/default.nix {
+            inherit flake system;
+          };
+        }
+      );
+
+      devShells = forAllSystems (_: pkgs: {
+        default = import ./devshell.nix { inherit pkgs; };
+      });
+
+      formatter = forAllSystems (_: pkgs:
+        import ./formatter.nix {
+          inherit pkgs;
+          inputs = { inherit treefmt-nix; };
+        }
+      );
+
       lib = import ./lib.nix { };
     };
 }
