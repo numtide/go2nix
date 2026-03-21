@@ -27,16 +27,24 @@ linkGoBinaryConfigurePhase() {
   fi
   export goModulePath
 
-  # Build importcfg: stdlib + all third-party deps.
+  # Build importcfg: use pre-built bundle (stdlib + all third-party deps).
   # NOTE: modinfo is a linker-only directive (cmd/link) and must NOT be present
   # during compilation (cmd/compile rejects unknown directives). It is appended
   # to the importcfg in the build phase, after compile-packages and before link.
-  cat "@stdlib@/importcfg" >"$NIX_BUILD_TOP/importcfg"
+  # The bundle is passed as the sole buildInput (depsImportcfg derivation).
+  local importcfg_bundle=""
   for dep in ${buildInputs[@]}; do
     if [ -f "$dep/importcfg" ]; then
-      cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
+      importcfg_bundle="$dep/importcfg"
+      break
     fi
   done
+  if [ -z "$importcfg_bundle" ]; then
+    echo "go2nix: no importcfg bundle found in buildInputs" >&2
+    exit 1
+  fi
+  cp "$importcfg_bundle" "$NIX_BUILD_TOP/importcfg"
+  chmod u+w "$NIX_BUILD_TOP/importcfg"
 
   # Compute module info (modinfo) and GODEBUG defaults.
   # build-modinfo outputs:

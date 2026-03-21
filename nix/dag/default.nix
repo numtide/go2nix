@@ -21,6 +21,7 @@
   hooks,
   fetchers,
   helpers,
+  stdlib,
   ...
 }:
 
@@ -43,6 +44,8 @@
   packageOverrides ? { },
   doCheck ? true,
   checkFlags ? [],
+  filterSrc ? false,
+  extraSrcPaths ? [],
   ...
 }@args:
 
@@ -88,6 +91,52 @@ let
     }
     // (if goProxy != null then { inherit goProxy; } else { })
   );
+
+  # --- Optional source filtering (opt-in via filterSrc = true) ---
+  # When enabled, only include the modRoot and local replace directories in
+  # the store path. Changes to unrelated modules won't trigger rebuilds.
+  # The plugin still reads the full src for `go list` (eval-time only);
+  # only the build derivation uses the filtered source.
+  normalizePath =
+    path:
+    let
+      parts = lib.splitString "/" path;
+      resolve =
+        acc: part:
+        if part == ".." then
+          (if acc == [ ] then acc else lib.init acc)
+        else if part == "." || part == "" then
+          acc
+        else
+          acc ++ [ part ];
+    in
+    lib.concatStringsSep "/" (builtins.foldl' resolve [ ] parts);
+
+  effectiveSrc =
+    if !filterSrc then
+      src
+    else
+      let
+        localDirs = builtins.attrValues goPackagesResult.localReplaces;
+        # Resolve replace paths (relative to modRoot) into paths relative to src root.
+        resolvedDirs = map (rel: normalizePath "${modRoot}/${rel}") localDirs;
+        allowedPrefixes = [ modRoot ] ++ resolvedDirs ++ extraSrcPaths;
+      in
+      builtins.path {
+        path = src;
+        name = "${pname}-src";
+        filter =
+          path: type:
+          let
+            rel = lib.removePrefix (toString src + "/") (toString path);
+          in
+          # Allow the root directory itself.
+          path == toString src
+          # Allow exact matches and children of allowed prefixes.
+          || builtins.any (prefix: rel == prefix || lib.hasPrefix (prefix + "/") rel) allowedPrefixes
+          # Allow parent directories so Nix descends into them.
+          || builtins.any (prefix: lib.hasPrefix (rel + "/") prefix) allowedPrefixes;
+      };
 
   # --- Join: apply replace directives to module fetchPaths ---
   resolvedModules = builtins.mapAttrs (
@@ -160,12 +209,47 @@ let
 
   thirdPartyDeps = builtins.attrValues packages;
 
+  # --- Importcfg bundle: aggregates all third-party packages into one derivation ---
+  # Instead of passing N packages as direct buildInputs to the link derivation,
+  # we create a single bundle. This reduces nix-store --realise input validation
+  # from O(N) checks to O(1) on rebuilds where only local source changed.
+  #
+  # Third-party importcfg entries are pre-computed at eval time (we know import
+  # paths and store paths from the `packages` attrset). Only stdlib's importcfg
+  # needs to be read at build time. Store paths are captured through Nix string
+  # context, so they remain derivation dependencies without needing buildInputs.
+  thirdPartyImportcfg = lib.concatMapStringsSep "\n" (
+    importPath:
+    let
+      pkg = packages.${importPath};
+    in
+    "packagefile ${importPath}=${pkg}/${importPath}.a"
+  ) (builtins.attrNames packages);
+
+  depsImportcfg = stdenvNoCC.mkDerivation {
+    name = "${pname}-deps-importcfg";
+    __structuredAttrs = true;
+    inherit thirdPartyImportcfg;
+    dontUnpack = true;
+    dontFixup = true;
+    buildPhase = ''
+      runHook preBuild
+      cat "${stdlib}/importcfg" > "$NIX_BUILD_TOP/importcfg"
+      echo "$thirdPartyImportcfg" >> "$NIX_BUILD_TOP/importcfg"
+      runHook postBuild
+    '';
+    installPhase = ''
+      mkdir -p "$out"
+      cp "$NIX_BUILD_TOP/importcfg" "$out/importcfg"
+    '';
+  };
+
   # Collect nativeBuildInputs from packageOverrides for link-time availability.
   overrideNativeBuildInputs = builtins.concatLists (
     map (attrs: attrs.nativeBuildInputs or [ ]) (builtins.attrValues packageOverrides)
   );
 
-  moduleRoot = if modRoot == "." then "${src}" else "${src}/${modRoot}";
+  moduleRoot = if modRoot == "." then "${effectiveSrc}" else "${effectiveSrc}/${modRoot}";
   ldflagsStr = concatStringsSep " " ldflags;
   gcflagsStr = concatStringsSep " " gcflags;
 
@@ -189,6 +273,8 @@ let
     "packageOverrides"
     "doCheck"
     "checkFlags"
+    "filterSrc"
+    "extraSrcPaths"
   ];
 
 in
@@ -200,13 +286,13 @@ stdenv.mkDerivation (
     inherit
       pname
       version
-      src
       meta
       doCheck
       ;
+    src = effectiveSrc;
 
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
-    buildInputs = thirdPartyDeps;
+    buildInputs = [ depsImportcfg ];
 
     disallowedReferences = lib.optional (!allowGoReference) go;
 
@@ -217,6 +303,7 @@ stdenv.mkDerivation (
         goLock
         packages
         ;
+      inherit (goPackagesResult) localReplaces;
     };
 
     env = {
@@ -224,7 +311,13 @@ stdenv.mkDerivation (
       goSubPackages = concatStringsSep " " subPackages;
       goLdflags = ldflagsStr;
       goGcflags = gcflagsStr;
-      goLockfile = "${goLock}";
+      # When filterSrc is active, reference the lockfile from within effectiveSrc
+      # to avoid a store dependency on the unfiltered src.
+      goLockfile =
+        if filterSrc then
+          "${effectiveSrc}/${modRoot}/go2nix.toml"
+        else
+          "${goLock}";
       goPname = pname;
     }
     // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { })
