@@ -42,6 +42,11 @@
   nativeBuildInputs ? [ ],
   modRoot ? ".",
   packageOverrides ? { },
+  # Phase 1: checks only supported for modRoot == "." (single-module case).
+  # When modRoot != ".", mainSrc doesn't include local replace targets outside
+  # the module root, so test discovery/compilation may fail. Users can override
+  # with doCheck = true if their layout doesn't use out-of-tree replaces.
+  doCheck ? (modRoot == "."),
   checkFlags ? [],
   ...
 }@args:
@@ -335,6 +340,7 @@ let
     "nativeBuildInputs"
     "modRoot"
     "packageOverrides"
+    "doCheck"
     "checkFlags"
   ];
 
@@ -350,9 +356,7 @@ stdenv.mkDerivation (
       meta
       ;
     src = mainSrc;
-    # Check phase requires compile-packages output which is removed when local
-    # packages are individual derivations. TODO: implement per-package testing.
-    doCheck = false;
+    inherit doCheck;
 
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
     buildInputs = [ depsImportcfg ];
@@ -384,4 +388,15 @@ stdenv.mkDerivation (
     // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
     // (if checkFlags != [] then { goCheckFlags = concatStringsSep " " checkFlags; } else { });
   }
+  # Local package archives for checkPhase: structured attr becomes a bash
+  # associative array mapping import path -> store path of compiled .a file.
+  # Only included when doCheck is true to preserve the O(1) input-validation
+  # optimization from depsImportcfg — without this guard, every local package
+  # store path would be a direct dependency of the final derivation via string
+  # context, reintroducing the O(N) fan-in that the bundle was designed to avoid.
+  // (if doCheck then {
+    goLocalArchives = builtins.mapAttrs (
+      importPath: pkg: "${pkg}/${importPath}.a"
+    ) localPackages;
+  } else { })
 )

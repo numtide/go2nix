@@ -9,6 +9,10 @@
 #   goLockfile      — path to go2nix.toml lockfile
 #   goPname         — binary name for "." package (optional)
 #
+# Structured attrs (bash associative array, via __structuredAttrs):
+#   goLocalArchives — import path -> store path of compiled .a archive
+#                     Used by checkPhase to reconstruct a local-pkgs directory.
+#
 # Third-party dependencies are discovered from $buildInputs at build time.
 
 # Variables set by Nix stdenv / derivation env, not by this script.
@@ -188,6 +192,16 @@ linkGoBinaryInstallPhase() {
 linkGoBinaryCheckPhase() {
   runHook preCheck
 
+  # Reconstruct local-pkgs directory from goLocalArchives (structured attr).
+  # Each local package derivation produces ${pkg}/${importPath}.a; we symlink
+  # them into the flat directory layout that test-packages --local-dir expects.
+  local localdir="$NIX_BUILD_TOP/local-pkgs"
+  mkdir -p "$localdir"
+  for importPath in "${!goLocalArchives[@]}"; do
+    mkdir -p "$localdir/$(dirname "$importPath")"
+    ln -s "${goLocalArchives[$importPath]}" "$localdir/$importPath.a"
+  done
+
   # Build gcflags for test compilation, matching the build phase logic.
   local test_gcflags="${goGcflags:-}"
   local go_buildmode="@buildMode@"
@@ -201,7 +215,7 @@ linkGoBinaryCheckPhase() {
 
   @go2nix@ test-packages \
     --import-cfg "$NIX_BUILD_TOP/importcfg" \
-    --local-dir "$NIX_BUILD_TOP/local-pkgs" \
+    --local-dir "$localdir" \
     --trim-path "$NIX_BUILD_TOP" \
     @tagArg@ \
     "${testGcflagArgs[@]}" \
