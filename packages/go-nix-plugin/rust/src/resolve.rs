@@ -98,13 +98,20 @@ fn inherit_env(keys: &[&str]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Extract replace path and version from a GoModule in one destructure.
+fn extract_replace(module: &GoModule) -> (String, String) {
+    match &module.replace {
+        Some(r) => (r.path.clone(), r.version.clone()),
+        None => (String::new(), String::new()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // go list execution
 // ---------------------------------------------------------------------------
 
 struct GoListOpts<'a> {
     tags: &'a [String],
-    sub_packages: &'a [String],
     mod_root: &'a str,
     goos: &'a str,
     goarch: &'a str,
@@ -112,22 +119,11 @@ struct GoListOpts<'a> {
     cgo_enabled: &'a str,
 }
 
-fn run_go_list(go_bin: &str, src_dir: &str, opts: &GoListOpts) -> Result<Vec<u8>> {
-    let mut cmd = Command::new(go_bin);
-    cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,CgoFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
-    cmd.arg("-deps");
-    cmd.arg("-e");
-    cmd.arg("-buildvcs=false");
-
-    if !opts.tags.is_empty() {
-        cmd.arg("-tags");
-        cmd.arg(opts.tags.join(","));
-    }
-    for pkg in opts.sub_packages {
-        cmd.arg(pkg);
-    }
-
+/// Configure common Go environment on a Command.
+///
+/// Sets up GOMODCACHE, GOPROXY, cross-compilation vars, and conditional
+/// network vars. Shared between build and test go list invocations.
+fn configure_go_env(cmd: &mut Command, src_dir: &str, opts: &GoListOpts) {
     let work_dir = if opts.mod_root == "." {
         src_dir.to_owned()
     } else {
@@ -169,6 +165,30 @@ fn run_go_list(go_bin: &str, src_dir: &str, opts: &GoListOpts) -> Result<Vec<u8>
     if !opts.cgo_enabled.is_empty() {
         cmd.env("CGO_ENABLED", opts.cgo_enabled);
     }
+}
+
+fn run_go_list(
+    go_bin: &str,
+    src_dir: &str,
+    sub_packages: &[String],
+    opts: &GoListOpts,
+) -> Result<Vec<u8>> {
+    let mut cmd = Command::new(go_bin);
+    cmd.arg("list");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,CgoFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-deps");
+    cmd.arg("-e");
+    cmd.arg("-buildvcs=false");
+
+    if !opts.tags.is_empty() {
+        cmd.arg("-tags");
+        cmd.arg(opts.tags.join(","));
+    }
+    for pkg in sub_packages {
+        cmd.arg(pkg);
+    }
+
+    configure_go_env(&mut cmd, src_dir, opts);
 
     let output = cmd
         .output()
@@ -208,45 +228,7 @@ fn run_go_list_test(
         cmd.arg(ip);
     }
 
-    let work_dir = if opts.mod_root == "." {
-        src_dir.to_owned()
-    } else {
-        format!("{src_dir}/{}", opts.mod_root)
-    };
-    cmd.current_dir(&work_dir);
-
-    cmd.env_clear();
-    for (k, v) in inherit_env(&["GOMODCACHE", "GOPATH", "HOME"]) {
-        cmd.env(&k, &v);
-    }
-    cmd.env("GOPROXY", opts.go_proxy);
-    cmd.env("GONOSUMCHECK", "*");
-    cmd.env("GOFLAGS", "-mod=readonly");
-    cmd.env("GOENV", "off");
-    cmd.env("GOWORK", "off");
-
-    if opts.go_proxy != "off" {
-        for (k, v) in inherit_env(&[
-            "PATH",
-            "TMPDIR",
-            "SSL_CERT_FILE",
-            "SSL_CERT_DIR",
-            "NIX_SSL_CERT_FILE",
-        ]) {
-            cmd.env(&k, &v);
-        }
-        cmd.env("GIT_TERMINAL_PROMPT", "0");
-    }
-
-    if !opts.goos.is_empty() {
-        cmd.env("GOOS", opts.goos);
-    }
-    if !opts.goarch.is_empty() {
-        cmd.env("GOARCH", opts.goarch);
-    }
-    if !opts.cgo_enabled.is_empty() {
-        cmd.env("CGO_ENABLED", opts.cgo_enabled);
-    }
+    configure_go_env(&mut cmd, src_dir, opts);
 
     let output = cmd
         .output()
@@ -295,14 +277,7 @@ pub(crate) fn parse_test_packages(
             continue;
         }
 
-        let replace_path = module
-            .replace
-            .as_ref()
-            .map_or(String::new(), |r| r.path.clone());
-        let replace_version = module
-            .replace
-            .as_ref()
-            .map_or(String::new(), |r| r.version.clone());
+        let (replace_path, replace_version) = extract_replace(&module);
 
         // Skip local packages (main module or local replaces).
         let is_local = module.main || (!replace_path.is_empty() && replace_version.is_empty());
@@ -413,14 +388,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
             continue;
         };
 
-        let replace_path = module
-            .replace
-            .as_ref()
-            .map_or(String::new(), |r| r.path.clone());
-        let replace_version = module
-            .replace
-            .as_ref()
-            .map_or(String::new(), |r| r.version.clone());
+        let (replace_path, replace_version) = extract_replace(&module);
 
         // Local = main module, or a replace with empty version (filesystem path)
         let is_local = module.main || (!replace_path.is_empty() && replace_version.is_empty());
@@ -568,30 +536,22 @@ fn default_off() -> String {
     "off".to_owned()
 }
 
-/// Run `go list` using JSON FFI input.
-pub(crate) fn run_go_list_from_json(input: &JsonInput) -> Result<Vec<u8>> {
-    run_go_list(
-        &input.go,
-        &input.src,
-        &GoListOpts {
-            tags: &input.tags,
-            sub_packages: &input.sub_packages,
-            mod_root: &input.mod_root,
-            goos: &input.goos,
-            goarch: &input.goarch,
-            go_proxy: &input.go_proxy,
-            cgo_enabled: &input.cgo_enabled,
-        },
-    )
-}
-
 /// Run both go list passes and return the complete package graph.
 ///
 /// The first pass (`go list -deps`) discovers build-time packages.
 /// When `do_check` is set and local packages exist, a second pass
 /// (`go list -deps -test`) discovers test-only third-party dependencies.
 pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
-    let stdout = run_go_list_from_json(input)?;
+    let opts = GoListOpts {
+        tags: &input.tags,
+        mod_root: &input.mod_root,
+        goos: &input.goos,
+        goarch: &input.goarch,
+        go_proxy: &input.go_proxy,
+        cgo_enabled: &input.cgo_enabled,
+    };
+
+    let stdout = run_go_list(&input.go, &input.src, &input.sub_packages, &opts)?;
     let mut graph = parse_go_packages(&stdout)?;
 
     if input.do_check && !graph.local_packages.is_empty() {
@@ -601,20 +561,8 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
             .map(|p| p.import_path.clone())
             .collect();
 
-        let test_stdout = run_go_list_test(
-            &input.go,
-            &input.src,
-            &local_ips,
-            &GoListOpts {
-                tags: &input.tags,
-                sub_packages: &[],
-                mod_root: &input.mod_root,
-                goos: &input.goos,
-                goarch: &input.goarch,
-                go_proxy: &input.go_proxy,
-                cgo_enabled: &input.cgo_enabled,
-            },
-        )?;
+        let test_stdout =
+            run_go_list_test(&input.go, &input.src, &local_ips, &opts)?;
 
         let test_pkgs = parse_test_packages(
             &test_stdout,
@@ -628,7 +576,9 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
     Ok(graph)
 }
 
-// Serializable output types.
+// ---------------------------------------------------------------------------
+// Serializable output types
+// ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -680,64 +630,74 @@ struct JsonReplacement {
     version: String,
 }
 
+/// Convert a `PkgData` to a `JsonPkg`, filtering imports to only include
+/// packages present in `allowed_imports`.
+fn pkg_data_to_json_pkg(p: &PkgData, allowed_imports: &dyn Fn(&str) -> bool) -> JsonPkg {
+    let effective_version = if p.replace_version.is_empty() {
+        &p.mod_version
+    } else {
+        &p.replace_version
+    };
+    let mod_key = format!("{}@{effective_version}", p.mod_path);
+    let subdir = if p.import_path != p.mod_path {
+        let prefix = format!("{}/", p.mod_path);
+        p.import_path.strip_prefix(&prefix).unwrap_or("").to_owned()
+    } else {
+        String::new()
+    };
+    let filtered_imports: Vec<String> = p
+        .imports
+        .iter()
+        .filter(|imp| allowed_imports(imp))
+        .cloned()
+        .collect();
+    let drv_name = format!("gopkg-{}-{}", sanitize_name(&p.import_path), p.mod_version);
+
+    JsonPkg {
+        drv_name,
+        imports: filtered_imports,
+        mod_key,
+        subdir,
+        is_cgo: p.is_cgo,
+        cgo_pkg_config: p.cgo_pkg_config.clone(),
+        cgo_cflags: p.cgo_cflags.clone(),
+        cgo_ldflags: p.cgo_ldflags.clone(),
+    }
+}
+
 /// Convert a `PackageGraph` to a JSON string.
 pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Result<String> {
     let canon_src = std::fs::canonicalize(src_dir)
         .with_context(|| format!("failed to canonicalize src dir: {src_dir}"))?;
 
-    let mut packages = BTreeMap::new();
-    for p in &graph.packages {
-        let effective_version = if p.replace_version.is_empty() {
-            &p.mod_version
-        } else {
-            &p.replace_version
-        };
-        let mod_key = format!("{}@{effective_version}", p.mod_path);
-        let subdir = if p.import_path != p.mod_path {
-            let prefix = format!("{}/", p.mod_path);
-            p.import_path.strip_prefix(&prefix).unwrap_or("").to_owned()
-        } else {
-            String::new()
-        };
-        let filtered_imports: Vec<String> = p
-            .imports
-            .iter()
-            .filter(|imp| graph.third_party_paths.contains(*imp))
-            .cloned()
-            .collect();
-        let drv_name = format!("gopkg-{}-{}", sanitize_name(&p.import_path), p.mod_version);
-
-        packages.insert(
-            p.import_path.clone(),
-            JsonPkg {
-                drv_name,
-                imports: filtered_imports,
-                mod_key,
-                subdir,
-                is_cgo: p.is_cgo,
-                cgo_pkg_config: p.cgo_pkg_config.clone(),
-                cgo_cflags: p.cgo_cflags.clone(),
-                cgo_ldflags: p.cgo_ldflags.clone(),
-            },
-        );
-    }
+    // Build packages map.
+    let packages: BTreeMap<String, JsonPkg> = graph
+        .packages
+        .iter()
+        .map(|p| {
+            let json_pkg = pkg_data_to_json_pkg(p, &|imp| graph.third_party_paths.contains(imp));
+            (p.import_path.clone(), json_pkg)
+        })
+        .collect();
 
     // Build local_packages map.
     let mut local_packages = BTreeMap::new();
     for lp in &graph.local_packages {
         let canon_dir = std::fs::canonicalize(&lp.dir)
             .with_context(|| format!("failed to canonicalize local package dir: {}", lp.dir))?;
-        let rel = canon_dir
-            .strip_prefix(&canon_src)
-            .with_context(|| {
-                format!(
-                    "local package dir {} escapes source tree {}",
-                    canon_dir.display(),
-                    canon_src.display()
-                )
-            })?;
+        let rel = canon_dir.strip_prefix(&canon_src).with_context(|| {
+            format!(
+                "local package dir {} escapes source tree {}",
+                canon_dir.display(),
+                canon_src.display()
+            )
+        })?;
         let rel_str = rel.to_string_lossy();
-        let dir = if rel_str.is_empty() { ".".to_owned() } else { rel_str.into_owned() };
+        let dir = if rel_str.is_empty() {
+            ".".to_owned()
+        } else {
+            rel_str.into_owned()
+        };
         local_packages.insert(
             lp.import_path.clone(),
             JsonLocalPkg {
@@ -767,44 +727,16 @@ pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Resu
         .collect();
 
     // Build test_packages map.
-    let mut test_packages_out = BTreeMap::new();
-    for p in &graph.test_packages {
-        let effective_version = if p.replace_version.is_empty() {
-            &p.mod_version
-        } else {
-            &p.replace_version
-        };
-        let mod_key = format!("{}@{effective_version}", p.mod_path);
-        let subdir = if p.import_path != p.mod_path {
-            let prefix = format!("{}/", p.mod_path);
-            p.import_path.strip_prefix(&prefix).unwrap_or("").to_owned()
-        } else {
-            String::new()
-        };
-        let filtered_imports: Vec<String> = p
-            .imports
-            .iter()
-            .filter(|imp| {
-                graph.third_party_paths.contains(*imp) || graph.test_only_paths.contains(*imp)
-            })
-            .cloned()
-            .collect();
-        let drv_name = format!("gopkg-{}-{}", sanitize_name(&p.import_path), p.mod_version);
-
-        test_packages_out.insert(
-            p.import_path.clone(),
-            JsonPkg {
-                drv_name,
-                imports: filtered_imports,
-                mod_key,
-                subdir,
-                is_cgo: p.is_cgo,
-                cgo_pkg_config: p.cgo_pkg_config.clone(),
-                cgo_cflags: p.cgo_cflags.clone(),
-                cgo_ldflags: p.cgo_ldflags.clone(),
-            },
-        );
-    }
+    let test_packages: BTreeMap<String, JsonPkg> = graph
+        .test_packages
+        .iter()
+        .map(|p| {
+            let json_pkg = pkg_data_to_json_pkg(p, &|imp| {
+                graph.third_party_paths.contains(imp) || graph.test_only_paths.contains(imp)
+            });
+            (p.import_path.clone(), json_pkg)
+        })
+        .collect();
 
     let output = JsonOutput {
         packages,
@@ -812,7 +744,7 @@ pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Resu
         module_path: graph.module_path.clone(),
         replacements,
         local_replaces: graph.local_replaces.clone(),
-        test_packages: test_packages_out,
+        test_packages,
     };
 
     serde_json::to_string(&output).context("failed to serialize output JSON")

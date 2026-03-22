@@ -1,7 +1,8 @@
 //! Go package resolver for Nix.
 //!
 //! Runs `go list -json -deps -e` against a Go source tree and returns the
-//! third-party package graph plus module replacements as JSON.
+//! third-party package graph, local packages, module replacements, and
+//! (optionally) test-only dependencies as JSON.
 //!
 //! Pure Rust with no nix dependencies — the nix integration layer
 //! (`plugin/resolveGoPackages.cc`) handles primop registration and
