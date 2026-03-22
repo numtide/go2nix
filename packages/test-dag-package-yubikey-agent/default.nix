@@ -1,4 +1,4 @@
-# DAG mode build test: yubikey-agent (pure Go, no cgo).
+# default mode build test: yubikey-agent (pure Go, no cgo).
 #
 # Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. Requires recursive-nix.
@@ -61,7 +61,7 @@ else
       export HOME=$(mktemp -d)
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
-      echo "=== Building yubikey-agent (DAG mode) ==="
+      echo "=== Building yubikey-agent (default mode) ==="
       result=$(GOMODCACHE=${goModules} \
         nix-build ${go2nixSrc}/tests/packages/yubikey-agent/dag.nix \
         -I nixpkgs=${nixpkgsPath} \

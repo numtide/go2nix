@@ -1,4 +1,4 @@
-# go2nix-testgen built with go2nix DAG mode (dogfooding).
+# go2nix-testgen built with go2nix default mode (dogfooding).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,7 +8,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   pname = "go2nix-testgen";
   version = "0.0.1";
   src = ./. ;

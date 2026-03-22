@@ -1,20 +1,20 @@
-# DAG Mode
+# Default Mode
 
 Per-package Nix derivations at eval time, with fine-grained caching.
 
 ## Overview
 
-DAG mode creates per-package derivations from an eval-time package graph. The
-go2nix-nix-plugin runs `builtins.resolveGoPackages` to discover third-party
-packages, local packages, local replaces, module metadata, and optional
-test-only third-party packages when checks are enabled. Module hashes are read
-from the lockfile's `[mod]` section, with optional `[replace]` entries applied
-to module fetch paths. When a single dependency changes, only it and its
-reverse dependencies rebuild.
+The default mode creates per-package derivations from an eval-time package
+graph. The go2nix-nix-plugin runs `builtins.resolveGoPackages` to discover
+third-party packages, local packages, local replaces, module metadata, and
+optional test-only third-party packages when checks are enabled. Module hashes
+are read from the lockfile's `[mod]` section, with optional `[replace]` entries
+applied to module fetch paths. When a single dependency changes, only it and
+its reverse dependencies rebuild.
 
 ## Lockfile requirements
 
-DAG mode requires a lockfile with `[mod]` (and optionally `[replace]`)
+The default mode requires a lockfile with `[mod]` (and optionally `[replace]`)
 sections:
 
 ```bash
@@ -92,7 +92,7 @@ third-party packages.
 ### 6. Importcfg bundles
 
 Instead of passing every compiled package as a direct dependency of the final
-application derivation, DAG mode builds bundled `importcfg` derivations:
+application derivation, the default mode builds bundled `importcfg` derivations:
 
 - `depsImportcfg`: stdlib + third-party + local packages
 - `testDepsImportcfg`: adds test-only third-party packages when `doCheck = true`
@@ -114,7 +114,7 @@ checks are enabled) and uses `goAppHook` to:
 Per-package customization (e.g., for cgo libraries):
 
 ```nix
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   src = ./.;
   goLock = ./go2nix.toml;
   pname = "my-app";
@@ -135,7 +135,7 @@ final application derivation.
 
 ```
 nix/dag/
-├── default.nix            # buildGoApplicationDAGMode
+├── default.nix            # buildGoApplication
 ├── fetch-go-module.nix    # FOD fetcher
 └── hooks/
     ├── default.nix        # Hook definitions
@@ -159,5 +159,5 @@ nix/dag/
 - Requires the go2nix-nix-plugin (provides `builtins.resolveGoPackages`)
 - Many small derivations can slow Nix evaluation on very large projects
 
-Compilation and linking are handled by the DAG builder hooks and direct
+Compilation and linking are handled by the builder hooks and direct
 `go tool compile` / `go tool link` invocations described above.

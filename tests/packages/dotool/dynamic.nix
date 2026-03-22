@@ -1,4 +1,4 @@
-# Test: buildGoApplicationDynamicMode with local cgo package (xkbcommon via pkg-config).
+# Test: buildGoApplicationExperimental with local cgo package (xkbcommon via pkg-config).
 #
 # Requires: recursive-nix, ca-derivations, dynamic-derivations experimental features.
 # Requires: Nix >= 2.34 (v4 derivation JSON format).
@@ -13,7 +13,7 @@ let
     nixPackage = pkgs.nixVersions.git;
   };
 in
-goEnv.buildGoApplicationDynamicMode {
+goEnv.buildGoApplicationExperimental {
   pname = "dotool";
   version = "1.6";
   goLock = ./go2nix.toml;

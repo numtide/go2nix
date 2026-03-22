@@ -19,9 +19,8 @@ go2nix generate [flags] [dir...]
 When no directory is given, defaults to `.`. Multiple directories produce a
 merged lockfile (monorepo support).
 
-The generated lockfile is shared by both DAG and dynamic builders. Builder
-mode is selected in Nix via `buildGoApplicationDAGMode`,
-`buildGoApplicationDynamicMode`, or `buildGoApplication`.
+The generated lockfile is shared by both builder modes. Use
+`buildGoApplication` (default) or `buildGoApplicationExperimental` in Nix.
 
 Examples:
 
@@ -49,7 +48,7 @@ correct versions.
 ## compile-package
 
 Compile a single Go package to an archive (`.a` file). Used internally by
-DAG mode's setup hooks.
+the default mode's setup hooks.
 
 ```
 go2nix compile-package [flags]

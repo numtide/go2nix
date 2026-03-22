@@ -1,4 +1,4 @@
-# go2nix/nix/build-go-application-dynamic.nix — dynamic derivation builder.
+# go2nix/nix/dynamic/default.nix — experimental dynamic derivation builder.
 #
 # Uses recursive-nix + CA derivations + dynamic derivations to eliminate [pkg]
 # from the lockfile. Package graph is discovered at build time via `go list`,
@@ -8,7 +8,7 @@
 # `builtins.outputOf` resolves it to the final binary at eval time.
 #
 # Usage:
-#   goEnv.buildGoApplicationDynamic {
+#   goEnv.buildGoApplicationExperimental {
 #     src = ./.;
 #     goLock = ./go2nix.toml;
 #     pname = "my-app";

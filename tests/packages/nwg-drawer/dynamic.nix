@@ -1,4 +1,4 @@
-# Test: buildGoApplicationDynamicMode with many GTK cgo deps (15 packages using pkg-config).
+# Test: buildGoApplicationExperimental with many GTK cgo deps (15 packages using pkg-config).
 #
 # Requires: recursive-nix, ca-derivations, dynamic-derivations experimental features.
 # Requires: Nix >= 2.34 (v4 derivation JSON format).
@@ -28,7 +28,7 @@ let
     ];
   };
 in
-goEnv.buildGoApplicationDynamicMode {
+goEnv.buildGoApplicationExperimental {
   src = pkgs.fetchFromGitHub {
     owner = "nwg-piotr";
     repo = "nwg-drawer";

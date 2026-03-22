@@ -1,4 +1,4 @@
-# DAG mode build test: vinegar (puregotk, no CGO for GTK libs).
+# default mode build test: vinegar (puregotk, no CGO for GTK libs).
 #
 # Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. Requires recursive-nix.
@@ -61,7 +61,7 @@ else
       export HOME=$(mktemp -d)
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
-      echo "=== Building vinegar (DAG mode) ==="
+      echo "=== Building vinegar (default mode) ==="
       result=$(GOMODCACHE=${goModules} \
         nix-build ${go2nixSrc}/tests/packages/vinegar/dag.nix \
         -I nixpkgs=${nixpkgsPath} \

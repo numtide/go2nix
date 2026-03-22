@@ -1,4 +1,4 @@
-# DAG mode fixture test: test-only local package (testutil helper).
+# default mode fixture test: test-only local package (testutil helper).
 #
 # Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. Requires recursive-nix.
@@ -31,7 +31,7 @@ else
       export HOME=$(mktemp -d)
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
-      echo "=== Building test-helper-pkg fixture (DAG mode, doCheck=true) ==="
+      echo "=== Building test-helper-pkg fixture (default mode, doCheck=true) ==="
       result=$(nix-build ${go2nixSrc}/tests/fixtures/test-helper-pkg/dag.nix \
         -I nixpkgs=${nixpkgsPath} \
         --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \

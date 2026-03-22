@@ -1,4 +1,4 @@
-# Test: buildGoApplicationDAGMode (explicit) with puregotk (dlopen, no CGO for GTK libs).
+# Test: buildGoApplication (explicit) with puregotk (dlopen, no CGO for GTK libs).
 #
 # Vinegar embeds a GLib resource bundle via go:embed, so we must compile
 # vinegar.gresource into the source tree before go2nix can analyse the
@@ -31,7 +31,7 @@ let
       $out/data/vinegar.gresource.xml
   '';
 in
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   inherit src;
   goLock = ./go2nix.toml;
   pname = "vinegar";

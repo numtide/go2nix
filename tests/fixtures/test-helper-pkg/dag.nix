@@ -1,4 +1,4 @@
-# Test: DAG mode with test-only local package (testutil helper).
+# Test: default mode with test-only local package (testutil helper).
 # NOTE: doCheck is disabled because test-only local packages are not yet
 # included in goLocalArchives/testDepsImportcfg. The build itself works;
 # enabling doCheck requires plugin + DAG builder changes to handle
@@ -12,7 +12,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   pname = "test-helper-pkg";
   version = "0.0.1";
   src = ./. ;

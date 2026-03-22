@@ -1,4 +1,4 @@
-# Test: buildGoApplicationDynamicMode with packageOverrides for cgo (pcsclite via pkg-config).
+# Test: buildGoApplicationExperimental with packageOverrides for cgo (pcsclite via pkg-config).
 #
 # Requires: recursive-nix, ca-derivations, dynamic-derivations experimental features.
 # Requires: Nix >= 2.34 (v4 derivation JSON format).
@@ -13,7 +13,7 @@ let
     nixPackage = pkgs.nixVersions.git;
   };
 in
-goEnv.buildGoApplicationDynamicMode {
+goEnv.buildGoApplicationExperimental {
   src = pkgs.fetchFromGitHub {
     owner = "FiloSottile";
     repo = "yubikey-agent";

@@ -4,5 +4,5 @@
 - [CLI Reference](cli-reference.md)
 - [Lockfile Format](lockfile-format.md)
 - [Builder Modes](modes/README.md)
-  - [DAG Mode](modes/dag-mode.md)
-  - [Dynamic Mode](modes/dynamic-mode.md)
+  - [Default Mode](modes/default-mode.md)
+  - [Experimental Mode](modes/experimental-mode.md)

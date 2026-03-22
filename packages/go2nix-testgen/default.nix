@@ -1,4 +1,4 @@
-# go2nix-testgen — built with go2nix DAG mode (dogfooding).
+# go2nix-testgen — built with go2nix default mode (dogfooding).
 #
 # Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. The result is the testgen binary.

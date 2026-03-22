@@ -1,4 +1,4 @@
-# Test: buildGoApplicationDAGMode (explicit) with local cgo package (xkbcommon via pkg-config).
+# Test: buildGoApplication (explicit) with local cgo package (xkbcommon via pkg-config).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,7 +8,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   pname = "dotool";
   version = "1.6";
   ldflags = [ "-X main.Version=1.6" ];
