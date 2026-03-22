@@ -6,28 +6,3 @@
 "golang.org/x/crypto@v0.4.0" = "sha256-OPSQQFtv0bgAwk/M7ahMqjhFmLga7ODvstwt7xiyOmk="
 "golang.org/x/sys@v0.3.0" = "sha256-NoPMXR09lMD4fZIv//kXcIpTYbxLC3Bl6INWqRwiR7c="
 "golang.org/x/term@v0.3.0" = "sha256-HG56HhKWADdvfsjuIT/iytqq38i6d8d7rlHvvGuggSw="
-
-[pkg."github.com/go-piv/piv-go@v1.10.0"]
-"github.com/go-piv/piv-go/piv" = []
-
-[pkg."github.com/twpayne/go-pinentry-minimal@v0.0.0-20220113210447-2a5dc4396c2a"]
-"github.com/twpayne/go-pinentry-minimal/pinentry" = []
-
-[pkg."golang.org/x/crypto@v0.4.0"]
-"golang.org/x/crypto/blowfish" = []
-"golang.org/x/crypto/chacha20" = ["golang.org/x/crypto/internal/alias"]
-"golang.org/x/crypto/curve25519" = ["golang.org/x/crypto/curve25519/internal/field"]
-"golang.org/x/crypto/curve25519/internal/field" = []
-"golang.org/x/crypto/ed25519" = []
-"golang.org/x/crypto/internal/alias" = []
-"golang.org/x/crypto/internal/poly1305" = []
-"golang.org/x/crypto/ssh" = ["golang.org/x/crypto/chacha20", "golang.org/x/crypto/curve25519", "golang.org/x/crypto/ed25519", "golang.org/x/crypto/internal/poly1305", "golang.org/x/crypto/ssh/internal/bcrypt_pbkdf"]
-"golang.org/x/crypto/ssh/agent" = ["golang.org/x/crypto/ed25519", "golang.org/x/crypto/ssh"]
-"golang.org/x/crypto/ssh/internal/bcrypt_pbkdf" = ["golang.org/x/crypto/blowfish"]
-"golang.org/x/crypto/ssh/terminal" = ["golang.org/x/term"]
-
-[pkg."golang.org/x/sys@v0.3.0"]
-"golang.org/x/sys/unix" = []
-
-[pkg."golang.org/x/term@v0.3.0"]
-"golang.org/x/term" = ["golang.org/x/sys/unix"]

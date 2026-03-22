@@ -37,4 +37,7 @@ goEnv.buildGoApplicationDAGMode {
   pname = "vinegar";
   version = "1.9.3";
   subPackages = [ "./cmd/vinegar" ];
+  # puregotk's init() calls pkg-config to locate GTK4 libs at runtime;
+  # tests that transitively import puregotk need these in the sandbox.
+  nativeCheckInputs = with pkgs; [ pkg-config gtk4 graphene libadwaita gtk-layer-shell ];
 }
