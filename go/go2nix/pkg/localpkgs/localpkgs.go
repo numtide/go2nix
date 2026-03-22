@@ -20,13 +20,17 @@ import (
 
 // LocalPkg describes a local package with its files and location.
 type LocalPkg struct {
-	ImportPath   string   `json:"import_path"`
-	SrcDir       string   `json:"src_dir"`
-	LocalDeps    []string `json:"local_deps"` // local-to-local dependency import paths
-	TestGoFiles  []string `json:"test_go_files"`
-	XTestGoFiles []string `json:"xtest_go_files"`
-	TestImports  []string `json:"test_imports"`
-	XTestImports []string `json:"xtest_imports"`
+	ImportPath      string            `json:"import_path"`
+	SrcDir          string            `json:"src_dir"`
+	LocalDeps       []string          `json:"local_deps"` // local-to-local dependency import paths
+	TestGoFiles     []string          `json:"test_go_files"`
+	XTestGoFiles    []string          `json:"xtest_go_files"`
+	TestImports     []string          `json:"test_imports"`
+	XTestImports    []string          `json:"xtest_imports"`
+	TestEmbedFiles  []string          `json:"test_embed_files"`
+	XTestEmbedFiles []string          `json:"xtest_embed_files"`
+	TestEmbedCfg    *gofiles.EmbedCfg `json:"test_embed_cfg,omitempty"`
+	XTestEmbedCfg   *gofiles.EmbedCfg `json:"xtest_embed_cfg,omitempty"`
 	gofiles.PkgFiles
 }
 
@@ -105,15 +109,45 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 				}
 			}
 
+			// Resolve test-only embed patterns.
+			var testEmbedFiles []string
+			var testEmbedCfg *gofiles.EmbedCfg
+			if len(pkg.TestEmbedPatterns) > 0 {
+				cfg, err := gofiles.ResolveEmbedCfg(path, pkg.TestEmbedPatterns)
+				if err != nil {
+					return fmt.Errorf("resolving test embed patterns for %s: %w", importPath, err)
+				}
+				testEmbedCfg = cfg
+				for f := range cfg.Files {
+					testEmbedFiles = append(testEmbedFiles, f)
+				}
+			}
+			var xtestEmbedFiles []string
+			var xtestEmbedCfg *gofiles.EmbedCfg
+			if len(pkg.XTestEmbedPatterns) > 0 {
+				cfg, err := gofiles.ResolveEmbedCfg(path, pkg.XTestEmbedPatterns)
+				if err != nil {
+					return fmt.Errorf("resolving xtest embed patterns for %s: %w", importPath, err)
+				}
+				xtestEmbedCfg = cfg
+				for f := range cfg.Files {
+					xtestEmbedFiles = append(xtestEmbedFiles, f)
+				}
+			}
+
 			localPkg := &LocalPkg{
-				ImportPath:   importPath,
-				SrcDir:       path,
-				LocalDeps:    local,
-				TestGoFiles:  nonNil(pkg.TestGoFiles),
-				XTestGoFiles: nonNil(pkg.XTestGoFiles),
-				TestImports:  nonNil(pkg.TestImports),
-				XTestImports: nonNil(pkg.XTestImports),
-				PkgFiles:     pf,
+				ImportPath:      importPath,
+				SrcDir:          path,
+				LocalDeps:       local,
+				TestGoFiles:     nonNil(pkg.TestGoFiles),
+				XTestGoFiles:    nonNil(pkg.XTestGoFiles),
+				TestImports:     nonNil(pkg.TestImports),
+				XTestImports:    nonNil(pkg.XTestImports),
+				TestEmbedFiles:  nonNil(testEmbedFiles),
+				XTestEmbedFiles: nonNil(xtestEmbedFiles),
+				TestEmbedCfg:    testEmbedCfg,
+				XTestEmbedCfg:   xtestEmbedCfg,
+				PkgFiles:        pf,
 			}
 			pkgs[importPath] = localPkg
 			localDeps[importPath] = local

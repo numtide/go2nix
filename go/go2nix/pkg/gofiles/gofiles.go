@@ -227,6 +227,51 @@ func ResolveEmbedCfg(dir string, patterns []string) (*EmbedCfg, error) {
 	return cfg, nil
 }
 
+// MergeEmbedCfg combines two EmbedCfg values into one. Returns an error if
+// the same pattern key maps to different file lists in the two configs.
+// Either or both inputs may be nil; nil inputs are treated as empty.
+func MergeEmbedCfg(a, b *EmbedCfg) (*EmbedCfg, error) {
+	if a == nil && b == nil {
+		return nil, nil
+	}
+	merged := &EmbedCfg{
+		Patterns: make(map[string][]string),
+		Files:    make(map[string]string),
+	}
+	for _, cfg := range []*EmbedCfg{a, b} {
+		if cfg == nil {
+			continue
+		}
+		for pat, files := range cfg.Patterns {
+			if existing, ok := merged.Patterns[pat]; ok {
+				if !sliceEqual(existing, files) {
+					return nil, fmt.Errorf("embed pattern %q resolves inconsistently across production and test configs", pat)
+				}
+			}
+			merged.Patterns[pat] = files
+		}
+		for file, path := range cfg.Files {
+			if existingPath, ok := merged.Files[file]; ok && existingPath != path {
+				return nil, fmt.Errorf("embed file %q maps to both %q and %q", file, existingPath, path)
+			}
+			merged.Files[file] = path
+		}
+	}
+	return merged, nil
+}
+
+func sliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // validEmbedPattern reports whether pattern is a valid //go:embed pattern.
 func validEmbedPattern(pattern string) bool {
 	return pattern != "." && fs.ValidPath(pattern)
