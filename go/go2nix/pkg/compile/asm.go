@@ -24,21 +24,30 @@ func asmBaseArgs(opts Options) []string {
 	return args
 }
 
+// generateSymabis creates an empty go_asm.h and runs go tool asm -gensymabis
+// for the given assembly files. Returns the paths to go_asm.h and the symabis file.
+func generateSymabis(opts Options, uid string, sfiles []string) (asmhdr, symabis string, err error) {
+	// go_asm.h must be named exactly "go_asm.h" — assembly files #include it.
+	asmhdr = filepath.Join(opts.TrimPath, "go_asm.h")
+	if err := os.WriteFile(asmhdr, nil, 0o644); err != nil {
+		return "", "", err
+	}
+	symabis = filepath.Join(opts.TrimPath, "symabis_"+uid)
+	asmArgs := append(asmBaseArgs(opts), "-gensymabis", "-o", symabis)
+	asmArgs = append(asmArgs, sfiles...)
+	if err := runIn(opts.SrcDir, "go", asmArgs...); err != nil {
+		return "", "", fmt.Errorf("gensymabis: %w", err)
+	}
+	return asmhdr, symabis, nil
+}
+
 func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	uid := strings.ReplaceAll(opts.ImportPath, "/", "_")
 
-	// go_asm.h must be named exactly "go_asm.h" — assembly files #include it.
-	asmhdr := filepath.Join(opts.TrimPath, "go_asm.h")
-	if err := os.WriteFile(asmhdr, nil, 0o644); err != nil {
-		return err
-	}
-
 	// Pass 1: generate symabis.
-	symabis := filepath.Join(opts.TrimPath, "symabis_"+uid)
-	asmArgs := append(asmBaseArgs(opts), "-gensymabis", "-o", symabis)
-	asmArgs = append(asmArgs, files.SFiles...)
-	if err := runIn(opts.SrcDir, "go", asmArgs...); err != nil {
-		return fmt.Errorf("gensymabis: %w", err)
+	asmhdr, symabis, err := generateSymabis(opts, uid, files.SFiles)
+	if err != nil {
+		return err
 	}
 
 	// Pass 2: compile Go with symabis + asmhdr.
@@ -47,7 +56,7 @@ func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) erro
 		"-importcfg", opts.ImportCfg,
 		"-p", opts.PFlag,
 		"-buildid", "", // deterministic empty buildID for Nix reproducibility
-		"-trimpath=" + opts.TrimPath,
+		"-trimpath=" + opts.trimRewrite,
 		"-symabis", symabis,
 		"-asmhdr", asmhdr,
 		"-pack",

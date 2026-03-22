@@ -20,12 +20,11 @@ func HashPart(sp *storepath.StorePath) string {
 }
 
 // DrvName returns the name portion of a .drv store path with the ".drv" suffix stripped.
-// Panics if the store path is not a derivation.
-func DrvName(sp *storepath.StorePath) string {
+func DrvName(sp *storepath.StorePath) (string, error) {
 	if !strings.HasSuffix(sp.Name, ".drv") {
-		panic(fmt.Sprintf("not a derivation path: %s", sp.Absolute()))
+		return "", fmt.Errorf("not a derivation path: %s", sp.Absolute())
 	}
-	return strings.TrimSuffix(sp.Name, ".drv")
+	return strings.TrimSuffix(sp.Name, ".drv"), nil
 }
 
 // StandardOutput creates a placeholder for a simple derivation output.
@@ -38,12 +37,15 @@ func StandardOutput(outputName string) Placeholder {
 // CAOutput creates a placeholder for a content-addressed derivation output.
 // The drvPath must be a .drv store path.
 // Format: SHA256("nix-upstream-output:<drv_hash_part>:<output_path_name>")
-func CAOutput(drvPath *storepath.StorePath, outputName string) Placeholder {
-	drvName := DrvName(drvPath)
+func CAOutput(drvPath *storepath.StorePath, outputName string) (Placeholder, error) {
+	drvName, err := DrvName(drvPath)
+	if err != nil {
+		return Placeholder{}, err
+	}
 	outputPathName := OutputPathName(drvName, outputName)
 	clearText := "nix-upstream-output:" + HashPart(drvPath) + ":" + outputPathName
 	h := sha256.Sum256([]byte(clearText))
-	return Placeholder{hash: h[:]}
+	return Placeholder{hash: h[:]}, nil
 }
 
 // DynamicOutput creates a placeholder for a dynamically-created derivation output.

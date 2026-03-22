@@ -20,7 +20,7 @@ if !(flake.packages.${system} ? go-nix-plugin) then
 else
   let
     plugin = flake.packages.${system}.go-nix-plugin;
-    nix = pkgs.nixVersions.nix_2_33;
+    nix = pkgs.nixVersions.latest;
     inherit (pkgs) go;
 
     nixpkgsPath = pkgs.path;

@@ -25,6 +25,7 @@ type Options struct {
 	GCFlags    string // extra flags for go tool compile (space-separated, e.g. "-race")
 	GoVersion  string // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
 	PGOProfile string // path to pprof CPU profile for PGO; empty disables PGO
+	GoFiles    []string // explicit Go files to compile (bypasses ListFiles discovery; paths relative to SrcDir)
 
 	// Resolved once by CompilePackage; avoids repeated go env subprocesses.
 	goroot        string
@@ -84,9 +85,17 @@ func CompileGoPackage(opts Options) error {
 
 	slog.Debug("compile-package", "import-path", opts.ImportPath, "src", opts.SrcDir)
 
-	files, err := gofiles.ListFiles(opts.SrcDir, opts.Tags)
-	if err != nil {
-		return fmt.Errorf("listing files: %w", err)
+	var files gofiles.PkgFiles
+	if len(opts.GoFiles) > 0 {
+		// Explicit file list (used by test runner for _test.go files that
+		// go/build.ImportDir would place in TestGoFiles, not GoFiles).
+		files.GoFiles = opts.GoFiles
+	} else {
+		var err error
+		files, err = gofiles.ListFiles(opts.SrcDir, opts.Tags)
+		if err != nil {
+			return fmt.Errorf("listing files: %w", err)
+		}
 	}
 
 	if len(files.GoFiles) == 0 && len(files.CgoFiles) == 0 {
@@ -107,11 +116,12 @@ func CompileGoPackage(opts Options) error {
 		if err != nil {
 			return fmt.Errorf("creating embedcfg: %w", err)
 		}
-		if err := json.NewEncoder(f).Encode(files.EmbedCfg); err != nil {
-			f.Close()
+		err = json.NewEncoder(f).Encode(files.EmbedCfg)
+		if closeErr := f.Close(); err != nil {
 			return fmt.Errorf("writing embedcfg: %w", err)
+		} else if closeErr != nil {
+			return fmt.Errorf("closing embedcfg: %w", closeErr)
 		}
-		f.Close()
 		embedFlag = "-embedcfg=" + embedPath
 	}
 

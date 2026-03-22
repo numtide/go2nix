@@ -52,6 +52,17 @@ static void prim_resolveGoPackages(EvalState &state, const PosIdx pos,
     NixStringContext context;
     auto inputJson = printValueAsJSON(state, true, *args[0], pos, context, false);
 
+    // Realise string context — ensures derivation-backed store paths (e.g.,
+    // go = "${go}/bin/go") actually exist before we invoke them.
+    try {
+        auto _ = state.realiseContext(context);
+    } catch (InvalidPathError &e) {
+        state.error<EvalError>(
+            "resolveGoPackages: cannot realise context for '%s': %s",
+            e.path.to_string(), e.what())
+            .atPos(pos).debugThrow();
+    }
+
     for (const auto &key : {"src", "go"}) {
         if (inputJson.contains(key) && inputJson[key].is_string()) {
             inputJson[key] = remapStorePath(*state.store, inputJson[key].get<std::string>());
@@ -83,20 +94,22 @@ static RegisterPrimOp rp(PrimOp {
     .args = {"attrs"},
     .arity = 1,
     .doc = R"(
-      Discover the Go package graph at eval time by running `go list`.
+  Discover the Go package graph at eval time by running `go list`.
 
-      Accepts an attrset with:
-      - `go`: Path to the Go binary
-      - `src`: Path to the Go source directory
-      - `tags` (optional): List of build tags
-      - `subPackages` (optional): List of package patterns (default: ["./..."])
-      - `modRoot` (optional): Subdirectory containing go.mod (default: ".")
-      - `goos` / `goarch` (optional): Cross-compilation targets
-      - `goProxy` (optional): GOPROXY value (default: "off")
-      - `cgoEnabled` (optional): CGO_ENABLED value
+  Accepts an attrset with:
+  - `go`: Path to the Go binary
+  - `src`: Path to the Go source directory
+  - `tags` (optional): List of build tags
+  - `subPackages` (optional): List of package patterns (default: ["./..."])
+  - `modRoot` (optional): Subdirectory containing go.mod (default: ".")
+  - `goos` / `goarch` (optional): Cross-compilation targets
+  - `goProxy` (optional): GOPROXY value (default: "off")
+  - `cgoEnabled` (optional): CGO_ENABLED value
+  - `doCheck` (optional): When true, runs a second `go list -deps -test`
+    pass to discover test-only third-party dependencies (default: false)
 
-      Returns: { packages, replacements, localReplaces }
-    )",
+  Returns: { packages, localPackages, modulePath, replacements, testPackages, localReplaces }
+)",
 #ifdef NIX_PRIMOP_HAS_IMPL
     .impl = prim_resolveGoPackages,
 #else

@@ -11,3 +11,4 @@
   - [Dynamic Derivations](internals/dynamic-derivations.md)
   - [Recursive Nix Internals](internals/recursive-nix-internals.md)
   - [Dynamic Derivations — TODO](internals/dynamic-derivations-todo.md)
+  - [Test Support](internals/test-support.md)

@@ -1,7 +1,8 @@
 //! Go package resolver for Nix.
 //!
 //! Runs `go list -json -deps -e` against a Go source tree and returns the
-//! third-party package graph plus module replacements as JSON.
+//! third-party package graph, local packages, module replacements, and
+//! (optionally) test-only dependencies as JSON.
 //!
 //! Pure Rust with no nix dependencies — the nix integration layer
 //! (`plugin/resolveGoPackages.cc`) handles primop registration and
@@ -13,8 +14,9 @@ use std::ffi::{CStr, CString};
 
 /// Resolve Go packages from JSON input, returning JSON output.
 ///
-/// Input JSON: `{ "go": "...", "src": "...", "tags": [], ... }`
-/// Output JSON: `{ "packages": {...}, "replacements": {...}, "localReplaces": {...} }`
+/// Input JSON: `{ "go": "...", "src": "...", "tags": [], "doCheck": false, ... }`
+/// Output JSON: `{ "packages": {...}, "localPackages": {...}, "modulePath": "...",
+///   "replacements": {...}, "testPackages": {...}, "localReplaces": {...} }`
 ///
 /// Returns 0 on success, non-zero on error. Caller must free `*out` / `*err_out`
 /// with `go2nix_free_string`.
@@ -36,9 +38,8 @@ pub unsafe extern "C" fn resolve_go_packages_json(
         let opts: resolve::JsonInput =
             serde_json::from_str(input).map_err(|e| format!("failed to parse input JSON: {e}"))?;
 
-        let go_output = resolve::run_go_list_from_json(&opts).map_err(|e| format!("{e:#}"))?;
-        let graph = resolve::parse_go_packages(&go_output).map_err(|e| format!("{e:#}"))?;
-        resolve::package_graph_to_json(&graph).map_err(|e| format!("{e:#}"))
+        let graph = resolve::resolve_packages(&opts).map_err(|e| format!("{e:#}"))?;
+        resolve::package_graph_to_json(&graph, &opts.src).map_err(|e| format!("{e:#}"))
     }
 
     match inner(input_json) {

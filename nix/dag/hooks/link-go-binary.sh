@@ -9,7 +9,14 @@
 #   goLockfile      — path to go2nix.toml lockfile
 #   goPname         — binary name for "." package (optional)
 #
-# Third-party dependencies are discovered from $buildInputs at build time.
+# Structured attrs (bash associative array, via __structuredAttrs):
+#   goLocalArchives — import path -> store path of compiled .a archive
+#                     Used by checkPhase to reconstruct a local-pkgs directory.
+#
+# Build-time dependencies discovered from $buildInputs:
+#   depsImportcfg      — importcfg for build (stdlib + build third-party + local)
+#   testDepsImportcfg  — importcfg for checks (superset: + test-only third-party)
+#                        Only present when doCheck = true and test-only deps exist.
 
 # Variables set by Nix stdenv / derivation env, not by this script.
 # shellcheck disable=SC2154
@@ -21,18 +28,30 @@ linkGoBinaryConfigurePhase() {
 
   # Extract module path from go.mod at build time (avoids Nix eval-time parsing).
   goModulePath=$(awk '/^module /{print $2; exit}' "$goModuleRoot/go.mod")
+  if [ -z "$goModulePath" ]; then
+    echo "go2nix: could not extract module path from $goModuleRoot/go.mod" >&2
+    exit 1
+  fi
   export goModulePath
 
-  # Build importcfg: stdlib + all third-party deps.
+  # Build importcfg: use pre-built bundle (stdlib + all third-party + local deps).
   # NOTE: modinfo is a linker-only directive (cmd/link) and must NOT be present
   # during compilation (cmd/compile rejects unknown directives). It is appended
-  # to the importcfg in the build phase, after compile-packages and before link.
-  cat "@stdlib@/importcfg" >"$NIX_BUILD_TOP/importcfg"
+  # to the importcfg in the build phase, before link.
+  # The bundle is passed as the sole buildInput (depsImportcfg derivation).
+  local importcfg_bundle=""
   for dep in ${buildInputs[@]}; do
     if [ -f "$dep/importcfg" ]; then
-      cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
+      importcfg_bundle="$dep/importcfg"
+      break
     fi
   done
+  if [ -z "$importcfg_bundle" ]; then
+    echo "go2nix: no importcfg bundle found in buildInputs" >&2
+    exit 1
+  fi
+  cp "$importcfg_bundle" "$NIX_BUILD_TOP/importcfg"
+  chmod u+w "$NIX_BUILD_TOP/importcfg"
 
   # Compute module info (modinfo) and GODEBUG defaults.
   # build-modinfo outputs:
@@ -49,8 +68,8 @@ linkGoBinaryConfigurePhase() {
 linkGoBinaryBuildPhase() {
   runHook preBuild
 
-  local localdir="$NIX_BUILD_TOP/local-pkgs"
-  mkdir -p "$localdir"
+  local maindir="$NIX_BUILD_TOP/main-pkgs"
+  mkdir -p "$maindir"
 
   # Build mode is computed at Nix eval time from stdenv.hostPlatform.go.GOOS
   # (see hooks/default.nix), matching Go's internal/platform.DefaultPIE.
@@ -71,16 +90,6 @@ linkGoBinaryBuildPhase() {
     pgoArgs=(--pgo-profile "$goPgoProfile")
   fi
 
-  # Pass 1: compile library packages in parallel (DAG-aware).
-  @go2nix@ compile-packages \
-    --import-cfg "$NIX_BUILD_TOP/importcfg" \
-    --out-dir "$localdir" \
-    --trim-path "$NIX_BUILD_TOP" \
-    @tagArg@ \
-    "${gcflagArgs[@]}" \
-    "${pgoArgs[@]}" \
-    "$goModuleRoot"
-
   # Resolve the linker binary before clearing GOROOT.
   local goLinkTool
   goLinkTool="$(@go@ env GOTOOLDIR)/link"
@@ -97,9 +106,13 @@ linkGoBinaryBuildPhase() {
   local linkflags=""
   if [ -f "$NIX_BUILD_TOP/.has_cgo" ]; then
     # Use CXX when C++ files are present, matching Go's setextld (gc.go).
-    local extld="$CC"
+    local extld="${CC:-}"
     if [ -f "$NIX_BUILD_TOP/.has_cxx" ]; then
-      extld="$CXX"
+      extld="${CXX:-}"
+    fi
+    if [ -z "$extld" ]; then
+      echo "go2nix: cgo package requires CC (or CXX) but none is set" >&2
+      exit 1
     fi
     linkflags="-extld $extld -linkmode external"
   fi
@@ -146,7 +159,7 @@ linkGoBinaryBuildPhase() {
       --import-cfg "$NIX_BUILD_TOP/importcfg" \
       --import-path "main" \
       --src-dir "$srcdir" \
-      --output "$localdir/$importpath.a" \
+      --output "$maindir/$importpath.a" \
       --trim-path "$NIX_BUILD_TOP" \
       @tagArg@ \
       "${gcflagArgs[@]}" \
@@ -164,7 +177,7 @@ linkGoBinaryBuildPhase() {
       $sanitizer_linkflags \
       $godebug_linkflag \
       -o "$NIX_BUILD_TOP/staging/bin/$binname" \
-      "$localdir/$importpath.a"
+      "$maindir/$importpath.a"
   done
 
   runHook postBuild
@@ -179,6 +192,58 @@ linkGoBinaryInstallPhase() {
   runHook postInstall
 }
 
+linkGoBinaryCheckPhase() {
+  runHook preCheck
+
+  # Reconstruct local-pkgs directory from goLocalArchives (structured attr).
+  # Each local package derivation produces ${pkg}/${importPath}.a; we symlink
+  # them into the flat directory layout that test-packages --local-dir expects.
+  local localdir="$NIX_BUILD_TOP/local-pkgs"
+  mkdir -p "$localdir"
+  for importPath in "${!goLocalArchives[@]}"; do
+    mkdir -p "$localdir/$(dirname "$importPath")"
+    ln -s "${goLocalArchives[$importPath]}" "$localdir/$importPath.a"
+  done
+
+  # Locate the test importcfg bundle. buildInputs contains depsImportcfg and
+  # (when doCheck with test-only deps) testDepsImportcfg. testDepsImportcfg is
+  # a strict superset, so we want the last importcfg found. If there's only
+  # depsImportcfg (no test-only deps), it's used as-is — still correct since
+  # it already contains all build + local packages.
+  local test_importcfg=""
+  for dep in "${buildInputs[@]}"; do
+    if [ -f "$dep/importcfg" ]; then
+      test_importcfg="$dep/importcfg"
+    fi
+  done
+  if [ -z "$test_importcfg" ]; then
+    echo "go2nix: no importcfg bundle found in buildInputs for check phase" >&2
+    exit 1
+  fi
+
+  # Build gcflags for test compilation, matching the build phase logic.
+  local test_gcflags="${goGcflags:-}"
+  local go_buildmode="@buildMode@"
+  if [ "$go_buildmode" = "pie" ]; then
+    test_gcflags="-shared${test_gcflags:+ $test_gcflags}"
+  fi
+  local -a testGcflagArgs=()
+  if [ -n "$test_gcflags" ]; then
+    testGcflagArgs=(--gc-flags "$test_gcflags")
+  fi
+
+  @go2nix@ test-packages \
+    --import-cfg "$test_importcfg" \
+    --local-dir "$localdir" \
+    --trim-path "$NIX_BUILD_TOP" \
+    @tagArg@ \
+    "${testGcflagArgs[@]}" \
+    ${goCheckFlags:+--check-flags "$goCheckFlags"} \
+    "$goModuleRoot"
+
+  runHook postCheck
+}
+
 # Consumed by Nix stdenv, not by this script.
 # shellcheck disable=SC2034
 configurePhase=linkGoBinaryConfigurePhase
@@ -186,5 +251,7 @@ configurePhase=linkGoBinaryConfigurePhase
 buildPhase=linkGoBinaryBuildPhase
 # shellcheck disable=SC2034
 installPhase=linkGoBinaryInstallPhase
+# shellcheck disable=SC2034
+checkPhase=linkGoBinaryCheckPhase
 # shellcheck disable=SC2034
 dontUnpack=1

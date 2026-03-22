@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -133,21 +134,15 @@ func DefaultGODEBUG(moduleRoot string) string {
 	return b.String()
 }
 
+var goMinorRe = regexp.MustCompile(`^1\.(\d+)`)
+
 // parseGoMinor extracts the minor version from a Go version string.
 // "1.21" → 21, "1.21.3" → 21. Returns -1 on failure.
 func parseGoMinor(v string) int {
-	// Strip patch version.
-	if i := strings.Count(v, "."); i >= 2 {
-		idx := strings.Index(v, ".")
-		jdx := idx + 1 + strings.Index(v[idx+1:], ".")
-		v = v[:jdx]
-	}
-	if !strings.HasPrefix(v, "1.") {
+	m := goMinorRe.FindStringSubmatch(v)
+	if m == nil {
 		return -1
 	}
-	n, err := strconv.Atoi(v[2:])
-	if err != nil {
-		return -1
-	}
+	n, _ := strconv.Atoi(m[1])
 	return n
 }

@@ -35,6 +35,7 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(cgowork)
 
 	cc := envOrDefault("CC", "gcc")
 	cxx := envOrDefault("CXX", "g++")
@@ -162,17 +163,12 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 
 	// Step 4a: if .s (Plan 9 assembly) files exist, generate symabis.
 	hasGoAsm := len(goAsmFiles) > 0
-	var symabisPath string
-	asmhdr := filepath.Join(opts.TrimPath, "go_asm.h")
+	var symabisPath, asmhdr string
 	if hasGoAsm {
-		if err := os.WriteFile(asmhdr, nil, 0o644); err != nil {
+		var err error
+		asmhdr, symabisPath, err = generateSymabis(opts, uid, goAsmFiles)
+		if err != nil {
 			return err
-		}
-		symabisPath = filepath.Join(opts.TrimPath, "symabis_"+uid)
-		asmArgs := append(asmBaseArgs(opts), "-gensymabis", "-o", symabisPath)
-		asmArgs = append(asmArgs, goAsmFiles...)
-		if err := runIn(opts.SrcDir, "go", asmArgs...); err != nil {
-			return fmt.Errorf("gensymabis: %w", err)
 		}
 	}
 
@@ -307,10 +303,7 @@ func compileCFiles(cc, cxx, cgowork, srcDir, uid string, files gofiles.PkgFiles,
 
 	// Compile C++ files.
 	for _, f := range files.CXXFiles {
-		base := filepath.Base(f)
-		base = strings.TrimSuffix(base, ".cc")
-		base = strings.TrimSuffix(base, ".cpp")
-		base = strings.TrimSuffix(base, ".cxx")
+		base := trimFileExt(filepath.Base(f))
 		oFile := filepath.Join(cgowork, base+"_cxx_"+uid+".o")
 		cxxArgs := []string{"-c", "-I", cgowork, "-I", srcDir, "-fPIC", "-pthread"}
 		cxxArgs = append(cxxArgs, cgoCxxflags...)
@@ -326,10 +319,7 @@ func compileCFiles(cc, cxx, cgowork, srcDir, uid string, files gofiles.PkgFiles,
 		fc := envOrDefault("FC", "gfortran")
 		cgoFflags := strings.Fields(os.Getenv("CGO_FFLAGS"))
 		for _, f := range files.FFiles {
-			base := filepath.Base(f)
-			for _, ext := range []string{".f90", ".for", ".f", ".F"} {
-				base = strings.TrimSuffix(base, ext)
-			}
+			base := trimFileExt(filepath.Base(f))
 			oFile := filepath.Join(cgowork, base+"_f_"+uid+".o")
 			fcArgs := []string{"-c", "-I", cgowork, "-I", srcDir, "-fPIC", "-pthread"}
 			fcArgs = append(fcArgs, cgoFflags...)
@@ -488,6 +478,14 @@ func cgoPreamble(path string) string {
 		}
 	}
 	return ""
+}
+
+// trimFileExt removes the file extension from a filename.
+func trimFileExt(name string) string {
+	if ext := filepath.Ext(name); ext != "" {
+		return strings.TrimSuffix(name, ext)
+	}
+	return name
 }
 
 // matchesCgoConstraint checks if a #cgo constraint (e.g., "linux", "!windows",
