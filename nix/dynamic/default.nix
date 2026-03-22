@@ -55,6 +55,20 @@ assert
   lib.assertMsg (lib.versionAtLeast "${major}.${minor}" "2.34") "go2nix dynamic mode requires Nix >= 2.34 (v4 derivation JSON format), got ${nixPackage.version}";
 
 let
+  # Validate packageOverrides: experimental mode only supports nativeBuildInputs.
+  # Derivations are synthesized at build time by `go2nix resolve`, so env and
+  # other attrs cannot be forwarded. Fail early instead of silently dropping.
+  validatedOverrides = lib.mapAttrs (path: cfg:
+    let
+      knownAttrs = [ "nativeBuildInputs" ];
+      unknownAttrs = builtins.attrNames (builtins.removeAttrs cfg knownAttrs);
+    in
+    assert
+      unknownAttrs == [ ]
+      || builtins.throw "packageOverrides.${path}: unknown attributes ${builtins.toJSON unknownAttrs}. Experimental mode only supports: nativeBuildInputs";
+    cfg
+  ) packageOverrides;
+
   # Serialize packageOverrides to JSON for the resolve command.
   # Only pass nativeBuildInputs store paths — resolve adds them to derivation inputs.
   # Auto-expand .dev outputs (like stdenv's multiple-outputs.sh hook) so users
@@ -73,7 +87,7 @@ let
             [ input ]
         ) (cfg.nativeBuildInputs or [ ])
       );
-    }) packageOverrides
+    }) validatedOverrides
   );
 
   wrapperDrv = stdenv.mkDerivation {

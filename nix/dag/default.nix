@@ -308,9 +308,17 @@ let
       mkDeriv = if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation;
 
       pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
+      knownOverrideAttrs = [
+        "nativeBuildInputs"
+        "env"
+      ];
+      unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
       extraEnv = pkgOverride.env or { };
     in
+    assert
+      unknownAttrs == [ ]
+      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
     mkDeriv {
       name = pkg.drvName;
       __structuredAttrs = true;
