@@ -30,8 +30,14 @@ func main() {
 			os.Exit(1)
 		}
 	case "fixtures":
-		fmt.Fprintln(os.Stderr, "not implemented yet")
-		os.Exit(1)
+		if len(args) < 1 {
+			fmt.Fprintf(os.Stderr, "Usage: %s fixtures <outdir>\n", os.Args[0])
+			os.Exit(1)
+		}
+		if err := cmd.RunFixtures(args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", command)
 		os.Exit(1)
