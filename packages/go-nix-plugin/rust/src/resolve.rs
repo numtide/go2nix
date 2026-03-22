@@ -59,7 +59,7 @@ struct GoPackageError {
 // Processed package data
 // ---------------------------------------------------------------------------
 
-struct PkgData {
+pub(crate) struct PkgData {
     import_path: String,
     mod_path: String,
     mod_version: String,
@@ -186,6 +186,181 @@ fn run_go_list(go_bin: &str, src_dir: &str, opts: &GoListOpts) -> Result<Vec<u8>
     Ok(output.stdout)
 }
 
+fn run_go_list_test(
+    go_bin: &str,
+    src_dir: &str,
+    local_import_paths: &[String],
+    opts: &GoListOpts,
+) -> Result<Vec<u8>> {
+    let mut cmd = Command::new(go_bin);
+    cmd.arg("list");
+    cmd.arg("-json=ImportPath,Module,Imports,CgoFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-deps");
+    cmd.arg("-test");
+    cmd.arg("-e");
+    cmd.arg("-buildvcs=false");
+
+    if !opts.tags.is_empty() {
+        cmd.arg("-tags");
+        cmd.arg(opts.tags.join(","));
+    }
+    for ip in local_import_paths {
+        cmd.arg(ip);
+    }
+
+    let work_dir = if opts.mod_root == "." {
+        src_dir.to_owned()
+    } else {
+        format!("{src_dir}/{}", opts.mod_root)
+    };
+    cmd.current_dir(&work_dir);
+
+    cmd.env_clear();
+    for (k, v) in inherit_env(&["GOMODCACHE", "GOPATH", "HOME"]) {
+        cmd.env(&k, &v);
+    }
+    cmd.env("GOPROXY", opts.go_proxy);
+    cmd.env("GONOSUMCHECK", "*");
+    cmd.env("GOFLAGS", "-mod=readonly");
+    cmd.env("GOENV", "off");
+    cmd.env("GOWORK", "off");
+
+    if opts.go_proxy != "off" {
+        for (k, v) in inherit_env(&[
+            "PATH",
+            "TMPDIR",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            "NIX_SSL_CERT_FILE",
+        ]) {
+            cmd.env(&k, &v);
+        }
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+    }
+
+    if !opts.goos.is_empty() {
+        cmd.env("GOOS", opts.goos);
+    }
+    if !opts.goarch.is_empty() {
+        cmd.env("GOARCH", opts.goarch);
+    }
+    if !opts.cgo_enabled.is_empty() {
+        cmd.env("CGO_ENABLED", opts.cgo_enabled);
+    }
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("resolveGoPackages: failed to execute '{go_bin}'"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "resolveGoPackages: 'go list -test' failed (exit {}).\n{stderr}\n\
+             Hint: check the error output above, and ensure all test \
+             dependencies are in your local cache by running 'go mod download'.",
+            output.status.code().unwrap_or(-1)
+        );
+    }
+
+    Ok(output.stdout)
+}
+
+pub(crate) fn parse_test_packages(
+    stdout: &[u8],
+    third_party_paths: &BTreeSet<String>,
+    replacements: &mut BTreeMap<String, (String, String)>,
+) -> Result<Vec<PkgData>> {
+    let mut test_packages = Vec::new();
+    let mut test_only_paths = BTreeSet::new();
+    let mut pkg_errors = Vec::new();
+
+    for result in serde_json::Deserializer::from_slice(stdout).into_iter::<GoPackage>() {
+        let jpkg = result.context("resolveGoPackages: failed to parse test go list JSON")?;
+
+        if let Some(ref err) = jpkg.error {
+            if !err.err.is_empty() {
+                pkg_errors.push(format!("{}: {}", jpkg.import_path, err.err));
+                continue;
+            }
+        }
+
+        // Skip stdlib (no module).
+        let Some(module) = jpkg.module else {
+            continue;
+        };
+
+        // Skip synthetic test packages: test mains (foo.test) and
+        // recompiled variants (foo [foo.test]).
+        if jpkg.import_path.contains('[') || jpkg.import_path.ends_with(".test") {
+            continue;
+        }
+
+        let replace_path = module
+            .replace
+            .as_ref()
+            .map_or(String::new(), |r| r.path.clone());
+        let replace_version = module
+            .replace
+            .as_ref()
+            .map_or(String::new(), |r| r.version.clone());
+
+        // Skip local packages (main module or local replaces).
+        let is_local = module.main || (!replace_path.is_empty() && replace_version.is_empty());
+        if is_local {
+            continue;
+        }
+
+        // Skip packages already in the build graph.
+        if third_party_paths.contains(&jpkg.import_path) {
+            continue;
+        }
+
+        // Deduplicate within the test pass.
+        if !test_only_paths.insert(jpkg.import_path.clone()) {
+            continue;
+        }
+
+        // Collect replacements from test-only deps.
+        if !replace_path.is_empty() {
+            let effective_version = if replace_version.is_empty() {
+                &module.version
+            } else {
+                &replace_version
+            };
+            let mod_key = format!("{}@{effective_version}", module.path);
+            replacements
+                .entry(mod_key)
+                .or_insert_with(|| (replace_path.clone(), replace_version.clone()));
+        }
+
+        test_packages.push(PkgData {
+            import_path: jpkg.import_path,
+            mod_path: module.path,
+            mod_version: module.version,
+            replace_version,
+            imports: jpkg.imports,
+            cgo_pkg_config: jpkg.cgo_pkg_config,
+            cgo_cflags: jpkg.cgo_cflags,
+            cgo_ldflags: jpkg.cgo_ldflags,
+            is_cgo: !jpkg.cgo_files.is_empty(),
+        });
+    }
+
+    if !pkg_errors.is_empty() {
+        let errs = pkg_errors
+            .iter()
+            .map(|e| format!("  - {e}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        bail!(
+            "resolveGoPackages: test dependency errors:\n{errs}\n\
+             Hint: your GOMODCACHE may be stale. Run 'go mod download' to populate it."
+        );
+    }
+
+    Ok(test_packages)
+}
+
 // ---------------------------------------------------------------------------
 // JSON → package graph
 // ---------------------------------------------------------------------------
@@ -198,6 +373,8 @@ pub(crate) struct PackageGraph {
     replacements: BTreeMap<String, (String, String)>,
     local_replaces: BTreeMap<String, String>,
     module_path: String,
+    test_packages: Vec<PkgData>,
+    test_only_paths: BTreeSet<String>,
 }
 
 pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
@@ -350,6 +527,8 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         replacements,
         local_replaces,
         module_path,
+        test_packages: Vec::new(),
+        test_only_paths: BTreeSet::new(),
     })
 }
 
@@ -406,6 +585,49 @@ pub(crate) fn run_go_list_from_json(input: &JsonInput) -> Result<Vec<u8>> {
             cgo_enabled: &input.cgo_enabled,
         },
     )
+}
+
+/// Run both go list passes and return the complete package graph.
+///
+/// The first pass (`go list -deps`) discovers build-time packages.
+/// When `do_check` is set and local packages exist, a second pass
+/// (`go list -deps -test`) discovers test-only third-party dependencies.
+pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
+    let stdout = run_go_list_from_json(input)?;
+    let mut graph = parse_go_packages(&stdout)?;
+
+    if input.do_check && !graph.local_packages.is_empty() {
+        let local_ips: Vec<String> = graph
+            .local_packages
+            .iter()
+            .map(|p| p.import_path.clone())
+            .collect();
+
+        let test_stdout = run_go_list_test(
+            &input.go,
+            &input.src,
+            &local_ips,
+            &GoListOpts {
+                tags: &input.tags,
+                sub_packages: &[],
+                mod_root: &input.mod_root,
+                goos: &input.goos,
+                goarch: &input.goarch,
+                go_proxy: &input.go_proxy,
+                cgo_enabled: &input.cgo_enabled,
+            },
+        )?;
+
+        let test_pkgs = parse_test_packages(
+            &test_stdout,
+            &graph.third_party_paths,
+            &mut graph.replacements,
+        )?;
+        graph.test_only_paths = test_pkgs.iter().map(|p| p.import_path.clone()).collect();
+        graph.test_packages = test_pkgs;
+    }
+
+    Ok(graph)
 }
 
 // Serializable output types.
@@ -552,13 +774,53 @@ pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Resu
         })
         .collect();
 
+    // Build test_packages map.
+    let mut test_packages_out = BTreeMap::new();
+    for p in &graph.test_packages {
+        let effective_version = if p.replace_version.is_empty() {
+            &p.mod_version
+        } else {
+            &p.replace_version
+        };
+        let mod_key = format!("{}@{effective_version}", p.mod_path);
+        let subdir = if p.import_path != p.mod_path {
+            let prefix = format!("{}/", p.mod_path);
+            p.import_path.strip_prefix(&prefix).unwrap_or("").to_owned()
+        } else {
+            String::new()
+        };
+        let filtered_imports: Vec<String> = p
+            .imports
+            .iter()
+            .filter(|imp| {
+                graph.third_party_paths.contains(*imp) || graph.test_only_paths.contains(*imp)
+            })
+            .cloned()
+            .collect();
+        let drv_name = format!("gopkg-{}-{}", sanitize_name(&p.import_path), p.mod_version);
+
+        test_packages_out.insert(
+            p.import_path.clone(),
+            JsonPkg {
+                drv_name,
+                imports: filtered_imports,
+                mod_key,
+                subdir,
+                is_cgo: p.is_cgo,
+                cgo_pkg_config: p.cgo_pkg_config.clone(),
+                cgo_cflags: p.cgo_cflags.clone(),
+                cgo_ldflags: p.cgo_ldflags.clone(),
+            },
+        );
+    }
+
     let output = JsonOutput {
         packages,
         local_packages,
         module_path: graph.module_path.clone(),
         replacements,
         local_replaces: graph.local_replaces.clone(),
-        test_packages: BTreeMap::new(),
+        test_packages: test_packages_out,
     };
 
     serde_json::to_string(&output).context("failed to serialize output JSON")

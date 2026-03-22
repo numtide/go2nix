@@ -36,8 +36,7 @@ pub unsafe extern "C" fn resolve_go_packages_json(
         let opts: resolve::JsonInput =
             serde_json::from_str(input).map_err(|e| format!("failed to parse input JSON: {e}"))?;
 
-        let go_output = resolve::run_go_list_from_json(&opts).map_err(|e| format!("{e:#}"))?;
-        let graph = resolve::parse_go_packages(&go_output).map_err(|e| format!("{e:#}"))?;
+        let graph = resolve::resolve_packages(&opts).map_err(|e| format!("{e:#}"))?;
         resolve::package_graph_to_json(&graph, &opts.src).map_err(|e| format!("{e:#}"))
     }
 
