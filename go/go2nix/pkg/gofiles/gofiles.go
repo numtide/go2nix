@@ -56,16 +56,15 @@ func BuildContext(tags string) build.Context {
 // embed patterns if present.
 func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 	result := PkgFiles{
-		GoFiles:    nonNil(pkg.GoFiles),
-		CgoFiles:   nonNil(pkg.CgoFiles),
-		SFiles:     nonNil(pkg.SFiles),
-		CFiles:     nonNil(pkg.CFiles),
-		CXXFiles:   nonNil(pkg.CXXFiles),
-		FFiles:     nonNil(pkg.FFiles),
-		HFiles:     nonNil(pkg.HFiles),
-		SysoFiles:  nonNil(pkg.SysoFiles),
-		EmbedFiles: nonNil(pkg.EmbedPatterns),
-		IsCommand:  pkg.IsCommand(),
+		GoFiles:   nonNil(pkg.GoFiles),
+		CgoFiles:  nonNil(pkg.CgoFiles),
+		SFiles:    nonNil(pkg.SFiles),
+		CFiles:    nonNil(pkg.CFiles),
+		CXXFiles:  nonNil(pkg.CXXFiles),
+		FFiles:    nonNil(pkg.FFiles),
+		HFiles:    nonNil(pkg.HFiles),
+		SysoFiles: nonNil(pkg.SysoFiles),
+		IsCommand: pkg.IsCommand(),
 	}
 
 	if len(pkg.EmbedPatterns) > 0 {
@@ -74,6 +73,17 @@ func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 			return PkgFiles{}, fmt.Errorf("resolving embed patterns in %s: %w", dir, err)
 		}
 		result.EmbedCfg = cfg
+		// EmbedFiles must contain resolved file paths (from EmbedCfg.Files),
+		// not raw patterns. The test runner symlinks these into synthetic
+		// source directories, so they must be actual relative paths.
+		embedFiles := make([]string, 0, len(cfg.Files))
+		for f := range cfg.Files {
+			embedFiles = append(embedFiles, f)
+		}
+		sort.Strings(embedFiles)
+		result.EmbedFiles = embedFiles
+	} else {
+		result.EmbedFiles = []string{}
 	}
 
 	return result, nil
