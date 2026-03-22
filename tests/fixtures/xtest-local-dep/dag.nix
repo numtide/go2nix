@@ -1,4 +1,4 @@
-# Test: DAG mode with xtest recompilation of local dependent packages.
+# Test: default mode with xtest recompilation of local dependent packages.
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,7 +8,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   pname = "xtest-local-dep";
   version = "0.0.1";
   src = ./. ;

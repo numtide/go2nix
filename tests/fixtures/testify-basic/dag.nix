@@ -1,4 +1,4 @@
-# Test: DAG mode with test-only third-party dep (testify/assert).
+# Test: default mode with test-only third-party dep (testify/assert).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,7 +8,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   pname = "testify-basic";
   version = "0.0.1";
   src = ./. ;

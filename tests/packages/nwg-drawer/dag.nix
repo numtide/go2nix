@@ -1,4 +1,4 @@
-# Test: buildGoApplicationDAGMode (explicit) with many GTK cgo deps (15 packages using pkg-config).
+# Test: buildGoApplication (explicit) with many GTK cgo deps (15 packages using pkg-config).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -24,7 +24,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   src = pkgs.fetchFromGitHub {
     owner = "nwg-piotr";
     repo = "nwg-drawer";

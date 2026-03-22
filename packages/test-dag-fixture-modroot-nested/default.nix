@@ -1,4 +1,4 @@
-# DAG mode fixture test: modRoot != "." (go.mod in app/ subdirectory).
+# default mode fixture test: modRoot != "." (go.mod in app/ subdirectory).
 #
 # Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. Requires recursive-nix.
@@ -31,7 +31,7 @@ else
       export HOME=$(mktemp -d)
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
-      echo "=== Building modroot-nested fixture (DAG mode, modRoot=app) ==="
+      echo "=== Building modroot-nested fixture (default mode, modRoot=app) ==="
       result=$(nix-build ${go2nixSrc}/tests/fixtures/modroot-nested/dag.nix \
         -I nixpkgs=${nixpkgsPath} \
         --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \

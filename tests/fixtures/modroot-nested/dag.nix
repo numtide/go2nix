@@ -1,4 +1,4 @@
-# Test: DAG mode with modRoot != "." (go.mod in app/ subdirectory).
+# Test: default mode with modRoot != "." (go.mod in app/ subdirectory).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -8,7 +8,7 @@ let
     inherit (pkgs) callPackage;
   };
 in
-goEnv.buildGoApplicationDAGMode {
+goEnv.buildGoApplication {
   pname = "modroot-nested";
   version = "0.0.1";
   src = ./. ;

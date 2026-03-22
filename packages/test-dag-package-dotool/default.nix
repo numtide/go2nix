@@ -1,4 +1,4 @@
-# DAG mode build test: dotool (cgo package with xkbcommon via pkg-config).
+# default mode build test: dotool (cgo package with xkbcommon via pkg-config).
 #
 # Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. Requires recursive-nix.
@@ -59,7 +59,7 @@ else
       export HOME=$(mktemp -d)
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
-      echo "=== Building dotool (DAG mode) ==="
+      echo "=== Building dotool (default mode) ==="
       result=$(GOMODCACHE=${goModules} \
         nix-build ${go2nixSrc}/tests/packages/dotool/dag.nix \
         -I nixpkgs=${nixpkgsPath} \

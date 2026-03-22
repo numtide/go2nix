@@ -2,18 +2,7 @@
 
 > **⚠️ Experimental** — APIs and lockfile formats may change without notice.
 
-Nix-native Go builder with two packaging modes — per-package derivations with
-fine-grained caching.
-
-## Builder modes
-
-| Mode | How it works | Lockfile | Caching |
-|------|-------------|----------|---------|
-| **DAG** | `go tool compile/link` per-package | `[mod]` only | Per-package |
-| **Dynamic** | Recursive-nix, DAG at build time | `[mod]` only | Per-package |
-
-See [docs/src/go2nix-architecture.md](docs/src/go2nix-architecture.md) for details on
-each mode.
+Nix-native Go builder with per-package derivations and fine-grained caching.
 
 ## Quick start
 
@@ -62,16 +51,23 @@ go2nix generate .
 nix build
 ```
 
-### Choosing a mode
+## Builder modes
+
+| Mode | How it works | Lockfile | Caching |
+|------|-------------|----------|---------|
+| **Default** | `go tool compile/link` per-package | `[mod]` only | Per-package |
+| **Experimental** | Recursive-nix at build time | `[mod]` only | Per-package |
 
 ```nix
-# Auto-select (dynamic if available, otherwise DAG):
+# Default (recommended):
 goEnv.buildGoApplication { ... }
 
-# Explicitly use a specific mode:
-goEnv.buildGoApplicationDAGMode { ... }
-goEnv.buildGoApplicationDynamicMode { ... }
+# Experimental (requires nix >= 2.34 with experimental features):
+goEnv.buildGoApplicationExperimental { ... }
 ```
+
+See [docs/src/go2nix-architecture.md](docs/src/go2nix-architecture.md) for
+details on each mode.
 
 ## CLI commands
 
@@ -85,7 +81,7 @@ Run `go2nix generate -h` for all flags.
 ## Documentation
 
 - [Architecture](docs/src/go2nix-architecture.md) — builder modes, lockfile format,
-  compilation pipeline, package DAG
+  compilation pipeline
 
 ## Development
 

@@ -1,5 +1,5 @@
 // Package testrunner compiles and runs tests for local Go packages.
-// It is invoked during the checkPhase of DAG mode builds, after
+// It is invoked during the checkPhase of default mode builds, after
 // compile-packages has already built all library archives.
 package testrunner
 

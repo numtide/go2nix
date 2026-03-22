@@ -1,12 +1,12 @@
-# Dynamic Mode
+# Experimental Mode
 
 Per-package CA derivations at build time, via recursive-nix.
 
 ## Overview
 
-Dynamic mode moves package graph discovery from Nix eval time to build time.
-A single recursive-nix wrapper derivation runs `go2nix resolve`, which calls
-`go list -json -deps` to discover the import graph, then registers one
+The experimental mode moves package graph discovery from Nix eval time to build
+time. A single recursive-nix wrapper derivation runs `go2nix resolve`, which
+calls `go list -json -deps` to discover the import graph, then registers one
 content-addressed (CA) derivation per package via `nix derivation add`. The
 wrapper's output is a `.drv` file; `builtins.outputOf` resolves it to the
 final binary at eval time.
@@ -17,7 +17,8 @@ deduplicates by content hash.
 
 ## Requirements
 
-Dynamic mode requires Nix >= 2.34 with these experimental features enabled:
+The experimental mode requires Nix >= 2.34 with these experimental features
+enabled:
 
 ```
 extra-experimental-features = recursive-nix ca-derivations dynamic-derivations
@@ -25,7 +26,7 @@ extra-experimental-features = recursive-nix ca-derivations dynamic-derivations
 
 ## Lockfile requirements
 
-Dynamic mode uses the same v2 lockfile format as DAG mode:
+The experimental mode uses the same lockfile format as the default mode:
 
 ```bash
 go2nix generate .
@@ -54,8 +55,9 @@ The `netrcFile` option supports private module authentication.
 ### 3. Package graph discovery (build time)
 
 With all modules available, `go list -json -deps` discovers the full import
-graph. DAG mode performs this step at eval time via the go2nix-nix-plugin — dynamic
-mode defers it to build time inside the recursive-nix sandbox.
+graph. The default mode performs this step at eval time via the
+go2nix-nix-plugin — the experimental mode defers it to build time inside the
+recursive-nix sandbox.
 
 ### 4. CA derivation registration (build time)
 
@@ -81,7 +83,7 @@ build-time-generated derivation graph.
 Per-package customization (e.g., for cgo libraries):
 
 ```nix
-goEnv.buildGoApplicationDynamicMode {
+goEnv.buildGoApplicationExperimental {
   src = ./.;
   goLock = ./go2nix.toml;
   pname = "my-app";
@@ -100,7 +102,7 @@ the extra inputs to the appropriate CA derivations.
 ## Usage
 
 ```nix
-goEnv.buildGoApplicationDynamicMode {
+goEnv.buildGoApplicationExperimental {
   src = ./.;
   goLock = ./go2nix.toml;
   pname = "my-app";
@@ -118,7 +120,7 @@ resolved via `builtins.outputOf`.
 
 ```
 nix/dynamic/
-└── default.nix    # buildGoApplicationDynamicMode (wrapper derivation)
+└── default.nix    # buildGoApplicationExperimental (wrapper derivation)
 ```
 
 The build-time logic lives in the `go2nix resolve` command
@@ -128,7 +130,7 @@ The build-time logic lives in the `go2nix resolve` command
 
 **Pros:**
 
-- Small lockfile — only `[mod]` hashes (same as DAG mode)
+- Small lockfile — only `[mod]` hashes (same as default mode)
 - No lockfile regeneration when import graph changes (only when modules change)
 - Per-package caching via CA derivations
 - CA deduplication — comment-only edits don't trigger rebuilds

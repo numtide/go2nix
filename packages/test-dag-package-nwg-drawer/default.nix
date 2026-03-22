@@ -1,4 +1,4 @@
-# DAG mode build test: nwg-drawer (cgo with GTK3/GTK Layer Shell).
+# default mode build test: nwg-drawer (cgo with GTK3/GTK Layer Shell).
 #
 # Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. Requires recursive-nix.
@@ -61,7 +61,7 @@ else
       export HOME=$(mktemp -d)
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
-      echo "=== Building nwg-drawer (DAG mode) ==="
+      echo "=== Building nwg-drawer (default mode) ==="
       result=$(GOMODCACHE=${goModules} \
         nix-build ${go2nixSrc}/tests/packages/nwg-drawer/dag.nix \
         -I nixpkgs=${nixpkgsPath} \

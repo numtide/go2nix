@@ -4,8 +4,8 @@
 # Provides: go, go2nix, stdlib, hooks, fetchers, helpers, buildGoApplication.
 #
 # Two builder modes:
-#   - DAG:     eval-time per-package DAG (fine-grained caching)
-#   - dynamic: recursive-nix + CA derivations (best CI performance)
+#   - default:      eval-time per-package DAG (fine-grained caching)
+#   - experimental: recursive-nix + CA derivations (requires experimental nix features)
 {
   go,
   go2nix,
@@ -27,13 +27,13 @@ lib.makeScope newScope (
   let
     inherit (self) callPackage;
 
-    buildGoApplicationDAGMode = callPackage ./dag { };
+    buildGoApplication = callPackage ./dag { };
 
-    buildGoApplicationDynamicMode' =
+    buildGoApplicationExperimental' =
       if nixPackage != null then
         callPackage ./dynamic { inherit nixPackage; }
       else
-        throw "buildGoApplicationDynamicMode requires nixPackage to be set in mk-go-env";
+        throw "buildGoApplicationExperimental requires nixPackage to be set in mk-go-env";
   in
   {
     inherit
@@ -57,17 +57,10 @@ lib.makeScope newScope (
       fetchGoModule = callPackage ./dag/fetch-go-module.nix { };
     };
 
-    # When nixPackage is provided and Nix supports dynamic derivations,
-    # automatically use the dynamic path. Otherwise fall back to the
-    # DAG-based builder.
-    buildGoApplication =
-      if hasDynamicDerivations && nixPackage != null then
-        buildGoApplicationDynamicMode'
-      else
-        buildGoApplicationDAGMode;
+    # Default builder: eval-time per-package DAG.
+    inherit buildGoApplication;
 
-    # Explicit access to each builder mode.
-    inherit buildGoApplicationDAGMode;
-    buildGoApplicationDynamicMode = buildGoApplicationDynamicMode';
+    # Experimental builder: recursive-nix + CA derivations.
+    buildGoApplicationExperimental = buildGoApplicationExperimental';
   }
 )

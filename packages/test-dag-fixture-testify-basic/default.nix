@@ -1,4 +1,4 @@
-# DAG mode fixture test: test-only third-party dep (testify/assert).
+# default mode fixture test: test-only third-party dep (testify/assert).
 #
 # Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. Requires recursive-nix.
@@ -51,7 +51,7 @@ else
       export HOME=$(mktemp -d)
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
-      echo "=== Building testify-basic fixture (DAG mode, doCheck=true) ==="
+      echo "=== Building testify-basic fixture (default mode, doCheck=true) ==="
       result=$(GOMODCACHE=${goModules} \
         nix-build ${go2nixSrc}/tests/fixtures/testify-basic/dag.nix \
         -I nixpkgs=${nixpkgsPath} \

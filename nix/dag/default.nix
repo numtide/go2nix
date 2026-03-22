@@ -1,4 +1,4 @@
-# go2nix/nix/dag/default.nix — build a Go binary from source + lockfile (DAG mode).
+# go2nix/nix/dag/default.nix — build a Go binary from source + lockfile (default mode).
 #
 # Usage:
 #   goEnv.buildGoApplication {
