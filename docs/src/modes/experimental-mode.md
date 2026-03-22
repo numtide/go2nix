@@ -99,6 +99,11 @@ goEnv.buildGoApplicationExperimental {
 Overrides are serialized to JSON and passed to `go2nix resolve`, which adds
 the extra inputs to the appropriate CA derivations.
 
+**Note:** The experimental builder only supports `nativeBuildInputs` in
+`packageOverrides`. The `env` attribute supported by the default builder is
+not available here because derivations are synthesized at build time by
+`go2nix resolve`. Unknown attributes are rejected at eval time.
+
 ## Usage
 
 ```nix
