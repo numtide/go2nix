@@ -51,7 +51,7 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
       --expr "
         let
           r = builtins.resolveGoPackages {
-            go = \"$(which go)\";
+            go = \"${pkgs.go}/bin/go\";
             src = (toString $TMPDIR/torture-project);
             doCheck = true;
           };

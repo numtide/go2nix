@@ -749,3 +749,363 @@ pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Resu
 
     serde_json::to_string(&output).context("failed to serialize output JSON")
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal go list JSON for a third-party package.
+    fn third_party_json(import_path: &str, mod_path: &str, version: &str) -> String {
+        format!(
+            r#"{{"ImportPath":"{import_path}","Module":{{"Path":"{mod_path}","Version":"{version}"}},"Imports":[]}}"#
+        )
+    }
+
+    /// go list JSON for a main-module (local) package with Dir and Imports.
+    fn local_pkg_json(import_path: &str, mod_path: &str, dir: &str, imports: &[&str]) -> String {
+        let imp_json: Vec<String> = imports.iter().map(|i| format!("\"{i}\"")).collect();
+        format!(
+            r#"{{"ImportPath":"{import_path}","Dir":"{dir}","Module":{{"Path":"{mod_path}","Main":true}},"Imports":[{}]}}"#,
+            imp_json.join(",")
+        )
+    }
+
+    /// go list JSON for a stdlib package (no Module).
+    fn stdlib_json(import_path: &str) -> String {
+        format!(r#"{{"ImportPath":"{import_path}","Imports":[]}}"#)
+    }
+
+    /// go list JSON for a package with an error.
+    fn error_json(import_path: &str, err: &str) -> String {
+        format!(r#"{{"ImportPath":"{import_path}","Error":{{"Err":"{err}"}}}}"#)
+    }
+
+    /// go list JSON for a replaced module.
+    fn replaced_json(
+        import_path: &str,
+        mod_path: &str,
+        mod_version: &str,
+        replace_path: &str,
+        replace_version: &str,
+    ) -> String {
+        format!(
+            r#"{{"ImportPath":"{import_path}","Module":{{"Path":"{mod_path}","Version":"{mod_version}","Replace":{{"Path":"{replace_path}","Version":"{replace_version}"}}}},"Imports":[]}}"#
+        )
+    }
+
+    // --- parse_go_packages ---
+
+    #[test]
+    fn parse_skips_stdlib() {
+        let input = stdlib_json("fmt");
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert!(graph.packages.is_empty());
+        assert!(graph.local_packages.is_empty());
+    }
+
+    #[test]
+    fn parse_collects_third_party() {
+        let input = third_party_json("github.com/foo/bar", "github.com/foo/bar", "v1.0.0");
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].import_path, "github.com/foo/bar");
+        assert_eq!(graph.packages[0].mod_version, "v1.0.0");
+        assert!(graph.third_party_paths.contains("github.com/foo/bar"));
+    }
+
+    #[test]
+    fn parse_collects_local_with_dir() {
+        let input = local_pkg_json(
+            "example.com/mymod/internal/db",
+            "example.com/mymod",
+            "/src/internal/db",
+            &[],
+        );
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert!(graph.packages.is_empty());
+        assert_eq!(graph.local_packages.len(), 1);
+        assert_eq!(
+            graph.local_packages[0].import_path,
+            "example.com/mymod/internal/db"
+        );
+        assert_eq!(graph.local_packages[0].dir, "/src/internal/db");
+        assert_eq!(graph.module_path, "example.com/mymod");
+    }
+
+    #[test]
+    fn parse_classifies_local_imports() {
+        // Two local packages + one third-party. The second local imports both.
+        let input = [
+            local_pkg_json("example.com/m/a", "example.com/m", "/src/a", &[]),
+            third_party_json("github.com/dep/x", "github.com/dep/x", "v2.0.0"),
+            local_pkg_json(
+                "example.com/m/b",
+                "example.com/m",
+                "/src/b",
+                &["example.com/m/a", "github.com/dep/x", "fmt"],
+            ),
+        ]
+        .join("\n");
+
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert_eq!(graph.local_packages.len(), 2);
+
+        let pkg_b = &graph.local_packages[1];
+        assert_eq!(pkg_b.local_imports, vec!["example.com/m/a"]);
+        assert_eq!(pkg_b.third_party_imports, vec!["github.com/dep/x"]);
+    }
+
+    #[test]
+    fn parse_captures_module_path_from_first_main() {
+        let input = [
+            local_pkg_json("example.com/mymod", "example.com/mymod", "/src", &[]),
+            local_pkg_json(
+                "example.com/mymod/sub",
+                "example.com/mymod",
+                "/src/sub",
+                &[],
+            ),
+        ]
+        .join("\n");
+
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert_eq!(graph.module_path, "example.com/mymod");
+    }
+
+    #[test]
+    fn parse_collects_replacements() {
+        let input = replaced_json(
+            "github.com/old/pkg",
+            "github.com/old/pkg",
+            "v1.0.0",
+            "github.com/new/pkg",
+            "v2.0.0",
+        );
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        let (path, version) = &graph.replacements["github.com/old/pkg@v2.0.0"];
+        assert_eq!(path, "github.com/new/pkg");
+        assert_eq!(version, "v2.0.0");
+    }
+
+    #[test]
+    fn parse_collects_local_replaces() {
+        // A local replace: Replace with empty version means filesystem path.
+        let input = format!(
+            r#"{{"ImportPath":"github.com/local/mod/pkg","Dir":"/replace/pkg","Module":{{"Path":"github.com/local/mod","Version":"","Replace":{{"Path":"../local-mod","Version":""}}}},"Imports":[]}}"#
+        );
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert!(graph.packages.is_empty()); // local, not third-party
+        assert_eq!(
+            graph.local_replaces["github.com/local/mod"],
+            "../local-mod"
+        );
+    }
+
+    #[test]
+    fn parse_errors_are_aggregated() {
+        let input = [
+            error_json("github.com/bad/a", "missing module"),
+            error_json("github.com/bad/b", "version mismatch"),
+        ]
+        .join("\n");
+
+        let result = parse_go_packages(input.as_bytes());
+        let err = result.err().expect("should have errored");
+        let msg = format!("{err}");
+        assert!(msg.contains("github.com/bad/a: missing module"));
+        assert!(msg.contains("github.com/bad/b: version mismatch"));
+    }
+
+    #[test]
+    fn parse_cgo_fields() {
+        let input = r#"{"ImportPath":"github.com/cgo/pkg","Module":{"Path":"github.com/cgo/pkg","Version":"v1.0.0"},"Imports":[],"CgoFiles":["bridge.go"],"CgoPkgConfig":["libfoo"],"CgoCFLAGS":["-I/usr/include"],"CgoLDFLAGS":["-lfoo"]}"#;
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert!(graph.packages[0].is_cgo);
+        assert_eq!(graph.packages[0].cgo_pkg_config, vec!["libfoo"]);
+        assert_eq!(graph.packages[0].cgo_cflags, vec!["-I/usr/include"]);
+        assert_eq!(graph.packages[0].cgo_ldflags, vec!["-lfoo"]);
+    }
+
+    // --- parse_test_packages ---
+
+    #[test]
+    fn test_parse_skips_build_graph_packages() {
+        let mut third_party = BTreeSet::new();
+        third_party.insert("github.com/already/known".to_owned());
+
+        let input = third_party_json("github.com/already/known", "github.com/already/known", "v1.0.0");
+        let mut replacements = BTreeMap::new();
+        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_collects_test_only() {
+        let third_party = BTreeSet::new(); // empty build graph
+
+        let input = third_party_json("github.com/testify", "github.com/testify", "v1.9.0");
+        let mut replacements = BTreeMap::new();
+        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].import_path, "github.com/testify");
+    }
+
+    #[test]
+    fn test_parse_skips_synthetic_packages() {
+        let third_party = BTreeSet::new();
+
+        let input = [
+            // Synthetic test main
+            third_party_json("example.com/pkg.test", "example.com/pkg", ""),
+            // Recompiled variant
+            format!(r#"{{"ImportPath":"example.com/pkg [example.com/pkg.test]","Module":{{"Path":"example.com/pkg","Main":true}},"Imports":[]}}"#),
+            // Real test-only dep
+            third_party_json("github.com/testify", "github.com/testify", "v1.9.0"),
+        ]
+        .join("\n");
+
+        let mut replacements = BTreeMap::new();
+        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].import_path, "github.com/testify");
+    }
+
+    #[test]
+    fn test_parse_skips_local_packages() {
+        let third_party = BTreeSet::new();
+        let input = local_pkg_json("example.com/m/internal/x", "example.com/m", "/src/x", &[]);
+        let mut replacements = BTreeMap::new();
+        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_deduplicates() {
+        let third_party = BTreeSet::new();
+        let input = [
+            third_party_json("github.com/dup", "github.com/dup", "v1.0.0"),
+            third_party_json("github.com/dup", "github.com/dup", "v1.0.0"),
+        ]
+        .join("\n");
+        let mut replacements = BTreeMap::new();
+        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_collects_test_replacements() {
+        let third_party = BTreeSet::new();
+        let input = replaced_json(
+            "github.com/test/dep",
+            "github.com/test/dep",
+            "v1.0.0",
+            "github.com/fork/dep",
+            "v1.1.0",
+        );
+        let mut replacements = BTreeMap::new();
+        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        assert_eq!(result.len(), 1);
+        let (path, _) = &replacements["github.com/test/dep@v1.1.0"];
+        assert_eq!(path, "github.com/fork/dep");
+    }
+
+    // --- extract_replace ---
+
+    #[test]
+    fn extract_replace_none() {
+        let m = GoModule {
+            path: "foo".into(),
+            version: "v1".into(),
+            main: false,
+            replace: None,
+        };
+        let (p, v) = extract_replace(&m);
+        assert!(p.is_empty());
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn extract_replace_some() {
+        let m = GoModule {
+            path: "foo".into(),
+            version: "v1".into(),
+            main: false,
+            replace: Some(Box::new(GoModule {
+                path: "bar".into(),
+                version: "v2".into(),
+                main: false,
+                replace: None,
+            })),
+        };
+        let (p, v) = extract_replace(&m);
+        assert_eq!(p, "bar");
+        assert_eq!(v, "v2");
+    }
+
+    // --- sanitize_name ---
+
+    #[test]
+    fn sanitize_name_replaces_slash_and_plus() {
+        assert_eq!(sanitize_name("github.com/foo/bar+baz"), "github.com-foo-bar_baz");
+    }
+
+    // --- pkg_data_to_json_pkg ---
+
+    #[test]
+    fn json_pkg_computes_subdir() {
+        let p = PkgData {
+            import_path: "github.com/foo/bar/sub/pkg".into(),
+            mod_path: "github.com/foo/bar".into(),
+            mod_version: "v1.2.3".into(),
+            replace_version: String::new(),
+            imports: vec![],
+            cgo_pkg_config: vec![],
+            cgo_cflags: vec![],
+            cgo_ldflags: vec![],
+            is_cgo: false,
+        };
+        let jp = pkg_data_to_json_pkg(&p, &|_| true);
+        assert_eq!(jp.subdir, "sub/pkg");
+        assert_eq!(jp.mod_key, "github.com/foo/bar@v1.2.3");
+        assert_eq!(jp.drv_name, "gopkg-github.com-foo-bar-sub-pkg-v1.2.3");
+    }
+
+    #[test]
+    fn json_pkg_uses_replace_version_in_mod_key() {
+        let p = PkgData {
+            import_path: "github.com/foo/bar".into(),
+            mod_path: "github.com/foo/bar".into(),
+            mod_version: "v1.0.0".into(),
+            replace_version: "v2.0.0".into(),
+            imports: vec![],
+            cgo_pkg_config: vec![],
+            cgo_cflags: vec![],
+            cgo_ldflags: vec![],
+            is_cgo: false,
+        };
+        let jp = pkg_data_to_json_pkg(&p, &|_| true);
+        assert_eq!(jp.mod_key, "github.com/foo/bar@v2.0.0");
+    }
+
+    #[test]
+    fn json_pkg_filters_imports() {
+        let p = PkgData {
+            import_path: "github.com/foo/bar".into(),
+            mod_path: "github.com/foo/bar".into(),
+            mod_version: "v1.0.0".into(),
+            replace_version: String::new(),
+            imports: vec!["github.com/keep".into(), "github.com/drop".into()],
+            cgo_pkg_config: vec![],
+            cgo_cflags: vec![],
+            cgo_ldflags: vec![],
+            is_cgo: false,
+        };
+        let jp = pkg_data_to_json_pkg(&p, &|imp| imp == "github.com/keep");
+        assert_eq!(jp.imports, vec!["github.com/keep"]);
+    }
+}
