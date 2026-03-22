@@ -53,6 +53,23 @@
           test-dag-package-yubikey-agent = callPkgWith ./packages/test-dag-package-yubikey-agent/default.nix {
             inherit flake system;
           };
+
+          test-dag-fixture-testify-basic = callPkgWith ./packages/test-dag-fixture-testify-basic/default.nix {
+            inherit flake system;
+          };
+          test-dag-fixture-xtest-local-dep = callPkgWith ./packages/test-dag-fixture-xtest-local-dep/default.nix {
+            inherit flake system;
+          };
+          test-dag-fixture-test-helper-pkg = callPkgWith ./packages/test-dag-fixture-test-helper-pkg/default.nix {
+            inherit flake system;
+          };
+          test-dag-fixture-modroot-nested = callPkgWith ./packages/test-dag-fixture-modroot-nested/default.nix {
+            inherit flake system;
+          };
+
+          go2nix-testgen = callPkgWith ./packages/go2nix-testgen/default.nix {
+            inherit flake system;
+          };
         }
       );
 
