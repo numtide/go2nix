@@ -18,9 +18,29 @@ else
   let
     plugin = flake.packages.${system}.go-nix-plugin;
     nix = pkgs.nixVersions.latest;
+    inherit (pkgs) go;
 
     nixpkgsPath = pkgs.path;
     go2nixSrc = flake;
+
+    goModules = pkgs.stdenvNoCC.mkDerivation {
+      name = "testify-basic-gomodcache";
+      outputHashMode = "recursive";
+      outputHashAlgo = "sha256";
+      outputHash = "sha256-jfyOzY3bhiTD5GZKF9aIGAYL2Bequp76/LGLc0LFFGQ=";
+      nativeBuildInputs = [
+        go
+        pkgs.cacert
+      ];
+      dontUnpack = true;
+      buildPhase = ''
+        export HOME=$TMPDIR
+        export GOMODCACHE=$out
+        cd ${go2nixSrc}/tests/fixtures/testify-basic
+        go mod download
+      '';
+      installPhase = "true";
+    };
   in
   pkgs.runCommand "test-dag-fixture-testify-basic"
     {
@@ -32,7 +52,8 @@ else
       export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
 
       echo "=== Building testify-basic fixture (DAG mode, doCheck=true) ==="
-      result=$(nix-build ${go2nixSrc}/tests/fixtures/testify-basic/dag.nix \
+      result=$(GOMODCACHE=${goModules} \
+        nix-build ${go2nixSrc}/tests/fixtures/testify-basic/dag.nix \
         -I nixpkgs=${nixpkgsPath} \
         --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
         --no-out-link)
