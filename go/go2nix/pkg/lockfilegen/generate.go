@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/numtide/go2nix/internal/gonix/nar"
+	"github.com/nix-community/go-nix/pkg/nar"
 	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/lockfile"
 	"golang.org/x/sync/errgroup"

@@ -1,7 +1,7 @@
 { pkgs }:
 pkgs.mkShell {
   packages = [
-    pkgs.go
+    pkgs.go_1_26
     pkgs.time
     pkgs.mdbook
   ];

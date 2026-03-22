@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"sort"
 
-	gonixdrv "github.com/numtide/go2nix/internal/gonix/derivation"
-	"github.com/numtide/go2nix/internal/gonix/nixhash"
-	"github.com/numtide/go2nix/internal/gonix/storepath"
+	gonixdrv "github.com/nix-community/go-nix/pkg/derivation"
+	"github.com/nix-community/go-nix/pkg/nixhash"
+	"github.com/nix-community/go-nix/pkg/storepath"
 )
 
 // DrvPath computes the .drv store path for this derivation in-process,

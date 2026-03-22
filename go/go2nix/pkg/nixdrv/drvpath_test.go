@@ -3,8 +3,8 @@ package nixdrv
 import (
 	"testing"
 
-	gonixdrv "github.com/numtide/go2nix/internal/gonix/derivation"
-	"github.com/numtide/go2nix/internal/gonix/storepath"
+	gonixdrv "github.com/nix-community/go-nix/pkg/derivation"
+	"github.com/nix-community/go-nix/pkg/storepath"
 )
 
 func TestDrvPathCAFloating(t *testing.T) {

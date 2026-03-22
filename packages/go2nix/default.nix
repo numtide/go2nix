@@ -3,7 +3,10 @@
 # go2nix cannot use its own builders (which depend on go2nix for compile-package).
 # Once built, go2nix is passed to the builders for all other Go projects.
 { pkgs }:
-pkgs.buildGoModule {
+let
+  buildGoModule = pkgs.buildGoModule.override { go = pkgs.go_1_26; };
+in
+buildGoModule {
   pname = "go2nix";
   version = "0-unstable";
 
@@ -11,7 +14,7 @@ pkgs.buildGoModule {
 
   subPackages = [ "cmd/go2nix" ];
 
-  vendorHash = "sha256-xC7TFbsTp0YsIXhRO9LLZwLTW5rU9GRFTMOBbTMSbns=";
+  vendorHash = "sha256-wErO6a+nDSAZvW8UsYJyfbGiwF3IgN4TuEm7Chw3Q4A=";
 
   meta = {
     description = "Go Build — Nix-native Go package compiler";
