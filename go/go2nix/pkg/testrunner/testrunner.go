@@ -194,6 +194,11 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			}
 		}
 
+		// Explicit file list: go/build.ImportDir would classify _test.go
+		// files into TestGoFiles, not GoFiles. We must compile them all
+		// together as a single package.
+		goFiles := append(append([]string{}, pkg.GoFiles...), pkg.CgoFiles...)
+		goFiles = append(goFiles, pkg.TestGoFiles...)
 		if err := compile.CompileGoPackage(compile.Options{
 			ImportPath: pkg.ImportPath,
 			SrcDir:     mergedDir,
@@ -202,6 +207,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			TrimPath:   opts.TrimPath,
 			Tags:       opts.Tags,
 			GCFlags:    opts.GCFlags,
+			GoFiles:    goFiles,
 		}); err != nil {
 			return fmt.Errorf("compiling internal test: %w", err)
 		}
@@ -278,6 +284,8 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			}
 		}
 
+		// Explicit file list: _test.go files would be classified as
+		// TestGoFiles/XTestGoFiles by ImportDir, not GoFiles.
 		if err := compile.CompileGoPackage(compile.Options{
 			ImportPath: pkg.ImportPath + "_test",
 			SrcDir:     xtestDir,
@@ -286,6 +294,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			TrimPath:   opts.TrimPath,
 			Tags:       opts.Tags,
 			GCFlags:    opts.GCFlags,
+			GoFiles:    pkg.XTestGoFiles,
 		}); err != nil {
 			return fmt.Errorf("compiling external test: %w", err)
 		}
@@ -325,6 +334,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 	}
 
 	// Step 4: Compile test main
+	// Explicit file: _testmain.go starts with _ and would be ignored by ImportDir.
 	testMainArchive := filepath.Join(testDir, "testmain.a")
 	if err := compile.CompileGoPackage(compile.Options{
 		ImportPath: pkg.ImportPath + ".test",
@@ -335,6 +345,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		TrimPath:   opts.TrimPath,
 		Tags:       opts.Tags,
 		GCFlags:    opts.GCFlags,
+		GoFiles:    []string{"_testmain.go"},
 	}); err != nil {
 		return fmt.Errorf("compiling test main: %w", err)
 	}
