@@ -738,18 +738,12 @@ pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Resu
                     canon_src.display()
                 )
             })?;
-        let rel_str = rel.to_str().unwrap_or("");
-        let dir = if rel_str.is_empty() { "." } else { rel_str };
-        if dir.is_empty() {
-            bail!(
-                "local package {} has empty relative dir",
-                lp.import_path
-            );
-        }
+        let rel_str = rel.to_string_lossy();
+        let dir = if rel_str.is_empty() { ".".to_owned() } else { rel_str.into_owned() };
         local_packages.insert(
             lp.import_path.clone(),
             JsonLocalPkg {
-                dir: dir.to_owned(),
+                dir,
                 local_imports: lp.local_imports.clone(),
                 third_party_imports: lp.third_party_imports.clone(),
                 is_cgo: lp.is_cgo,

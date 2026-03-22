@@ -83,20 +83,22 @@ static RegisterPrimOp rp(PrimOp {
     .args = {"attrs"},
     .arity = 1,
     .doc = R"(
-      Discover the Go package graph at eval time by running `go list`.
+  Discover the Go package graph at eval time by running `go list`.
 
-      Accepts an attrset with:
-      - `go`: Path to the Go binary
-      - `src`: Path to the Go source directory
-      - `tags` (optional): List of build tags
-      - `subPackages` (optional): List of package patterns (default: ["./..."])
-      - `modRoot` (optional): Subdirectory containing go.mod (default: ".")
-      - `goos` / `goarch` (optional): Cross-compilation targets
-      - `goProxy` (optional): GOPROXY value (default: "off")
-      - `cgoEnabled` (optional): CGO_ENABLED value
+  Accepts an attrset with:
+  - `go`: Path to the Go binary
+  - `src`: Path to the Go source directory
+  - `tags` (optional): List of build tags
+  - `subPackages` (optional): List of package patterns (default: ["./..."])
+  - `modRoot` (optional): Subdirectory containing go.mod (default: ".")
+  - `goos` / `goarch` (optional): Cross-compilation targets
+  - `goProxy` (optional): GOPROXY value (default: "off")
+  - `cgoEnabled` (optional): CGO_ENABLED value
+  - `doCheck` (optional): When true, runs a second `go list -deps -test`
+    pass to discover test-only third-party dependencies (default: false)
 
-      Returns: { packages, replacements, localReplaces }
-    )",
+  Returns: { packages, localPackages, modulePath, replacements, testPackages, localReplaces }
+)",
 #ifdef NIX_PRIMOP_HAS_IMPL
     .impl = prim_resolveGoPackages,
 #else

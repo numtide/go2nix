@@ -53,17 +53,25 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
           r = builtins.resolveGoPackages {
             go = \"$(which go)\";
             src = (toString $TMPDIR/torture-project);
+            doCheck = true;
           };
           pkgCount = builtins.length (builtins.attrNames r.packages);
+          localPkgCount = builtins.length (builtins.attrNames r.localPackages);
+          testPkgCount = builtins.length (builtins.attrNames r.testPackages);
           sample = r.packages.\"\''${builtins.head (builtins.attrNames r.packages)}\";
+          localSample = r.localPackages.\"\''${builtins.head (builtins.attrNames r.localPackages)}\";
         in {
-          inherit pkgCount;
+          inherit pkgCount localPkgCount testPkgCount;
+          modulePath = r.modulePath;
           hasReplMap = builtins.isAttrs r.replacements;
           hasLocalRepl = builtins.isAttrs r.localReplaces;
           hasDrvName = builtins.hasAttr \"drvName\" sample;
           hasImports = builtins.hasAttr \"imports\" sample;
           hasModKey = builtins.hasAttr \"modKey\" sample;
           hasSubdir = builtins.hasAttr \"subdir\" sample;
+          hasLocalDir = builtins.hasAttr \"dir\" localSample;
+          hasLocalImports = builtins.hasAttr \"localImports\" localSample;
+          hasThirdPartyImports = builtins.hasAttr \"thirdPartyImports\" localSample;
         }
       ")
 
@@ -72,10 +80,16 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
     pkgCount=$(echo "$result" | jq -r .pkgCount)
     [ "$pkgCount" -ge 10 ] || { echo "FAIL: expected >= 10 packages, got $pkgCount"; exit 1; }
 
-    for f in hasReplMap hasLocalRepl hasDrvName hasImports hasModKey hasSubdir; do
+    localPkgCount=$(echo "$result" | jq -r .localPkgCount)
+    [ "$localPkgCount" -ge 1 ] || { echo "FAIL: expected >= 1 local packages, got $localPkgCount"; exit 1; }
+
+    modulePath=$(echo "$result" | jq -r .modulePath)
+    [ -n "$modulePath" ] || { echo "FAIL: modulePath is empty"; exit 1; }
+
+    for f in hasReplMap hasLocalRepl hasDrvName hasImports hasModKey hasSubdir hasLocalDir hasLocalImports hasThirdPartyImports; do
       val=$(echo "$result" | jq -r ".$f")
       [ "$val" = "true" ] || { echo "FAIL: $f = $val"; exit 1; }
     done
 
-    echo "PASS: $pkgCount packages, all fields present" > $out
+    echo "PASS: $pkgCount packages, $localPkgCount local packages, modulePath=$modulePath" > $out
   ''
