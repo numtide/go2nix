@@ -18,28 +18,28 @@ The system has two components:
 
 | Mode | How it works | Lockfile | Caching | Nix features |
 |------|-------------|----------|---------|--------------|
-| **DAG** | `go tool compile/link` per-package | `[mod]` only | Per-package | go-nix-plugin |
-| **Dynamic** | Recursive-nix, DAG at build time | `[mod]` only | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
+| **DAG** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | go-nix-plugin |
+| **Dynamic** | Recursive-nix, DAG at build time | `[mod]` + optional `[replace]` | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
 ### DAG mode
 
-Each third-party Go package becomes its own Nix derivation. go2nix calls
-`go tool compile` and `go tool link` directly — bypassing `go build`. This
-gives Nix full control over the dependency graph at package granularity.
-The package graph is discovered at eval time by the go-nix-plugin
-(`builtins.resolveGoPackages`), which runs `go list` against the source tree.
-When a dependency changes, only affected packages rebuild.
+Go packages are compiled as Nix derivations at eval time: third-party
+packages, local packages, and optionally test-only third-party packages when
+checks are enabled. go2nix calls `go tool compile` and `go tool link`
+directly, bypassing `go build`. This gives Nix full control over the
+dependency graph at package granularity. The package graph is discovered at
+eval time by the go-nix-plugin (`builtins.resolveGoPackages`), which runs
+`go list` against the source tree. When a dependency changes, only affected
+packages rebuild.
 
-See [dag-mode.md](modes/dag-mode.md) for internals.
+See [dag-mode.md](modes/dag-mode.md) for details.
 
 ### Dynamic mode
 
 Same per-package granularity as DAG mode, but the package graph is discovered
 at build time using recursive-nix and content-addressed (CA) derivations.
-Only needs `[mod]` in the lockfile — faster lockfile generation, smaller
-diffs.
-
-See [dynamic-derivations.md](internals/dynamic-derivations.md) for internals.
+The lockfile stays package-graph-free because dependency discovery is deferred
+to the build.
 
 ### Choosing a mode
 
@@ -111,7 +111,7 @@ DAG and dynamic modes.
 
 Pure Nix utility functions:
 
-- `sanitizeName` — `/` → `-`, `+` → `_` for derivation names.
+- `sanitizeName` — Whitelist `[a-zA-Z0-9+-._?=]`, `/` → `-`, `~` → `_`, `@` → `_at_` for derivation names.
 - `removePrefix` — Substring after a known prefix.
 - `escapeModPath` — Go module case-escaping (`A` → `!a`).
 
@@ -127,6 +127,5 @@ Pure Nix utility functions:
 
 - [Lockfile format](lockfile-format.md)
 - [CLI reference](cli-reference.md)
-- [Compilation pipeline](internals/compilation-pipeline.md)
 - [DAG mode](modes/dag-mode.md)
-- [Dynamic mode](internals/dynamic-derivations.md)
+- [Dynamic mode](modes/dynamic-mode.md)

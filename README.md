@@ -23,6 +23,8 @@ each mode.
 go2nix generate .
 ```
 
+`generate` is also the default command, so `go2nix .` works as well.
+
 ### 2. Add go2nix to your flake
 
 ```nix
@@ -76,7 +78,6 @@ goEnv.buildGoApplicationDynamicMode { ... }
 | Command | Description |
 |---------------------|----------------------------------------------------------------|
 | `go2nix generate` | Generate `go2nix.toml` lockfile |
-| `go2nix generate --mode=dynamic` | Lockfile with `[mod]` only (no `[pkg]`) |
 | `go2nix check` | Validate lockfile against `go.mod` |
 
 Run `go2nix generate -h` for all flags.
@@ -85,8 +86,6 @@ Run `go2nix generate -h` for all flags.
 
 - [Architecture](docs/src/go2nix-architecture.md) — builder modes, lockfile format,
   compilation pipeline, package DAG
-- [Dynamic derivations](docs/src/internals/dynamic-derivations.md) — recursive-nix + CA
-  derivations mode
 
 ## Development
 
