@@ -13,7 +13,10 @@
 #   goLocalArchives — import path -> store path of compiled .a archive
 #                     Used by checkPhase to reconstruct a local-pkgs directory.
 #
-# Third-party dependencies are discovered from $buildInputs at build time.
+# Build-time dependencies discovered from $buildInputs:
+#   depsImportcfg      — importcfg for build (stdlib + build third-party + local)
+#   testDepsImportcfg  — importcfg for checks (superset: + test-only third-party)
+#                        Only present when doCheck = true and test-only deps exist.
 
 # Variables set by Nix stdenv / derivation env, not by this script.
 # shellcheck disable=SC2154
@@ -202,6 +205,22 @@ linkGoBinaryCheckPhase() {
     ln -s "${goLocalArchives[$importPath]}" "$localdir/$importPath.a"
   done
 
+  # Locate the test importcfg bundle. buildInputs contains depsImportcfg and
+  # (when doCheck with test-only deps) testDepsImportcfg. testDepsImportcfg is
+  # a strict superset, so we want the last importcfg found. If there's only
+  # depsImportcfg (no test-only deps), it's used as-is — still correct since
+  # it already contains all build + local packages.
+  local test_importcfg=""
+  for dep in "${buildInputs[@]}"; do
+    if [ -f "$dep/importcfg" ]; then
+      test_importcfg="$dep/importcfg"
+    fi
+  done
+  if [ -z "$test_importcfg" ]; then
+    echo "go2nix: no importcfg bundle found in buildInputs for check phase" >&2
+    exit 1
+  fi
+
   # Build gcflags for test compilation, matching the build phase logic.
   local test_gcflags="${goGcflags:-}"
   local go_buildmode="@buildMode@"
@@ -214,7 +233,7 @@ linkGoBinaryCheckPhase() {
   fi
 
   @go2nix@ test-packages \
-    --import-cfg "$NIX_BUILD_TOP/importcfg" \
+    --import-cfg "$test_importcfg" \
     --local-dir "$localdir" \
     --trim-path "$NIX_BUILD_TOP" \
     @tagArg@ \

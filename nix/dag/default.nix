@@ -89,6 +89,7 @@ let
         tags
         subPackages
         modRoot
+        doCheck
         ;
     }
     // (if goProxy != null then { inherit goProxy; } else { })
@@ -285,6 +286,84 @@ let
     '';
   };
 
+  # --- Test-only third-party package set (only when doCheck = true) ---
+  # These are packages reachable only via test imports, discovered by the
+  # plugin's second `go list -deps -test` pass. Built with the same pipeline
+  # as normal third-party packages. Their dependencies may include packages
+  # from the normal `packages` set.
+  testPackages = lib.optionalAttrs doCheck (builtins.mapAttrs (
+    importPath: pkg:
+    let
+      minfo = moduleInfo.${pkg.modKey};
+      srcDir = if pkg.subdir == "" then minfo.dir else "${minfo.dir}/${pkg.subdir}";
+
+      # Dependencies: may reference both normal and test-only third-party packages.
+      deps = map (imp:
+        if builtins.hasAttr imp packages then packages.${imp}
+        else testPackages.${imp}
+      ) pkg.imports;
+
+      isCgo = pkg.isCgo or false;
+      cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
+      mkDeriv = if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation;
+
+      pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
+      extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
+      extraEnv = pkgOverride.env or { };
+    in
+    mkDeriv {
+      name = pkg.drvName;
+      __structuredAttrs = true;
+
+      nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
+      buildInputs = deps;
+
+      env = {
+        goPackagePath = importPath;
+        goPackageSrcDir = srcDir;
+      }
+      // (if gcflagsStr != "" then { goGcflags = gcflagsStr; } else { })
+      // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
+      // extraEnv;
+    }
+  ) goPackagesResult.testPackages);
+
+  # --- Test importcfg bundle (only when doCheck = true) ---
+  # Superset of depsImportcfg: includes stdlib + all build third-party + local
+  # packages + test-only third-party packages. The test runner uses this instead
+  # of the build importcfg so that test-only imports (e.g., testify) resolve.
+  # Bundled as a single derivation to preserve O(1) input validation on the
+  # final app derivation (same pattern as depsImportcfg).
+  testDepsImportcfg = lib.optionalAttrs doCheck (
+    let
+      testOnlyEntries = map (
+        importPath:
+        let pkg = testPackages.${importPath}; in
+        "packagefile ${importPath}=${pkg}/${importPath}.a"
+      ) (builtins.attrNames testPackages);
+      testOnlyImportcfg = lib.concatStringsSep "\n" testOnlyEntries;
+    in
+    stdenvNoCC.mkDerivation {
+      name = "${pname}-test-deps-importcfg";
+      __structuredAttrs = true;
+      inherit testOnlyImportcfg;
+      dontUnpack = true;
+      dontFixup = true;
+      buildPhase = ''
+        runHook preBuild
+        cat "${depsImportcfg}/importcfg" > "$NIX_BUILD_TOP/importcfg"
+        if [ -n "$testOnlyImportcfg" ]; then
+          echo "$testOnlyImportcfg" >> "$NIX_BUILD_TOP/importcfg"
+        fi
+        runHook postBuild
+      '';
+      installPhase = ''
+        mkdir -p "$out"
+        cp "$NIX_BUILD_TOP/importcfg" "$out/importcfg"
+      '';
+    }
+  );
+
   # Collect nativeBuildInputs from packageOverrides for link-time availability.
   overrideNativeBuildInputs = builtins.concatLists (
     map (attrs: attrs.nativeBuildInputs or [ ]) (builtins.attrValues packageOverrides)
@@ -359,7 +438,8 @@ stdenv.mkDerivation (
     inherit doCheck;
 
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
-    buildInputs = [ depsImportcfg ];
+    buildInputs = [ depsImportcfg ]
+      ++ lib.optional doCheck testDepsImportcfg;
 
     disallowedReferences = lib.optional (!allowGoReference) go;
 
@@ -374,6 +454,9 @@ stdenv.mkDerivation (
         mainSrc
         ;
       inherit (goPackagesResult) localReplaces modulePath;
+    }
+    // lib.optionalAttrs doCheck {
+      inherit testPackages testDepsImportcfg;
     };
 
     env = {
