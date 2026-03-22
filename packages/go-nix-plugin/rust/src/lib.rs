@@ -13,8 +13,9 @@ use std::ffi::{CStr, CString};
 
 /// Resolve Go packages from JSON input, returning JSON output.
 ///
-/// Input JSON: `{ "go": "...", "src": "...", "tags": [], ... }`
-/// Output JSON: `{ "packages": {...}, "replacements": {...}, "localReplaces": {...} }`
+/// Input JSON: `{ "go": "...", "src": "...", "tags": [], "doCheck": false, ... }`
+/// Output JSON: `{ "packages": {...}, "localPackages": {...}, "modulePath": "...",
+///   "replacements": {...}, "testPackages": {...}, "localReplaces": {...} }`
 ///
 /// Returns 0 on success, non-zero on error. Caller must free `*out` / `*err_out`
 /// with `go2nix_free_string`.

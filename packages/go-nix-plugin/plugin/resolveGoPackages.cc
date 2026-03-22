@@ -52,6 +52,17 @@ static void prim_resolveGoPackages(EvalState &state, const PosIdx pos,
     NixStringContext context;
     auto inputJson = printValueAsJSON(state, true, *args[0], pos, context, false);
 
+    // Realise string context — ensures derivation-backed store paths (e.g.,
+    // go = "${go}/bin/go") actually exist before we invoke them.
+    try {
+        auto _ = state.realiseContext(context);
+    } catch (InvalidPathError &e) {
+        state.error<EvalError>(
+            "resolveGoPackages: cannot realise context for '%s': %s",
+            e.path.to_string(), e.what())
+            .atPos(pos).debugThrow();
+    }
+
     for (const auto &key : {"src", "go"}) {
         if (inputJson.contains(key) && inputJson[key].is_string()) {
             inputJson[key] = remapStorePath(*state.store, inputJson[key].get<std::string>());
