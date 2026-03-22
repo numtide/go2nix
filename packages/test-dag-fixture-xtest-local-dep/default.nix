@@ -1,6 +1,6 @@
 # DAG mode fixture test: xtest recompilation with local dependent packages.
 #
-# Spawns nix-build with --option plugin-files so the go-nix-plugin is
+# Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. Requires recursive-nix.
 {
   flake,
@@ -8,15 +8,15 @@
   system,
   ...
 }:
-if !(flake.packages.${system} ? go-nix-plugin) then
+if !(flake.packages.${system} ? go2nix-nix-plugin) then
   pkgs.runCommand "test-dag-fixture-xtest-local-dep-unsupported" { meta.platforms = pkgs.lib.platforms.linux; }
     ''
-      echo "test-dag-fixture-xtest-local-dep requires go-nix-plugin (Linux only)" >&2
+      echo "test-dag-fixture-xtest-local-dep requires go2nix-nix-plugin (Linux only)" >&2
       exit 1
     ''
 else
   let
-    plugin = flake.packages.${system}.go-nix-plugin;
+    plugin = flake.packages.${system}.go2nix-nix-plugin;
     nix = pkgs.nixVersions.latest;
 
     nixpkgsPath = pkgs.path;

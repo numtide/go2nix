@@ -8,13 +8,13 @@ rebuild granularity when a dependency changes.
 
 | Mode | How it works | Lockfile | Caching | Nix features |
 |------|-------------|----------|---------|--------------|
-| **[DAG](dag-mode.md)** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | go-nix-plugin |
+| **[DAG](dag-mode.md)** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | go2nix-nix-plugin |
 | **[Dynamic](dynamic-mode.md)** | Recursive-nix, DAG at build time | `[mod]` + optional `[replace]` | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
 - **DAG** goes deeper: every *package* (not just every module) gets its own
   derivation. go2nix calls `go tool compile` and `go tool link` directly,
   bypassing `go build`. The import graph is discovered at eval time by the
-  go-nix-plugin (`builtins.resolveGoPackages`), so the lockfile stays small
+  go2nix-nix-plugin (`builtins.resolveGoPackages`), so the lockfile stays small
   (`[mod]` hashes plus optional `[replace]`). When one package changes, only
   it and its reverse dependencies rebuild.
 
@@ -27,7 +27,7 @@ rebuild granularity when a dependency changes.
 ## Choosing a mode
 
 Start with **DAG** for the best balance of caching and simplicity — the
-lockfile is small (just module hashes), and the go-nix-plugin resolves the
+lockfile is small (just module hashes), and the go2nix-nix-plugin resolves the
 package graph at eval time. Use **Dynamic** if you have a compatible Nix
 version and want per-package caching without requiring the plugin.
 

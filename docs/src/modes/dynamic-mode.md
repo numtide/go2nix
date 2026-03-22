@@ -54,7 +54,7 @@ The `netrcFile` option supports private module authentication.
 ### 3. Package graph discovery (build time)
 
 With all modules available, `go list -json -deps` discovers the full import
-graph. DAG mode performs this step at eval time via the go-nix-plugin — dynamic
+graph. DAG mode performs this step at eval time via the go2nix-nix-plugin — dynamic
 mode defers it to build time inside the recursive-nix sandbox.
 
 ### 4. CA derivation registration (build time)

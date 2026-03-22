@@ -18,7 +18,7 @@ The system has two components:
 
 | Mode | How it works | Lockfile | Caching | Nix features |
 |------|-------------|----------|---------|--------------|
-| **DAG** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | go-nix-plugin |
+| **DAG** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | go2nix-nix-plugin |
 | **Dynamic** | Recursive-nix, DAG at build time | `[mod]` + optional `[replace]` | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
 ### DAG mode
@@ -28,7 +28,7 @@ packages, local packages, and optionally test-only third-party packages when
 checks are enabled. go2nix calls `go tool compile` and `go tool link`
 directly, bypassing `go build`. This gives Nix full control over the
 dependency graph at package granularity. The package graph is discovered at
-eval time by the go-nix-plugin (`builtins.resolveGoPackages`), which runs
+eval time by the go2nix-nix-plugin (`builtins.resolveGoPackages`), which runs
 `go list` against the source tree. When a dependency changes, only affected
 packages rebuild.
 
