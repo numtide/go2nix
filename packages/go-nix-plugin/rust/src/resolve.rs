@@ -362,7 +362,9 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct JsonInput {
     go: String,
-    src: String,
+    pub(crate) src: String,
+    #[serde(default)]
+    do_check: bool,
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default = "default_sub_packages")]
@@ -410,10 +412,29 @@ pub(crate) fn run_go_list_from_json(input: &JsonInput) -> Result<Vec<u8>> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct JsonLocalPkg {
+    dir: String,
+    local_imports: Vec<String>,
+    third_party_imports: Vec<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    is_cgo: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    cgo_pkg_config: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    cgo_cflags: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    cgo_ldflags: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct JsonOutput {
     packages: BTreeMap<String, JsonPkg>,
+    local_packages: BTreeMap<String, JsonLocalPkg>,
+    module_path: String,
     replacements: BTreeMap<String, JsonReplacement>,
     local_replaces: BTreeMap<String, String>,
+    test_packages: BTreeMap<String, JsonPkg>,
 }
 
 #[derive(Serialize)]
@@ -440,7 +461,10 @@ struct JsonReplacement {
 }
 
 /// Convert a `PackageGraph` to a JSON string.
-pub(crate) fn package_graph_to_json(graph: &PackageGraph) -> Result<String> {
+pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Result<String> {
+    let canon_src = std::fs::canonicalize(src_dir)
+        .with_context(|| format!("failed to canonicalize src dir: {src_dir}"))?;
+
     let mut packages = BTreeMap::new();
     for p in &graph.packages {
         let effective_version = if p.replace_version.is_empty() {
@@ -478,6 +502,42 @@ pub(crate) fn package_graph_to_json(graph: &PackageGraph) -> Result<String> {
         );
     }
 
+    // Build local_packages map.
+    let mut local_packages = BTreeMap::new();
+    for lp in &graph.local_packages {
+        let canon_dir = std::fs::canonicalize(&lp.dir)
+            .with_context(|| format!("failed to canonicalize local package dir: {}", lp.dir))?;
+        let rel = canon_dir
+            .strip_prefix(&canon_src)
+            .with_context(|| {
+                format!(
+                    "local package dir {} escapes source tree {}",
+                    canon_dir.display(),
+                    canon_src.display()
+                )
+            })?;
+        let rel_str = rel.to_str().unwrap_or("");
+        let dir = if rel_str.is_empty() { "." } else { rel_str };
+        if dir.is_empty() {
+            bail!(
+                "local package {} has empty relative dir",
+                lp.import_path
+            );
+        }
+        local_packages.insert(
+            lp.import_path.clone(),
+            JsonLocalPkg {
+                dir: dir.to_owned(),
+                local_imports: lp.local_imports.clone(),
+                third_party_imports: lp.third_party_imports.clone(),
+                is_cgo: lp.is_cgo,
+                cgo_pkg_config: lp.cgo_pkg_config.clone(),
+                cgo_cflags: lp.cgo_cflags.clone(),
+                cgo_ldflags: lp.cgo_ldflags.clone(),
+            },
+        );
+    }
+
     let replacements = graph
         .replacements
         .iter()
@@ -494,8 +554,11 @@ pub(crate) fn package_graph_to_json(graph: &PackageGraph) -> Result<String> {
 
     let output = JsonOutput {
         packages,
+        local_packages,
+        module_path: graph.module_path.clone(),
         replacements,
         local_replaces: graph.local_replaces.clone(),
+        test_packages: BTreeMap::new(),
     };
 
     serde_json::to_string(&output).context("failed to serialize output JSON")
