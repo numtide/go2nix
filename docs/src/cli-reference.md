@@ -15,24 +15,20 @@ go2nix generate [flags] [dir...]
 |------|---------|-------------|
 | `-o` | `go2nix.toml` | Output lockfile path |
 | `-j` | `NumCPU` | Max parallel hash invocations |
-| `--mode` | `dag` | Builder mode: `dag`, `dynamic` |
-
-Modes:
-
-| Mode | Sections | Used by |
-|------|----------|---------|
-| `dag` | `[mod]` + `[replace]` | DAG mode |
-| `dynamic` | `[mod]` + `[replace]` | Dynamic mode |
 
 When no directory is given, defaults to `.`. Multiple directories produce a
 merged lockfile (monorepo support).
 
+The generated lockfile is shared by both DAG and dynamic builders. Builder
+mode is selected in Nix via `buildGoApplicationDAGMode`,
+`buildGoApplicationDynamicMode`, or `buildGoApplication`.
+
 Examples:
 
 ```bash
-go2nix generate .                    # DAG mode (default, mod only)
-go2nix generate --mode=dynamic .     # Dynamic mode (mod only)
-go2nix generate -o lock.toml ./a ./b # Monorepo with two modules
+go2nix generate .          # Write go2nix.toml in the current module
+go2nix .                   # Same as generate: default command
+go2nix generate -o lock.toml ./a ./b
 ```
 
 ## check
@@ -69,6 +65,8 @@ go2nix compile-package [flags]
 | `--gc-flags` | No | Extra flags for `go tool compile` |
 | `--trim-path` | No | Path prefix to trim |
 | `--p` | No | Override `-p` flag (default: import-path) |
+| `--go-version` | No | Go language version for `-lang` |
+| `--pgo-profile` | No | Path to pprof CPU profile for PGO |
 
 ## compile-packages
 
@@ -86,6 +84,7 @@ go2nix compile-packages [flags] <module-root>
 | `--tags` | No | Comma-separated build tags |
 | `--gc-flags` | No | Extra flags for `go tool compile` |
 | `--trim-path` | No | Path prefix to trim |
+| `--pgo-profile` | No | Path to pprof CPU profile for PGO |
 
 ## list-files
 
@@ -121,6 +120,7 @@ go2nix resolve [flags]
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--src` | Yes | Store path to Go source |
+| `--mod-root` | No | Subdirectory within `src` containing `go.mod` |
 | `--lockfile` | Yes | Path to go2nix.toml lockfile |
 | `--system` | Yes | Nix system (e.g., `x86_64-linux`) |
 | `--go` | Yes | Path to go binary |
@@ -136,9 +136,11 @@ go2nix resolve [flags]
 | `--ldflags` | No | Linker flags |
 | `--cgo-enabled` | No | Override CGO_ENABLED (0 or 1) |
 | `--gcflags` | No | Extra flags for go tool compile |
+| `--pgo-profile` | No | Store path to pprof CPU profile for PGO |
 | `--overrides` | No | JSON-encoded packageOverrides |
 | `--cacert` | No | Path to CA certificate bundle |
 | `--netrc-file` | No | Path to .netrc for private modules |
+| `--nix-jobs` | No | Max concurrent `nix derivation add` calls |
 
 This command is not intended for direct use — it is invoked by the dynamic
 mode Nix builder inside a recursive-nix build.

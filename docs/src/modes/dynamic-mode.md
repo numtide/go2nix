@@ -25,14 +25,16 @@ extra-experimental-features = recursive-nix ca-derivations dynamic-derivations
 
 ## Lockfile requirements
 
-Dynamic mode uses a minimal v2 lockfile with `[mod]` only (no `[pkg]`):
+Dynamic mode uses the same v2 lockfile format as DAG mode:
 
 ```bash
-go2nix generate --mode=dynamic .
+go2nix generate .
 ```
 
-The package graph is discovered at build time, so only module NAR hashes are
-needed at eval time. See [lockfile-format.md](../lockfile-format.md) for details.
+The package graph is discovered at build time, so the lockfile does not store
+package-level dependency data. It contains `[mod]` hashes and optional
+`[replace]` entries. See [lockfile-format.md](../lockfile-format.md) for
+details.
 
 ## Build flow
 
@@ -100,7 +102,7 @@ the extra inputs to the appropriate CA derivations.
 ```nix
 goEnv.buildGoApplicationDynamicMode {
   src = ./.;
-  goLock = ./go2nix.toml;  # Generated with --mode=dynamic
+  goLock = ./go2nix.toml;
   pname = "my-app";
   version = "0.1.0";
   subPackages = [ "cmd/server" ];
@@ -138,5 +140,5 @@ The build-time logic lives in the `go2nix resolve` command
 - Build-time overhead from `nix derivation add` calls (~32ms each)
 - Parallelism limited by SQLite write lock (saturates at ~4 concurrent adds)
 
-See [recursive-nix-internals.md](../internals/recursive-nix-internals.md) for performance
-analysis and benchmarks.
+Performance and scaling characteristics depend on recursive-nix support,
+content-addressed derivations, and the overhead of `nix derivation add`.

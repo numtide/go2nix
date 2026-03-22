@@ -8,21 +8,21 @@ rebuild granularity when a dependency changes.
 
 | Mode | How it works | Lockfile | Caching | Nix features |
 |------|-------------|----------|---------|--------------|
-| **[DAG](dag-mode.md)** | `go tool compile/link` per-package | `[mod]` only | Per-package | go-nix-plugin |
-| **[Dynamic](dynamic-mode.md)** | Recursive-nix, DAG at build time | `[mod]` only | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
+| **[DAG](dag-mode.md)** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | go-nix-plugin |
+| **[Dynamic](dynamic-mode.md)** | Recursive-nix, DAG at build time | `[mod]` + optional `[replace]` | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
 - **DAG** goes deeper: every *package* (not just every module) gets its own
   derivation. go2nix calls `go tool compile` and `go tool link` directly,
   bypassing `go build`. The import graph is discovered at eval time by the
   go-nix-plugin (`builtins.resolveGoPackages`), so the lockfile stays small
-  (just `[mod]` hashes). When one package changes, only it and its reverse
-  dependencies rebuild.
+  (`[mod]` hashes plus optional `[replace]`). When one package changes, only
+  it and its reverse dependencies rebuild.
 
 - **Dynamic** achieves the same per-package granularity as DAG, but discovers
   the import graph at *build time* inside a recursive-nix wrapper instead of
-  recording it in the lockfile. The lockfile stays small (`[mod]` only) and
-  only changes when `go.mod` changes. Requires Nix >= 2.34 with experimental
-  features enabled.
+  recording it in the lockfile. The lockfile stays small (`[mod]` plus
+  optional `[replace]`) and only changes when module resolution changes.
+  Requires Nix >= 2.34 with experimental features enabled.
 
 ## Choosing a mode
 

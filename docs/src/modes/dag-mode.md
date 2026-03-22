@@ -4,11 +4,13 @@ Per-package Nix derivations at eval time, with fine-grained caching.
 
 ## Overview
 
-DAG mode creates one Nix derivation per third-party Go package. The package
-dependency graph is discovered at eval time by the go-nix-plugin via
-`builtins.resolveGoPackages`, which runs `go list` against the source tree.
-Module hashes are read from the lockfile's `[mod]` section. When a single
-dependency changes, only it and its reverse dependencies rebuild.
+DAG mode creates per-package derivations from an eval-time package graph. The
+go-nix-plugin runs `builtins.resolveGoPackages` to discover third-party
+packages, local packages, local replaces, module metadata, and optional
+test-only third-party packages when checks are enabled. Module hashes are read
+from the lockfile's `[mod]` section, with optional `[replace]` entries applied
+to module fetch paths. When a single dependency changes, only it and its
+reverse dependencies rebuild.
 
 ## Lockfile requirements
 
@@ -16,7 +18,7 @@ DAG mode requires a lockfile with `[mod]` (and optionally `[replace]`)
 sections:
 
 ```bash
-go2nix generate --mode=dag .
+go2nix generate .
 ```
 
 The lockfile contains only module hashes — the package graph is resolved at
@@ -34,10 +36,14 @@ Parses the TOML lockfile and returns `{ modules }`:
 ### 2. Package graph discovery (builtins.resolveGoPackages)
 
 The go-nix-plugin runs `go list -json -deps` against the source tree at eval
-time and returns `{ packages, replacements }`:
+time and returns a package graph:
 
-- **packages**: Per-package metadata (modKey, subdir, imports, drvName, isCgo)
+- **packages**: Third-party package metadata (modKey, subdir, imports, drvName, isCgo)
+- **localPackages**: Local package metadata (dir, localImports, thirdPartyImports, isCgo)
+- **modulePath**: Main module import path
 - **replacements**: Module replacement mappings from `go.mod` `replace` directives
+- **localReplaces**: Filesystem replace directives for local modules
+- **testPackages**: Test-only third-party package metadata when `doCheck = true`
 
 Replace directives are applied to module `fetchPath` and `dirSuffix` fields
 so that FODs download from the correct path.
@@ -54,7 +60,8 @@ The `netrcFile` option supports private module authentication.
 
 ### 4. Package derivations (default.nix)
 
-For each package in `goPackagesResult.packages`, a derivation is created:
+For each third-party package in `goPackagesResult.packages`, a derivation is
+created:
 
 ```nix
 stdenv.mkDerivation {
@@ -75,14 +82,32 @@ to `nativeBuildInputs`.
 Dependencies (`deps`) are resolved lazily via Nix's laziness — each package
 references other packages from the same `packages` attrset.
 
-### 5. Application derivation
+### 5. Local package derivations
 
-The final derivation takes all third-party packages as `buildInputs` and
-uses `goAppHook` (`link-go-binary.sh`) to:
+Each local package in `goPackagesResult.localPackages` also gets its own
+derivation with a source tree filtered down to that package directory plus its
+parents. Local package dependencies can point to other local packages and to
+third-party packages.
+
+### 6. Importcfg bundles
+
+Instead of passing every compiled package as a direct dependency of the final
+application derivation, DAG mode builds bundled `importcfg` derivations:
+
+- `depsImportcfg`: stdlib + third-party + local packages
+- `testDepsImportcfg`: adds test-only third-party packages when `doCheck = true`
+
+This keeps the final derivation's input fan-in small while preserving
+fine-grained package caching.
+
+### 7. Application derivation
+
+The final derivation consumes `depsImportcfg` (and `testDepsImportcfg` when
+checks are enabled) and uses `goAppHook` to:
 
 1. Validate lockfile consistency
-1. Compile local packages
 1. Link the final binary
+1. Run tests when `doCheck = true`
 
 ## Package overrides
 
@@ -104,7 +129,7 @@ goEnv.buildGoApplicationDAGMode {
 ```
 
 Overrides apply to both the per-package derivation and are collected for the
-final link step.
+final application derivation.
 
 ## Directory layout
 
@@ -115,8 +140,8 @@ nix/dag/
 └── hooks/
     ├── default.nix        # Hook definitions
     ├── setup-go-env.sh    # GOPROXY=off, GOSUMDB=off
-    ├── compile-go-pkg.sh  # Compile one third-party package
-    └── link-go-binary.sh  # Compile local pkgs + link binary
+    ├── compile-go-pkg.sh  # Compile one package
+    └── link-go-binary.sh  # Link binary and run checks
 ```
 
 ## Trade-offs
@@ -125,7 +150,7 @@ nix/dag/
 
 - Fine-grained caching — changing one dependency doesn't rebuild everything
 - No experimental Nix features required
-- Small lockfile (just `[mod]` hashes, no `[pkg]` section)
+- Small lockfile (`[mod]` plus optional `[replace]`, no `[pkg]` section)
 - Lockfile only changes when modules are added/removed, not when imports change
 - Automatic CGO detection and compiler injection
 
@@ -134,5 +159,5 @@ nix/dag/
 - Requires the go-nix-plugin (provides `builtins.resolveGoPackages`)
 - Many small derivations can slow Nix evaluation on very large projects
 
-See [compilation-pipeline.md](../internals/compilation-pipeline.md) for details on how
-compilation and linking work.
+Compilation and linking are handled by the DAG builder hooks and direct
+`go tool compile` / `go tool link` invocations described above.
