@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/compile"
+	"github.com/numtide/go2nix/pkg/gofiles"
 	"github.com/numtide/go2nix/pkg/localpkgs"
 	"github.com/numtide/go2nix/pkg/testmain"
 	"github.com/numtide/go2nix/pkg/toposort"
@@ -182,8 +183,8 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 				return fmt.Errorf("symlinking %s: %w", f, err)
 			}
 		}
-		// Also symlink embed files if any
-		for _, f := range pkg.EmbedFiles {
+		// Symlink production embed files and test-only embed files.
+		for _, f := range append(pkg.EmbedFiles, pkg.TestEmbedFiles...) {
 			src := filepath.Join(pkg.SrcDir, f)
 			dst := filepath.Join(mergedDir, f)
 			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -192,6 +193,12 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			if err := os.Symlink(src, dst); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("symlinking embed %s: %w", f, err)
 			}
+		}
+
+		// Merge production + test embed configs for the compiler.
+		mergedEmbedCfg, err := gofiles.MergeEmbedCfg(pkg.EmbedCfg, pkg.TestEmbedCfg)
+		if err != nil {
+			return fmt.Errorf("merging embed configs for %s: %w", pkg.ImportPath, err)
 		}
 
 		// Explicit file list: go/build.ImportDir would classify _test.go
@@ -208,6 +215,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			Tags:       opts.Tags,
 			GCFlags:    opts.GCFlags,
 			GoFiles:    goFiles,
+			EmbedCfg:   mergedEmbedCfg,
 		}); err != nil {
 			return fmt.Errorf("compiling internal test: %w", err)
 		}
@@ -283,6 +291,17 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 				return fmt.Errorf("symlinking %s: %w", f, err)
 			}
 		}
+		// Symlink xtest embed files.
+		for _, f := range pkg.XTestEmbedFiles {
+			src := filepath.Join(pkg.SrcDir, f)
+			dst := filepath.Join(xtestDir, f)
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return fmt.Errorf("creating xtest embed dir for %s: %w", f, err)
+			}
+			if err := os.Symlink(src, dst); err != nil && !os.IsExist(err) {
+				return fmt.Errorf("symlinking xtest embed %s: %w", f, err)
+			}
+		}
 
 		// Explicit file list: _test.go files would be classified as
 		// TestGoFiles/XTestGoFiles by ImportDir, not GoFiles.
@@ -295,6 +314,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			Tags:       opts.Tags,
 			GCFlags:    opts.GCFlags,
 			GoFiles:    pkg.XTestGoFiles,
+			EmbedCfg:   pkg.XTestEmbedCfg,
 		}); err != nil {
 			return fmt.Errorf("compiling external test: %w", err)
 		}

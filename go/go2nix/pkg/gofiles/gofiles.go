@@ -56,16 +56,15 @@ func BuildContext(tags string) build.Context {
 // embed patterns if present.
 func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 	result := PkgFiles{
-		GoFiles:    nonNil(pkg.GoFiles),
-		CgoFiles:   nonNil(pkg.CgoFiles),
-		SFiles:     nonNil(pkg.SFiles),
-		CFiles:     nonNil(pkg.CFiles),
-		CXXFiles:   nonNil(pkg.CXXFiles),
-		FFiles:     nonNil(pkg.FFiles),
-		HFiles:     nonNil(pkg.HFiles),
-		SysoFiles:  nonNil(pkg.SysoFiles),
-		EmbedFiles: nonNil(pkg.EmbedPatterns),
-		IsCommand:  pkg.IsCommand(),
+		GoFiles:   nonNil(pkg.GoFiles),
+		CgoFiles:  nonNil(pkg.CgoFiles),
+		SFiles:    nonNil(pkg.SFiles),
+		CFiles:    nonNil(pkg.CFiles),
+		CXXFiles:  nonNil(pkg.CXXFiles),
+		FFiles:    nonNil(pkg.FFiles),
+		HFiles:    nonNil(pkg.HFiles),
+		SysoFiles: nonNil(pkg.SysoFiles),
+		IsCommand: pkg.IsCommand(),
 	}
 
 	if len(pkg.EmbedPatterns) > 0 {
@@ -74,6 +73,17 @@ func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 			return PkgFiles{}, fmt.Errorf("resolving embed patterns in %s: %w", dir, err)
 		}
 		result.EmbedCfg = cfg
+		// EmbedFiles must contain resolved file paths (from EmbedCfg.Files),
+		// not raw patterns. The test runner symlinks these into synthetic
+		// source directories, so they must be actual relative paths.
+		embedFiles := make([]string, 0, len(cfg.Files))
+		for f := range cfg.Files {
+			embedFiles = append(embedFiles, f)
+		}
+		sort.Strings(embedFiles)
+		result.EmbedFiles = embedFiles
+	} else {
+		result.EmbedFiles = []string{}
 	}
 
 	return result, nil
@@ -225,6 +235,51 @@ func ResolveEmbedCfg(dir string, patterns []string) (*EmbedCfg, error) {
 	}
 
 	return cfg, nil
+}
+
+// MergeEmbedCfg combines two EmbedCfg values into one. Returns an error if
+// the same pattern key maps to different file lists in the two configs.
+// Either or both inputs may be nil; nil inputs are treated as empty.
+func MergeEmbedCfg(a, b *EmbedCfg) (*EmbedCfg, error) {
+	if a == nil && b == nil {
+		return nil, nil
+	}
+	merged := &EmbedCfg{
+		Patterns: make(map[string][]string),
+		Files:    make(map[string]string),
+	}
+	for _, cfg := range []*EmbedCfg{a, b} {
+		if cfg == nil {
+			continue
+		}
+		for pat, files := range cfg.Patterns {
+			if existing, ok := merged.Patterns[pat]; ok {
+				if !sliceEqual(existing, files) {
+					return nil, fmt.Errorf("embed pattern %q resolves inconsistently across production and test configs", pat)
+				}
+			}
+			merged.Patterns[pat] = files
+		}
+		for file, path := range cfg.Files {
+			if existingPath, ok := merged.Files[file]; ok && existingPath != path {
+				return nil, fmt.Errorf("embed file %q maps to both %q and %q", file, existingPath, path)
+			}
+			merged.Files[file] = path
+		}
+	}
+	return merged, nil
+}
+
+func sliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // validEmbedPattern reports whether pattern is a valid //go:embed pattern.

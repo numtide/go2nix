@@ -25,7 +25,8 @@ type Options struct {
 	GCFlags    string // extra flags for go tool compile (space-separated, e.g. "-race")
 	GoVersion  string // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
 	PGOProfile string // path to pprof CPU profile for PGO; empty disables PGO
-	GoFiles    []string // explicit Go files to compile (bypasses ListFiles discovery; paths relative to SrcDir)
+	GoFiles    []string          // explicit Go files to compile (bypasses ListFiles discovery; paths relative to SrcDir)
+	EmbedCfg   *gofiles.EmbedCfg // explicit embed config (used with GoFiles to pass pre-resolved embed metadata)
 
 	// Resolved once by CompilePackage; avoids repeated go env subprocesses.
 	goroot        string
@@ -90,6 +91,7 @@ func CompileGoPackage(opts Options) error {
 		// Explicit file list (used by test runner for _test.go files that
 		// go/build.ImportDir would place in TestGoFiles, not GoFiles).
 		files.GoFiles = opts.GoFiles
+		files.EmbedCfg = opts.EmbedCfg
 	} else {
 		var err error
 		files, err = gofiles.ListFiles(opts.SrcDir, opts.Tags)
