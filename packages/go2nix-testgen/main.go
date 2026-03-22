@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/numtide/go2nix/torture-generator/cmd"
+	"github.com/numtide/go2nix/testgen/cmd"
 )
 
 func main() {

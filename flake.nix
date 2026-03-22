@@ -66,6 +66,10 @@
           test-dag-fixture-modroot-nested = callPkgWith ./packages/test-dag-fixture-modroot-nested/default.nix {
             inherit flake system;
           };
+
+          go2nix-testgen = callPkgWith ./packages/go2nix-testgen/default.nix {
+            inherit flake system;
+          };
         }
       );
 
