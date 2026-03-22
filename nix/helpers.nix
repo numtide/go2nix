@@ -1,7 +1,9 @@
 # go2nix/nix/helpers.nix — shared utility functions.
 {
   # Make a string safe for use as a Nix derivation name.
-  sanitizeName = builtins.replaceStrings [ "/" "+" ] [ "-" "_" ];
+  # Valid store-path characters: [a-zA-Z0-9+-._?=]
+  # Go import paths may contain / ~ @, all of which are illegal.
+  sanitizeName = builtins.replaceStrings [ "/" "~" "@" ] [ "-" "_" "_at_" ];
 
   # Remove a prefix from a string. Assumes prefix is actually a prefix.
   removePrefix =

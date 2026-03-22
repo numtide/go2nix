@@ -83,13 +83,18 @@ struct LocalPkgData {
 }
 
 fn sanitize_name(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '/' => '-',
-            '+' => '_',
-            _ => c,
-        })
-        .collect()
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '+' | '-' | '.' | '_' | '?' | '=' => {
+                out.push(c);
+            }
+            '/' => out.push('-'),
+            '@' => out.push_str("_at_"),
+            _ => out.push('_'),
+        }
+    }
+    out
 }
 
 fn inherit_env(keys: &[&str]) -> Vec<(String, String)> {
@@ -1050,8 +1055,10 @@ mod tests {
     // --- sanitize_name ---
 
     #[test]
-    fn sanitize_name_replaces_slash_and_plus() {
-        assert_eq!(sanitize_name("github.com/foo/bar+baz"), "github.com-foo-bar_baz");
+    fn sanitize_name_whitelist() {
+        assert_eq!(sanitize_name("github.com/foo/bar+baz"), "github.com-foo-bar+baz");
+        assert_eq!(sanitize_name("git.sr.ht/~geb/dotool"), "git.sr.ht-_geb-dotool");
+        assert_eq!(sanitize_name("example.com/@scope/pkg"), "example.com-_at_scope-pkg");
     }
 
     // --- pkg_data_to_json_pkg ---
