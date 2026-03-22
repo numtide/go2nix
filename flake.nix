@@ -35,10 +35,10 @@
           default = callPkg ./packages/go2nix/default.nix;
           go2nix = callPkg ./packages/go2nix/default.nix;
           docs = callPkg ./packages/docs/default.nix;
-          go-nix-plugin = callPkg ./packages/go-nix-plugin/default.nix;
-          go-nix-plugin-eval-test = pkgs.callPackage ./packages/go-nix-plugin/tests/eval-test.nix {
-            plugin = callPkg ./packages/go-nix-plugin/default.nix;
-            testFixtures = ./packages/go-nix-plugin/tests/fixtures;
+          go2nix-nix-plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
+          go2nix-nix-plugin-eval-test = pkgs.callPackage ./packages/go2nix-nix-plugin/tests/eval-test.nix {
+            plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
+            testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
           };
 
           test-dag-package-dotool = callPkgWith ./packages/test-dag-package-dotool/default.nix {

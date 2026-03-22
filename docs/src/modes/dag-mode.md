@@ -5,7 +5,7 @@ Per-package Nix derivations at eval time, with fine-grained caching.
 ## Overview
 
 DAG mode creates per-package derivations from an eval-time package graph. The
-go-nix-plugin runs `builtins.resolveGoPackages` to discover third-party
+go2nix-nix-plugin runs `builtins.resolveGoPackages` to discover third-party
 packages, local packages, local replaces, module metadata, and optional
 test-only third-party packages when checks are enabled. Module hashes are read
 from the lockfile's `[mod]` section, with optional `[replace]` entries applied
@@ -35,7 +35,7 @@ Parses the TOML lockfile and returns `{ modules }`:
 
 ### 2. Package graph discovery (builtins.resolveGoPackages)
 
-The go-nix-plugin runs `go list -json -deps` against the source tree at eval
+The go2nix-nix-plugin runs `go list -json -deps` against the source tree at eval
 time and returns a package graph:
 
 - **packages**: Third-party package metadata (modKey, subdir, imports, drvName, isCgo)
@@ -156,7 +156,7 @@ nix/dag/
 
 **Cons:**
 
-- Requires the go-nix-plugin (provides `builtins.resolveGoPackages`)
+- Requires the go2nix-nix-plugin (provides `builtins.resolveGoPackages`)
 - Many small derivations can slow Nix evaluation on very large projects
 
 Compilation and linking are handled by the DAG builder hooks and direct

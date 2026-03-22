@@ -1,6 +1,6 @@
 # go2nix-testgen — built with go2nix DAG mode (dogfooding).
 #
-# Spawns nix-build with --option plugin-files so the go-nix-plugin is
+# Spawns nix-build with --option plugin-files so the go2nix-nix-plugin is
 # available during evaluation. The result is the testgen binary.
 {
   flake,
@@ -8,15 +8,15 @@
   system,
   ...
 }:
-if !(flake.packages.${system} ? go-nix-plugin) then
+if !(flake.packages.${system} ? go2nix-nix-plugin) then
   pkgs.runCommand "go2nix-testgen-unsupported" { meta.platforms = pkgs.lib.platforms.linux; }
     ''
-      echo "go2nix-testgen requires go-nix-plugin (Linux only)" >&2
+      echo "go2nix-testgen requires go2nix-nix-plugin (Linux only)" >&2
       exit 1
     ''
 else
   let
-    plugin = flake.packages.${system}.go-nix-plugin;
+    plugin = flake.packages.${system}.go2nix-nix-plugin;
     nix = pkgs.nixVersions.latest;
     nixpkgsPath = pkgs.path;
     go2nixSrc = flake;
