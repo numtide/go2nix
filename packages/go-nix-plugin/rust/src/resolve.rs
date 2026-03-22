@@ -30,6 +30,8 @@ struct GoModule {
 struct GoPackage {
     #[serde(rename = "ImportPath")]
     import_path: String,
+    #[serde(rename = "Dir")]
+    dir: String,
     #[serde(rename = "Module")]
     module: Option<GoModule>,
     #[serde(rename = "Imports")]
@@ -69,6 +71,17 @@ struct PkgData {
     is_cgo: bool,
 }
 
+struct LocalPkgData {
+    import_path: String,
+    dir: String,
+    local_imports: Vec<String>,
+    third_party_imports: Vec<String>,
+    cgo_pkg_config: Vec<String>,
+    cgo_cflags: Vec<String>,
+    cgo_ldflags: Vec<String>,
+    is_cgo: bool,
+}
+
 fn sanitize_name(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -102,7 +115,7 @@ struct GoListOpts<'a> {
 fn run_go_list(go_bin: &str, src_dir: &str, opts: &GoListOpts) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Module,Imports,CgoFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,CgoFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
     cmd.arg("-deps");
     cmd.arg("-e");
     cmd.arg("-buildvcs=false");
@@ -179,17 +192,35 @@ fn run_go_list(go_bin: &str, src_dir: &str, opts: &GoListOpts) -> Result<Vec<u8>
 
 pub(crate) struct PackageGraph {
     packages: Vec<PkgData>,
+    local_packages: Vec<LocalPkgData>,
     third_party_paths: BTreeSet<String>,
+    local_paths: BTreeSet<String>,
     replacements: BTreeMap<String, (String, String)>,
     local_replaces: BTreeMap<String, String>,
+    module_path: String,
 }
 
 pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
     let mut packages = Vec::new();
     let mut pkg_errors = Vec::new();
     let mut third_party_paths = BTreeSet::new();
+    let mut local_paths = BTreeSet::new();
     let mut replacements: BTreeMap<String, (String, String)> = BTreeMap::new();
     let mut local_replaces: BTreeMap<String, String> = BTreeMap::new();
+    let mut module_path = String::new();
+
+    // Raw local package data collected during first pass; imports are
+    // classified into local vs third-party after the loop.
+    struct RawLocalPkg {
+        import_path: String,
+        dir: String,
+        imports: Vec<String>,
+        cgo_pkg_config: Vec<String>,
+        cgo_cflags: Vec<String>,
+        cgo_ldflags: Vec<String>,
+        is_cgo: bool,
+    }
+    let mut raw_local_pkgs: Vec<RawLocalPkg> = Vec::new();
 
     for result in serde_json::Deserializer::from_slice(stdout).into_iter::<GoPackage>() {
         let jpkg = result.context("resolveGoPackages: failed to parse go list JSON")?;
@@ -219,11 +250,30 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         let is_local = module.main || (!replace_path.is_empty() && replace_version.is_empty());
 
         if is_local {
+            // Collect local replace directives (not main module).
             if !module.main && !replace_path.is_empty() {
                 local_replaces
                     .entry(module.path.clone())
                     .or_insert(replace_path);
             }
+
+            // Capture main module path from first main-module package.
+            if module.main && module_path.is_empty() {
+                module_path = module.path.clone();
+            }
+
+            local_paths.insert(jpkg.import_path.clone());
+
+            raw_local_pkgs.push(RawLocalPkg {
+                import_path: jpkg.import_path,
+                dir: jpkg.dir,
+                imports: jpkg.imports,
+                cgo_pkg_config: jpkg.cgo_pkg_config,
+                cgo_cflags: jpkg.cgo_cflags,
+                cgo_ldflags: jpkg.cgo_ldflags,
+                is_cgo: !jpkg.cgo_files.is_empty(),
+            });
+
             continue;
         }
 
@@ -266,11 +316,40 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         );
     }
 
+    // Classify each local package's imports into local vs third-party.
+    let local_packages: Vec<LocalPkgData> = raw_local_pkgs
+        .into_iter()
+        .map(|raw| {
+            let mut local_imports = Vec::new();
+            let mut third_party_imports = Vec::new();
+            for imp in &raw.imports {
+                if local_paths.contains(imp) {
+                    local_imports.push(imp.clone());
+                } else if third_party_paths.contains(imp) {
+                    third_party_imports.push(imp.clone());
+                }
+            }
+            LocalPkgData {
+                import_path: raw.import_path,
+                dir: raw.dir,
+                local_imports,
+                third_party_imports,
+                cgo_pkg_config: raw.cgo_pkg_config,
+                cgo_cflags: raw.cgo_cflags,
+                cgo_ldflags: raw.cgo_ldflags,
+                is_cgo: raw.is_cgo,
+            }
+        })
+        .collect();
+
     Ok(PackageGraph {
         packages,
+        local_packages,
         third_party_paths,
+        local_paths,
         replacements,
         local_replaces,
+        module_path,
     })
 }
 
