@@ -1,1 +1,0 @@
-# modroot-nested test fixture

@@ -41,29 +41,32 @@
             testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
           };
 
-          test-dag-package-dotool = callPkgWith ./packages/test-dag-package-dotool/default.nix {
+          test-package-dotool = callPkgWith ./packages/test-package-dotool/default.nix {
             inherit flake system;
           };
-          test-dag-package-nwg-drawer = callPkgWith ./packages/test-dag-package-nwg-drawer/default.nix {
+          test-package-nwg-drawer = callPkgWith ./packages/test-package-nwg-drawer/default.nix {
             inherit flake system;
           };
-          test-dag-package-vinegar = callPkgWith ./packages/test-dag-package-vinegar/default.nix {
+          test-package-vinegar = callPkgWith ./packages/test-package-vinegar/default.nix {
             inherit flake system;
           };
-          test-dag-package-yubikey-agent = callPkgWith ./packages/test-dag-package-yubikey-agent/default.nix {
+          test-package-yubikey-agent = callPkgWith ./packages/test-package-yubikey-agent/default.nix {
             inherit flake system;
           };
 
-          test-dag-fixture-testify-basic = callPkgWith ./packages/test-dag-fixture-testify-basic/default.nix {
+          test-fixture-testify-basic = callPkgWith ./packages/test-fixture-testify-basic/default.nix {
             inherit flake system;
           };
-          test-dag-fixture-xtest-local-dep = callPkgWith ./packages/test-dag-fixture-xtest-local-dep/default.nix {
+          test-fixture-xtest-local-dep = callPkgWith ./packages/test-fixture-xtest-local-dep/default.nix {
             inherit flake system;
           };
-          test-dag-fixture-test-helper-pkg = callPkgWith ./packages/test-dag-fixture-test-helper-pkg/default.nix {
+          test-fixture-test-helper-pkg = callPkgWith ./packages/test-fixture-test-helper-pkg/default.nix {
             inherit flake system;
           };
-          test-dag-fixture-modroot-nested = callPkgWith ./packages/test-dag-fixture-modroot-nested/default.nix {
+          test-fixture-modroot-nested = callPkgWith ./packages/test-fixture-modroot-nested/default.nix {
+            inherit flake system;
+          };
+          test-fixture-torture-app-full = callPkgWith ./packages/test-fixture-torture-app-full/default.nix {
             inherit flake system;
           };
 
