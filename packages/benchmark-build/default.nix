@@ -278,6 +278,7 @@ pkgs.writeShellApplication {
     FIXTURE_COPY=$(mktemp -d -t bench-fixture-XXXXXX)
     trap 'rm -rf "$FIXTURE_COPY" "$CLEANUP_DIR"' EXIT
     cp -a "${fixturePath}/." "$FIXTURE_COPY/"
+    chmod -R u+w "$FIXTURE_COPY"
 
     # Pre-build the baseline from the copy so the cache is warm.
     echo "  Pre-building baseline from fixture copy..."
@@ -298,6 +299,7 @@ pkgs.writeShellApplication {
     reset_and_mutate() {
       rm -rf "''${FIXTURE_COPY:?}/"*
       cp -a "$FIXTURE_SRC/." "$FIXTURE_COPY/"
+      chmod -R u+w "$FIXTURE_COPY"
       local n
       n=$(cat "$COUNTER_FILE")
       echo "$((n + 1))" > "$COUNTER_FILE"

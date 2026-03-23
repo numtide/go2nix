@@ -175,6 +175,7 @@ pkgs.writeShellApplication {
     FIXTURE_COPY=$(mktemp -d -t bench-cross-app-XXXXXX)
     trap 'rm -rf "$FIXTURE_COPY"' EXIT
     cp -a "${fixturePath}/." "$FIXTURE_COPY/"
+    chmod -R u+w "$FIXTURE_COPY"
 
     # Build baseline from the copy.
     echo "  Pre-building baseline from copy..."
