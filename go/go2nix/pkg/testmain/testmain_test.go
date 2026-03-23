@@ -10,14 +10,16 @@ import (
 func TestGenerateBasic(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "foo_test.go")
-	os.WriteFile(testFile, []byte(`package foo
+	if err := os.WriteFile(testFile, []byte(`package foo
 
 import "testing"
 
 func TestAdd(t *testing.T) {}
 func BenchmarkAdd(b *testing.B) {}
 func FuzzAdd(f *testing.F) {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := Generate(Options{
 		ImportPath:  "example.com/foo",
@@ -48,12 +50,14 @@ func FuzzAdd(f *testing.F) {}
 func TestGenerateExternal(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "foo_ext_test.go")
-	os.WriteFile(testFile, []byte(`package foo_test
+	if err := os.WriteFile(testFile, []byte(`package foo_test
 
 import "testing"
 
 func TestExternal(t *testing.T) {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := Generate(Options{
 		ImportPath:   "example.com/foo",
@@ -75,7 +79,7 @@ func TestExternal(t *testing.T) {}
 func TestGenerateTestMain(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "main_test.go")
-	os.WriteFile(testFile, []byte(`package foo
+	if err := os.WriteFile(testFile, []byte(`package foo
 
 import (
 	"os"
@@ -87,7 +91,9 @@ func TestMain(m *testing.M) {
 }
 
 func TestFoo(t *testing.T) {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := Generate(Options{
 		ImportPath:  "example.com/foo",
@@ -112,7 +118,7 @@ func TestFoo(t *testing.T) {}
 func TestGenerateExamples(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "example_test.go")
-	os.WriteFile(testFile, []byte(`package foo
+	if err := os.WriteFile(testFile, []byte(`package foo
 
 import "fmt"
 
@@ -120,7 +126,9 @@ func ExampleHello() {
 	fmt.Println("hello")
 	// Output: hello
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := Generate(Options{
 		ImportPath:  "example.com/foo",
@@ -159,20 +167,24 @@ func TestGenerateEmpty(t *testing.T) {
 func TestGenerateMixed(t *testing.T) {
 	dir := t.TempDir()
 	intFile := filepath.Join(dir, "foo_test.go")
-	os.WriteFile(intFile, []byte(`package foo
+	if err := os.WriteFile(intFile, []byte(`package foo
 
 import "testing"
 
 func TestInternal(t *testing.T) {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	extFile := filepath.Join(dir, "foo_ext_test.go")
-	os.WriteFile(extFile, []byte(`package foo_test
+	if err := os.WriteFile(extFile, []byte(`package foo_test
 
 import "testing"
 
 func TestExternal(t *testing.T) {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := Generate(Options{
 		ImportPath:   "example.com/foo",

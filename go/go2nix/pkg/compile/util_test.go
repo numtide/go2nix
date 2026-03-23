@@ -9,7 +9,9 @@ import (
 func TestEnvOrDefault(t *testing.T) {
 	key := "GO2NIX_TEST_ENV_OR_DEFAULT"
 
-	os.Unsetenv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
 	if got := envOrDefault(key, "fallback"); got != "fallback" {
 		t.Errorf("unset: got %q, want %q", got, "fallback")
 	}
@@ -86,7 +88,9 @@ func TestLangVersion(t *testing.T) {
 func TestFindGoVersion(t *testing.T) {
 	// Create a module root with go.mod.
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/foo\n\ngo 1.21.3\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/foo\n\ngo 1.21.3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// From the module root itself.
 	if got := findGoVersion(dir); got != "1.21" {
@@ -95,7 +99,9 @@ func TestFindGoVersion(t *testing.T) {
 
 	// From a sub-package directory.
 	subdir := filepath.Join(dir, "pkg", "bar")
-	os.MkdirAll(subdir, 0o755)
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if got := findGoVersion(subdir); got != "1.21" {
 		t.Errorf("subdir: got %q, want %q", got, "1.21")
 	}
@@ -111,13 +117,17 @@ func TestExtractPackageName(t *testing.T) {
 	dir := t.TempDir()
 
 	main := filepath.Join(dir, "main.go")
-	os.WriteFile(main, []byte("package main\n"), 0o644)
+	if err := os.WriteFile(main, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if got := extractPackageName(main); got != "main" {
 		t.Errorf("main.go: got %q, want %q", got, "main")
 	}
 
 	lib := filepath.Join(dir, "lib.go")
-	os.WriteFile(lib, []byte("package mylib\n"), 0o644)
+	if err := os.WriteFile(lib, []byte("package mylib\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if got := extractPackageName(lib); got != "mylib" {
 		t.Errorf("lib.go: got %q, want %q", got, "mylib")
 	}
@@ -129,7 +139,9 @@ func TestExtractPackageName(t *testing.T) {
 
 	// Invalid syntax falls back to "main".
 	bad := filepath.Join(dir, "bad.go")
-	os.WriteFile(bad, []byte("not valid go {{{"), 0o644)
+	if err := os.WriteFile(bad, []byte("not valid go {{{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if got := extractPackageName(bad); got != "main" {
 		t.Errorf("invalid syntax: got %q, want %q", got, "main")
 	}

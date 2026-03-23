@@ -162,17 +162,29 @@ func TestDiscoverInputPaths(t *testing.T) {
 	pkgC := filepath.Join(root, "pkgC")
 
 	// pkgA: bin + pkgconfig + propagated-build-inputs → pkgB
-	os.MkdirAll(filepath.Join(pkgA, "bin"), 0o755)
-	os.MkdirAll(filepath.Join(pkgA, "lib", "pkgconfig"), 0o755)
-	os.MkdirAll(filepath.Join(pkgA, "nix-support"), 0o755)
-	os.WriteFile(filepath.Join(pkgA, "nix-support", "propagated-build-inputs"),
-		[]byte(pkgB), 0o644)
+	if err := os.MkdirAll(filepath.Join(pkgA, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(pkgA, "lib", "pkgconfig"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(pkgA, "nix-support"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgA, "nix-support", "propagated-build-inputs"),
+		[]byte(pkgB), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// pkgB: pkgconfig only
-	os.MkdirAll(filepath.Join(pkgB, "lib", "pkgconfig"), 0o755)
+	if err := os.MkdirAll(filepath.Join(pkgB, "lib", "pkgconfig"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// pkgC: bin only
-	os.MkdirAll(filepath.Join(pkgC, "bin"), 0o755)
+	if err := os.MkdirAll(filepath.Join(pkgC, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	result := discoverInputPaths([]string{pkgA, pkgC})
 
@@ -208,13 +220,21 @@ func TestDiscoverInputPathsCyclic(t *testing.T) {
 	pkgX := filepath.Join(root, "pkgX")
 	pkgY := filepath.Join(root, "pkgY")
 
-	os.MkdirAll(filepath.Join(pkgX, "nix-support"), 0o755)
-	os.WriteFile(filepath.Join(pkgX, "nix-support", "propagated-build-inputs"),
-		[]byte(pkgY), 0o644)
+	if err := os.MkdirAll(filepath.Join(pkgX, "nix-support"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgX, "nix-support", "propagated-build-inputs"),
+		[]byte(pkgY), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	os.MkdirAll(filepath.Join(pkgY, "nix-support"), 0o755)
-	os.WriteFile(filepath.Join(pkgY, "nix-support", "propagated-build-inputs"),
-		[]byte(pkgX), 0o644)
+	if err := os.MkdirAll(filepath.Join(pkgY, "nix-support"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgY, "nix-support", "propagated-build-inputs"),
+		[]byte(pkgX), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	result := discoverInputPaths([]string{pkgX})
 	if len(result.All) != 2 {

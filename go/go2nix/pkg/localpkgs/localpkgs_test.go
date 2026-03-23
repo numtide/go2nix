@@ -248,9 +248,13 @@ func indexOf(s []string, v string) int {
 
 func TestListLocalPackagesIncludesTestFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.21\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package test\n\nfunc Add(a, b int) int { return a + b }\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "foo_test.go"), []byte(`package test
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package test\n\nfunc Add(a, b int) int { return a + b }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "foo_test.go"), []byte(`package test
 
 import "testing"
 
@@ -259,7 +263,9 @@ func TestAdd(t *testing.T) {
 		t.Fatal("wrong")
 	}
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pkgs, err := ListLocalPackages(dir, "")
 	if err != nil {

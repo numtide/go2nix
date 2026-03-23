@@ -32,21 +32,27 @@ func TestDerivationJSON(t *testing.T) {
 
 	// Check name
 	var name string
-	json.Unmarshal(got["name"], &name)
+	if err := json.Unmarshal(got["name"], &name); err != nil {
+		t.Fatalf("unmarshal name: %v", err)
+	}
 	if name != "hello" {
 		t.Errorf("name = %q, want %q", name, "hello")
 	}
 
 	// Check version
 	var version int
-	json.Unmarshal(got["version"], &version)
+	if err := json.Unmarshal(got["version"], &version); err != nil {
+		t.Fatalf("unmarshal version: %v", err)
+	}
 	if version != 4 {
 		t.Errorf("version = %d, want 4", version)
 	}
 
 	// Check inputs has srcs and drvs
 	var inputs map[string]json.RawMessage
-	json.Unmarshal(got["inputs"], &inputs)
+	if err := json.Unmarshal(got["inputs"], &inputs); err != nil {
+		t.Fatalf("unmarshal inputs: %v", err)
+	}
 	for _, field := range []string{"srcs", "drvs"} {
 		if _, ok := inputs[field]; !ok {
 			t.Errorf("missing inputs field %q", field)
