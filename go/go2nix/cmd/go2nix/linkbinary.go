@@ -244,7 +244,11 @@ func linkBinary(manifestPath, output string) error {
 			"-buildmode=" + buildMode,
 			"-importcfg", linkCfg,
 		}
-		linkArgs = append(linkArgs, m.LDFlags...)
+		// Each ldflag element may contain spaces (e.g. "-X main.Version=1.6")
+		// that need splitting into separate args for the linker binary.
+		for _, ldf := range m.LDFlags {
+			linkArgs = append(linkArgs, strings.Fields(ldf)...)
+		}
 		linkArgs = append(linkArgs, linkFlags...)
 		linkArgs = append(linkArgs, "-o", filepath.Join(binDir, binname))
 		linkArgs = append(linkArgs, mainArchive)
