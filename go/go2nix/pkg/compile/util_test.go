@@ -36,6 +36,27 @@ func TestExtraGCFlags(t *testing.T) {
 	}
 }
 
+func TestExtraGCFlags_listPreferred(t *testing.T) {
+	// GCFlagsList takes precedence over GCFlags string.
+	list := []string{"-shared", "-X=main.version=hello world"}
+	got := extraGCFlags(Options{
+		GCFlags:     "-race",
+		GCFlagsList: list,
+	})
+	if len(got) != 2 || got[0] != "-shared" || got[1] != "-X=main.version=hello world" {
+		t.Errorf("got %v, want %v", got, list)
+	}
+}
+
+func TestExtraGCFlags_listWithSpaces(t *testing.T) {
+	// Verify flags containing spaces are preserved as single elements.
+	list := []string{"-X=main.msg=hello world"}
+	got := extraGCFlags(Options{GCFlagsList: list})
+	if len(got) != 1 || got[0] != "-X=main.msg=hello world" {
+		t.Errorf("got %v, want single element with space", got)
+	}
+}
+
 func TestDefaultBuildMode(t *testing.T) {
 	tests := []struct {
 		goos, goarch, want string

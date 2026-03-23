@@ -47,6 +47,46 @@ func LoadCompileManifest(path string) (*CompileManifest, error) {
 	return &m, nil
 }
 
+// ManifestKindLink is the kind value for link manifests.
+const ManifestKindLink = "link"
+
+// LinkManifest is the JSON contract between Nix and go2nix link-binary.
+type LinkManifest struct {
+	Version        int               `json:"version"`
+	Kind           string            `json:"kind"`
+	ImportcfgParts []string          `json:"importcfgParts"`
+	LocalArchives  map[string]string `json:"localArchives"`
+	SubPackages    []string          `json:"subPackages"`
+	ModuleRoot     string            `json:"moduleRoot"`
+	Lockfile       string            `json:"lockfile"`
+	Pname          string            `json:"pname"`
+	GOOS           *string           `json:"goos"`
+	GOARCH         *string           `json:"goarch"`
+	LDFlags        []string          `json:"ldflags"`
+	GCFlags        []string          `json:"gcflags"`
+	Tags           []string          `json:"tags"`
+	PGOProfile     *string           `json:"pgoProfile"`
+}
+
+// LoadLinkManifest reads and validates a link manifest from path.
+func LoadLinkManifest(path string) (*LinkManifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading link manifest: %w", err)
+	}
+	var m LinkManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parsing link manifest: %w", err)
+	}
+	if m.Version != ManifestVersion {
+		return nil, fmt.Errorf("link manifest: unsupported version %d (expected %d)", m.Version, ManifestVersion)
+	}
+	if m.Kind != ManifestKindLink {
+		return nil, fmt.Errorf("link manifest: wrong kind %q (expected %q)", m.Kind, ManifestKindLink)
+	}
+	return &m, nil
+}
+
 // ManifestKindTest is the kind value for test manifests.
 const ManifestKindTest = "test"
 

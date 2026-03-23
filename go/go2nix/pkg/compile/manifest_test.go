@@ -196,6 +196,100 @@ func TestLoadTestManifest(t *testing.T) {
 	}
 }
 
+func TestLoadLinkManifest(t *testing.T) {
+	tests := []struct {
+		name    string
+		json    string
+		wantErr string
+	}{
+		{
+			name: "valid manifest",
+			json: `{"version":1,"kind":"link","importcfgParts":["/a/importcfg"],"localArchives":{"example.com/foo":"/nix/store/foo.a"},"subPackages":["./cmd/server"],"moduleRoot":"/nix/store/src","lockfile":"/nix/store/lockfile","pname":"myapp","goos":"linux","goarch":"amd64","ldflags":["-s","-w"],"gcflags":[],"tags":[],"pgoProfile":null}`,
+		},
+		{
+			name:    "wrong kind",
+			json:    `{"version":1,"kind":"compile","importcfgParts":[],"localArchives":{},"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`,
+			wantErr: `wrong kind "compile"`,
+		},
+		{
+			name:    "wrong version",
+			json:    `{"version":99,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`,
+			wantErr: "unsupported version 99",
+		},
+		{
+			name:    "invalid json",
+			json:    `not json`,
+			wantErr: "parsing link manifest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "manifest.json")
+			if err := os.WriteFile(path, []byte(tt.json), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			m, err := LoadLinkManifest(path)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if got := err.Error(); !contains(got, tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %q", tt.wantErr, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m.Pname != "myapp" {
+				t.Errorf("pname = %q", m.Pname)
+			}
+			if m.ModuleRoot != "/nix/store/src" {
+				t.Errorf("moduleRoot = %q", m.ModuleRoot)
+			}
+			if len(m.SubPackages) != 1 || m.SubPackages[0] != "./cmd/server" {
+				t.Errorf("subPackages = %v", m.SubPackages)
+			}
+			if len(m.LDFlags) != 2 || m.LDFlags[0] != "-s" || m.LDFlags[1] != "-w" {
+				t.Errorf("ldflags = %v", m.LDFlags)
+			}
+			if m.GOOS == nil || *m.GOOS != "linux" {
+				t.Errorf("goos = %v", m.GOOS)
+			}
+			if m.GOARCH == nil || *m.GOARCH != "amd64" {
+				t.Errorf("goarch = %v", m.GOARCH)
+			}
+			if m.PGOProfile != nil {
+				t.Errorf("pgoProfile = %v, want nil", m.PGOProfile)
+			}
+		})
+	}
+}
+
+func TestLoadLinkManifest_nullOptionals(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	json := `{"version":1,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`
+	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := LoadLinkManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.GOOS != nil {
+		t.Errorf("goos should be nil, got %v", m.GOOS)
+	}
+	if m.GOARCH != nil {
+		t.Errorf("goarch should be nil, got %v", m.GOARCH)
+	}
+	if m.PGOProfile != nil {
+		t.Errorf("pgoProfile should be nil, got %v", m.PGOProfile)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

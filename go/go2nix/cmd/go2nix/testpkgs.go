@@ -59,13 +59,13 @@ func runTestPackagesCmd(args []string) {
 		}
 
 		opts = testrunner.Options{
-			ModuleRoot: m.ModuleRoot,
-			ImportCfg:  mergedCfg,
-			LocalDir:   localPkgsDir,
-			TrimPath:   tmpDir,
-			Tags:       strings.Join(m.Tags, ","),
-			GCFlags:    strings.Join(m.GCFlags, " "),
-			CheckFlags: strings.Join(m.CheckFlags, " "),
+			ModuleRoot:     m.ModuleRoot,
+			ImportCfg:      mergedCfg,
+			LocalDir:       localPkgsDir,
+			TrimPath:       tmpDir,
+			Tags:           strings.Join(m.Tags, ","),
+			GCFlagsList:    m.GCFlags,
+			CheckFlagsList: m.CheckFlags,
 		}
 	} else {
 		// Legacy mode: flags are authoritative.
