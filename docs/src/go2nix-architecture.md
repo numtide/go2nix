@@ -14,6 +14,24 @@ The system has two components:
 1. **A Nix library** that reads lockfiles and builds Go applications using
    one of two modes.
 
+## Design context
+
+go2nix builds Go applications at package granularity rather than treating
+`go build` as a single opaque step. The approach is architecturally inspired
+by Bazel's `rules_go` — both systems work from an explicit package graph —
+but go2nix has a much narrower scope: bring package-graph-aware Go builds to
+Nix derivations and lockfiles, not replicate a full Bazel rule ecosystem.
+
+### Comparison with other Nix Go builders
+
+| Tool | Granularity | Key difference from go2nix |
+|------|-------------|---------------------------|
+| `buildGoModule` | App-level (one fetch + one build derivation) | Nix doesn't model the Go package graph; any change rebuilds the whole app |
+| `gomod2nix` | Module-level (lockfile-driven offline builds) | Focuses on locking and fetching modules, not per-package compilation |
+| `gobuild.nix` | Module-level (`GOCACHEPROG`-backed cache reuse) | Per-module derivations, not per-package; different caching layer |
+| `nix-gocacheprog` | Impure shared cache | Optimization for local iteration speed, not a pure builder |
+| **go2nix** | Package-level (per-package derivations) | Discovers the import graph and compiles each package as its own derivation |
+
 ## Builder modes
 
 | Mode | How it works | Lockfile | Caching | Nix features |
