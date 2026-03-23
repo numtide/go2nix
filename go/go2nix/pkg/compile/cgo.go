@@ -236,7 +236,9 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	}
 
 	// Step 5: pack C/C++ objects, assembly objects, and .syso files.
-	allOFiles := append(compiledOFiles, asmOFiles...)
+	allOFiles := make([]string, 0, len(compiledOFiles)+len(asmOFiles))
+	allOFiles = append(allOFiles, compiledOFiles...)
+	allOFiles = append(allOFiles, asmOFiles...)
 	for _, s := range files.SysoFiles {
 		allOFiles = append(allOFiles, filepath.Join(opts.SrcDir, s))
 	}
