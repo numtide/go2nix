@@ -2,58 +2,27 @@
 # Atomic hook: compile a single Go package via go2nix compile-package.
 #
 # Expected environment variables (set via derivation `env`):
-#   goPackagePath   — import path of the package to compile
-#   goPackageSrcDir — absolute path to the source directory
-#   goGcflags       — extra compiler flags (optional)
-#
-# Dependencies are discovered from $buildInputs at build time.
+#   goPackagePath        — import path of the package to compile
+#   goPackageSrcDir      — absolute path to the source directory
+#   compileManifestJSON  — compile manifest content (JSON string)
 
 # Variables set by Nix stdenv / derivation env, not by this script.
 # shellcheck disable=SC2154
 compileGoPkgBuildPhase() {
   runHook preBuild
 
-  # Build importcfg: stdlib + dependency .a files.
-  cat "@stdlib@/importcfg" >"$NIX_BUILD_TOP/importcfg"
-  for dep in ${buildInputs[@]}; do
-    if [ -f "$dep/importcfg" ]; then
-      cat "$dep/importcfg" >>"$NIX_BUILD_TOP/importcfg"
-    fi
-  done
+  # Write manifest JSON to a file for go2nix to read.
+  echo "$compileManifestJSON" > "$NIX_BUILD_TOP/compile-manifest.json"
 
-  # Compile the package.
   mkdir -p "$out/$(dirname "$goPackagePath")"
 
-  # Build gcflags: PIE requires -shared, then append user gcflags if present.
-  # buildMode is computed at Nix eval time from stdenv.hostPlatform.go.GOOS
-  # (see hooks/default.nix), matching Go's internal/platform.DefaultPIE.
-  local gcflags_val="${goGcflags:-}"
-  # shellcheck disable=SC2050  # @buildMode@ is substituted by makeSetupHook
-  if [ "@buildMode@" = "pie" ]; then
-    gcflags_val="-shared${gcflags_val:+ $gcflags_val}"
-  fi
-  local -a gcflagArgs=()
-  if [ -n "$gcflags_val" ]; then
-    gcflagArgs=(--gc-flags "$gcflags_val")
-  fi
-
-  local -a pgoArgs=()
-  if [ -n "${goPgoProfile:-}" ]; then
-    pgoArgs=(--pgo-profile "$goPgoProfile")
-  fi
-
   @go2nix@ compile-package \
-    --import-cfg "$NIX_BUILD_TOP/importcfg" \
+    --manifest "$NIX_BUILD_TOP/compile-manifest.json" \
     --import-path "$goPackagePath" \
     --src-dir "$goPackageSrcDir" \
     --output "$out/$goPackagePath.a" \
-    --trim-path "$NIX_BUILD_TOP" \
-    @tagArg@ \
-    "${gcflagArgs[@]}" \
-    "${pgoArgs[@]}"
-
-  # Write importcfg entry for consumers of this package.
-  echo "packagefile $goPackagePath=$out/$goPackagePath.a" >"$out/importcfg"
+    --importcfg-output "$out/importcfg" \
+    --trim-path "$NIX_BUILD_TOP"
 
   runHook postBuild
 }
