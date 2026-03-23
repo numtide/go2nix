@@ -124,6 +124,29 @@ pkgs.writeShellApplication {
     RESULTS_DIR="''${BENCH_RESULTS_ROOT:-.bench-results}/benchmark-eval"
     mkdir -p "$RESULTS_DIR"
 
+    # --- Metadata ---
+    REVISION="unknown"
+    DIRTY="false"
+    if [ -n "''${BENCH_REPO_ROOT:-}" ] && [ -d "$BENCH_REPO_ROOT/.git" ]; then
+      REVISION=$(git -C "$BENCH_REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+      DIRTY=$(git -C "$BENCH_REPO_ROOT" diff --quiet 2>/dev/null && echo "false" || echo "true")
+    fi
+    cat > "$RESULTS_DIR/metadata.json" <<METAEOF
+    {
+      "name": "benchmark-eval",
+      "fixture": "torture-project/app-full",
+      "system": "${system}",
+      "nix_version": "$(nix --version 2>/dev/null || echo unknown)",
+      "go_version": "$(go version 2>/dev/null || echo unknown)",
+      "plugin_enabled": ${if hasPlugin then "true" else "false"},
+      "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+      "revision": "$REVISION",
+      "dirty": $DIRTY,
+      "warmup": $WARMUP,
+      "runs": $RUNS
+    }
+    METAEOF
+
     echo "=== Eval benchmark: go2nix DAG vs dynamic ==="
     echo "  GOMODCACHE=$GOMODCACHE"
     echo "  warmup: $WARMUP  runs: $RUNS"

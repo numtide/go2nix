@@ -147,14 +147,24 @@ pkgs.writeShellApplication {
     mkdir -p "$RESULTS_DIR"
 
     # --- Metadata ---
+    REVISION="unknown"
+    DIRTY="false"
+    if [ -n "''${BENCH_REPO_ROOT:-}" ] && [ -d "$BENCH_REPO_ROOT/.git" ]; then
+      REVISION=$(git -C "$BENCH_REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+      DIRTY=$(git -C "$BENCH_REPO_ROOT" diff --quiet 2>/dev/null && echo "false" || echo "true")
+    fi
     cat > "$RESULTS_DIR/metadata.json" <<METAEOF
     {
       "name": "benchmark-build",
+      "fixture": "torture-project/app-full",
       "system": "${system}",
       "nix_version": "$(nix --version 2>/dev/null || echo unknown)",
       "go_version": "$(go version 2>/dev/null || echo unknown)",
+      "plugin_enabled": ${if hasPlugin then "true" else "false"},
       "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-      "clean_runs": $CLEAN_RUNS,
+      "revision": "$REVISION",
+      "dirty": $DIRTY,
+      "evicted_runs": $CLEAN_RUNS,
       "cached_runs": $CACHED_RUNS,
       "src_change_runs": $SRC_CHANGE_RUNS
     }

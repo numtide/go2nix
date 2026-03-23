@@ -122,6 +122,27 @@ pkgs.writeShellApplication {
     RESULTS_DIR="''${BENCH_RESULTS_ROOT:-.bench-results}/benchmark-build-cross-app-isolation"
     mkdir -p "$RESULTS_DIR"
 
+    # --- Metadata ---
+    REVISION="unknown"
+    DIRTY="false"
+    if [ -n "''${BENCH_REPO_ROOT:-}" ] && [ -d "$BENCH_REPO_ROOT/.git" ]; then
+      REVISION=$(git -C "$BENCH_REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+      DIRTY=$(git -C "$BENCH_REPO_ROOT" diff --quiet 2>/dev/null && echo "false" || echo "true")
+    fi
+    cat > "$RESULTS_DIR/metadata.json" <<METAEOF
+    {
+      "name": "benchmark-build-cross-app-isolation",
+      "fixture": "torture-project (app-full + app-partial)",
+      "system": "${system}",
+      "nix_version": "$(nix --version 2>/dev/null || echo unknown)",
+      "go_version": "$(go version 2>/dev/null || echo unknown)",
+      "plugin_enabled": ${if hasPlugin then "true" else "false"},
+      "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+      "revision": "$REVISION",
+      "dirty": $DIRTY
+    }
+    METAEOF
+
     echo "=== DAG Mode: Cross-App Isolation Benchmark ==="
     echo "  GOMODCACHE=$GOMODCACHE"
     echo "  results:  $RESULTS_DIR"
@@ -135,12 +156,14 @@ pkgs.writeShellApplication {
     # shellcheck disable=SC2086
     hyperfine --runs 1 --style basic \
       --export-json "$RESULTS_DIR/initial-app-full.json" \
+      --export-markdown "$RESULTS_DIR/initial-app-full.md" \
       --command-name "app-full (initial)" \
       "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT ${dagExprFull} --no-out-link 2>&1"
 
     # shellcheck disable=SC2086
     hyperfine --runs 1 --style basic \
       --export-json "$RESULTS_DIR/initial-app-partial.json" \
+      --export-markdown "$RESULTS_DIR/initial-app-partial.md" \
       --command-name "app-partial (initial, shared deps cached)" \
       "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT ${dagExprPartial} --no-out-link 2>&1"
 
@@ -178,6 +201,7 @@ pkgs.writeShellApplication {
     # shellcheck disable=SC2086
     hyperfine --runs 1 --style basic \
       --export-json "$RESULTS_DIR/rebuild-app-full.json" \
+      --export-markdown "$RESULTS_DIR/rebuild-app-full.md" \
       --command-name "app-full (rebuild after mutation)" \
       "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT --arg srcPath $FIXTURE_COPY ${dagExprFull} --no-out-link 2>&1"
 
@@ -198,6 +222,7 @@ pkgs.writeShellApplication {
     # shellcheck disable=SC2086
     hyperfine --runs 1 --style basic \
       --export-json "$RESULTS_DIR/rebuild-app-partial.json" \
+      --export-markdown "$RESULTS_DIR/rebuild-app-partial.md" \
       --command-name "app-partial (rebuild after mutation)" \
       "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT --arg srcPath $FIXTURE_COPY ${dagExprPartial} --no-out-link 2>&1"
 
