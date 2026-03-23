@@ -388,7 +388,7 @@ func registerDerivationsParallel(
 	nix *nixdrv.NixTool,
 	sorted []*ResolvedPkg,
 	drvs []*nixdrv.Derivation,
-	graph map[string]*ResolvedPkg,
+	_ map[string]*ResolvedPkg,
 	concurrency int,
 ) error {
 	// Compute topo level for each package.
@@ -758,7 +758,7 @@ func buildFinalDrv(
 // Returns the .drv path and the Derivation for parallel registration.
 func buildLinkDrv(
 	cfg Config,
-	graph map[string]*ResolvedPkg,
+	_ map[string]*ResolvedPkg,
 	sorted []*ResolvedPkg,
 	mainPkg *ResolvedPkg,
 	numMains int,
