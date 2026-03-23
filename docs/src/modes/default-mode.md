@@ -72,9 +72,14 @@ stdenv.mkDerivation {
   env = {
     goPackagePath = importPath;
     goPackageSrcDir = srcDir;
+    compileManifestJSON = mkCompileManifestJSON deps;
   };
 }
 ```
+
+The compile manifest is a JSON string declaring importcfg parts, build tags,
+gcflags, and PGO profile. The shell hook writes it to a file and passes it
+to `go2nix compile-package --manifest`.
 
 CGO packages (where `pkg.isCgo` is true) automatically get `stdenv.cc` added
 to `nativeBuildInputs`.
@@ -102,12 +107,15 @@ fine-grained package caching.
 
 ### 7. Application derivation
 
-The final derivation consumes `depsImportcfg` (and `testDepsImportcfg` when
-checks are enabled) and uses `goAppHook` to:
+The final derivation receives typed JSON manifests via environment variables
+and uses `goAppHook` (link-go-binary.sh) to invoke the Go CLI:
 
-1. Validate lockfile consistency
-1. Link the final binary
-1. Run tests when `doCheck = true`
+1. **Build phase** — writes `linkManifestJSON` to a file and calls
+   `go2nix link-binary --manifest`, which validates the lockfile, generates
+   modinfo, compiles main packages, and invokes the linker.
+2. **Check phase** — writes `testManifestJSON` to a file and calls
+   `go2nix test-packages --manifest`, which discovers testable local packages,
+   compiles test archives, and runs them.
 
 ## Package overrides
 

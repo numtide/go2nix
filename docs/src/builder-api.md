@@ -20,7 +20,6 @@ goEnv.buildGoApplicationExperimental {
   src = ./.;
   goLock = ./go2nix.toml;
   pname = "my-app";
-  version = "0.1.0";
 }
 ```
 
@@ -29,12 +28,12 @@ Requires `nixPackage` to be set in `mkGoEnv` and Nix >= 2.34 with
 
 ## Required attributes
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `src` | path | Source tree. For monorepos with `modRoot`, this should be the repository root. |
-| `goLock` | path | Path to `go2nix.toml` lockfile. |
-| `pname` | string | Package name for the output derivation. |
-| `version` | string | Package version. |
+| Attribute | Type | Modes | Description |
+|-----------|------|-------|-------------|
+| `src` | path | both | Source tree. For monorepos with `modRoot`, this should be the repository root. |
+| `goLock` | path | both | Path to `go2nix.toml` lockfile. |
+| `pname` | string | both | Package name for the output derivation. |
+| `version` | string | default only | Package version. The experimental builder does not accept this attribute. |
 
 ## Optional attributes
 
