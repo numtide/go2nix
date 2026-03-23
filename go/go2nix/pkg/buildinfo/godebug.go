@@ -33,6 +33,7 @@ var godebugTable = []godebugEntry{
 	{Name: "cryptocustomrand", Changed: 26, Old: "1"},
 	{Name: "decoratemappings", Changed: 25, Old: "0"},
 	{Name: "gotestjsonbuildtext", Changed: 24, Old: "1"},
+	{Name: "gotypesalias", Changed: 23, Old: "0"},
 	{Name: "httpcookiemaxnum", Changed: 24, Old: "0"},
 	{Name: "httplaxcontentlength", Changed: 22, Old: "1"},
 	{Name: "httpmuxgo121", Changed: 22, Old: "1"},
