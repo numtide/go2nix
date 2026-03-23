@@ -117,13 +117,11 @@ func convertOutput(o *Output) (*gonixdrv.Output, error) {
 	gno := &gonixdrv.Output{}
 
 	// Determine the ATerm hashAlgorithm prefix from the method.
-	methodPrefix := ""
+	var methodPrefix string
 	switch o.Method {
 	case "nar":
 		methodPrefix = "r:"
-	case "flat":
-		methodPrefix = ""
-	case "text":
+	case "flat", "text":
 		methodPrefix = ""
 	case "":
 		// Input-addressed output (has path, no method)
