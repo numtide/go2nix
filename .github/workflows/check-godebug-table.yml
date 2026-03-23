@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Check GODEBUG table
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check-godebug-table:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go/go2nix/go.mod
+
+      - name: Check godebugTable matches upstream
+        run: go run .github/scripts/check-godebug-table.go
