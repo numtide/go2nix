@@ -87,7 +87,6 @@ goEnv.buildGoApplicationExperimental {
   src = ./.;
   goLock = ./go2nix.toml;
   pname = "my-app";
-  version = "0.1.0";
   packageOverrides = {
     "github.com/mattn/go-sqlite3" = {
       nativeBuildInputs = [ pkg-config sqlite ];
@@ -111,7 +110,6 @@ goEnv.buildGoApplicationExperimental {
   src = ./.;
   goLock = ./go2nix.toml;
   pname = "my-app";
-  version = "0.1.0";
   subPackages = [ "cmd/server" ];
   tags = [ "nethttpomithttp2" ];
   ldflags = [ "-s" "-w" ];

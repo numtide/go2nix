@@ -64,12 +64,13 @@ conflict since each is uniquely keyed by `"path@version"`.
 |------|------|-----------|-----|
 | Generation | MVS consistency | All modes | `go list -json -deps` resolves actual versions |
 | Nix eval | Package graph | Default only | `builtins.resolveGoPackages` runs `go list` at eval time |
-| Build time | Lockfile consistency | Both modes | `go2nix check --lockfile` validates against `go.mod` |
+| Build time | Lockfile consistency | Default only | `link-binary` validates lockfile against `go.mod` via `mvscheck.CheckLockfile` |
 
-In the default mode, missing or mismatched packages are caught at eval time
-when `builtins.resolveGoPackages` runs `go list`. In the experimental mode,
-they are caught at build time when `go list` runs inside the recursive-nix
-wrapper.
+In the default mode, missing or mismatched modules are caught at build time
+when `link-binary` validates the lockfile. Stale package graph information
+is caught at eval time when `builtins.resolveGoPackages` runs `go list`.
+In the experimental mode, module mismatches surface at build time when
+`go list` or module fetching fails inside the recursive-nix sandbox.
 
 Run `go2nix check <dir>` or `go2nix check --lockfile <path> <dir>` to verify
 a lockfile without building.

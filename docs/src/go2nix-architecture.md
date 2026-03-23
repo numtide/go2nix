@@ -141,7 +141,10 @@ Pure Nix utility functions:
 |------|------|-----------|-----|
 | Generation | MVS consistency | All modes | `go list -json -deps` resolves actual versions |
 | Nix eval | Package graph | Default only | `builtins.resolveGoPackages` runs `go list` at eval time |
-| Build time | Lockfile consistency | Both modes | `go2nix check --lockfile` validates against `go.mod` |
+| Build time | Lockfile consistency | Default only | `link-binary` validates lockfile against `go.mod` via `mvscheck.CheckLockfile` |
+
+The `go2nix check` subcommand can also be used standalone to verify a
+lockfile without building.
 
 ## Further reading
 

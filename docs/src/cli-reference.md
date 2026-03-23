@@ -127,7 +127,8 @@ mode Nix builder inside a recursive-nix build.
 ## build-modinfo
 
 Generate a `modinfo` linker directive for embedding `debug/buildinfo`
-metadata into the final binary. Used internally by the link hook.
+metadata into the final binary. This is a standalone utility; the default
+mode's `link-binary` command generates modinfo internally.
 
 ```
 go2nix build-modinfo [flags] <module-root>
