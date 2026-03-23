@@ -16,7 +16,7 @@ func runModinfoCmd(args []string) {
 	fs := flag.NewFlagSet("build-modinfo", flag.ExitOnError)
 	lockfilePath := fs.String("lockfile", "", "path to go2nix.toml lockfile")
 	goBin := fs.String("go", "", "path to go binary (default: from PATH)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	moduleRoot := fs.Arg(0)
 	if moduleRoot == "" || *lockfilePath == "" {

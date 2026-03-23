@@ -132,7 +132,7 @@ func MergeImportcfg(parts []string, tmpDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("creating merged importcfg: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	w := bufio.NewWriter(f)
 	for _, part := range parts {
@@ -144,15 +144,17 @@ func MergeImportcfg(parts []string, tmpDir string) (string, error) {
 		for scanner.Scan() {
 			line := scanner.Text()
 			if strings.HasPrefix(line, "packagefile ") || strings.HasPrefix(line, "importmap ") {
-				w.WriteString(line)
-				w.WriteByte('\n')
+				_, _ = w.WriteString(line)
+				_ = w.WriteByte('\n')
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			pf.Close()
+			_ = pf.Close()
 			return "", fmt.Errorf("reading importcfg part %s: %w", part, err)
 		}
-		pf.Close()
+		if err := pf.Close(); err != nil {
+			return "", fmt.Errorf("closing importcfg part %s: %w", part, err)
+		}
 	}
 
 	if err := w.Flush(); err != nil {

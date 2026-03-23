@@ -130,7 +130,7 @@ func removeReadOnly(dir string) {
 	// Go module cache dirs are read-only; chmod before removal.
 	// Errors are logged rather than returned since this is called
 	// via defer and cleanup failure is non-fatal.
-	filepath.WalkDir(dir, func(path string, _ fs.DirEntry, walkErr error) error {
+	if err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -138,7 +138,9 @@ func removeReadOnly(dir string) {
 			slog.Debug("chmod failed during cleanup", "path", path, "err", err)
 		}
 		return nil
-	})
+	}); err != nil {
+		slog.Debug("walkdir failed during cleanup", "dir", dir, "err", err)
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		slog.Warn("failed to remove temp dir", "dir", dir, "err", err)
 	}

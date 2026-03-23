@@ -159,7 +159,7 @@ func Resolve(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("setting up GOMODCACHE: %w", err)
 	}
-	defer os.RemoveAll(gomodcache)
+	defer os.RemoveAll(gomodcache) //nolint:errcheck
 	slog.Info("GOMODCACHE set up", "elapsed", time.Since(t))
 
 	// Step 5: Discover packages
@@ -468,7 +468,7 @@ func setupGOMODCACHE(fodPaths map[string]*storepath.StorePath) (string, error) {
 		})
 	}
 	if err := g.Wait(); err != nil {
-		os.RemoveAll(gomodcache)
+		_ = os.RemoveAll(gomodcache)
 		return "", fmt.Errorf("merging FODs: %w", err)
 	}
 	return gomodcache, nil
@@ -639,7 +639,7 @@ func setupPkgSource(
 		if err != nil {
 			return fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
 		}
-		defer os.RemoveAll(filteredDir)
+		defer os.RemoveAll(filteredDir) //nolint:errcheck
 
 		name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
 		pkgStorePath, err := nix.StoreAdd(name, filteredDir)
@@ -1112,7 +1112,7 @@ func createFilteredPkgDir(pkgDir string, pkg *ResolvedPkg) (string, error) {
 	// Copy source files (basenames).
 	for _, f := range files {
 		if err := linkOrCopyFile(filepath.Join(pkgDir, f), filepath.Join(tmpDir, f)); err != nil {
-			os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpDir)
 			return "", fmt.Errorf("copying %s: %w", f, err)
 		}
 	}
@@ -1121,11 +1121,11 @@ func createFilteredPkgDir(pkgDir string, pkg *ResolvedPkg) (string, error) {
 	for _, f := range pkg.EmbedFiles {
 		dst := filepath.Join(tmpDir, f)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpDir)
 			return "", fmt.Errorf("creating dir for embed file %s: %w", f, err)
 		}
 		if err := linkOrCopyFile(filepath.Join(pkgDir, f), dst); err != nil {
-			os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpDir)
 			return "", fmt.Errorf("copying embed file %s: %w", f, err)
 		}
 	}
