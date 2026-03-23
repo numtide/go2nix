@@ -455,6 +455,29 @@ let
     "checkFlags"
   ];
 
+  # Test manifest: only materialized when doCheck = true.
+  # Selects testDepsImportcfg when test-only deps exist, depsImportcfg otherwise.
+  hasTestDeps = doCheck
+    && goPackagesResult ? testPackages
+    && goPackagesResult.testPackages != { };
+
+  testManifestJSON = lib.optionalString doCheck (builtins.toJSON {
+    version = 1;
+    kind = "test";
+    importcfgParts =
+      if hasTestDeps
+      then [ "${testDepsImportcfg}/importcfg" ]
+      else [ "${depsImportcfg}/importcfg" ];
+    localArchives = builtins.mapAttrs (
+      importPath: pkg: "${pkg}/${importPath}.a"
+    ) localPackages;
+    moduleRoot = moduleRoot;
+    inherit tags;
+    gcflags =
+      if buildMode == "pie" then [ "-shared" ] ++ gcflags else gcflags;
+    checkFlags = checkFlags;
+  });
+
 in
 stdenv.mkDerivation (
   extraArgs
@@ -501,17 +524,6 @@ stdenv.mkDerivation (
     }
     // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { })
     // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
-    // (if checkFlags != [] then { goCheckFlags = concatStringsSep " " checkFlags; } else { });
+    // (if doCheck then { inherit testManifestJSON; } else { });
   }
-  # Local package archives for checkPhase: structured attr becomes a bash
-  # associative array mapping import path -> store path of compiled .a file.
-  # Only included when doCheck is true to preserve the O(1) input-validation
-  # optimization from depsImportcfg — without this guard, every local package
-  # store path would be a direct dependency of the final derivation via string
-  # context, reintroducing the O(N) fan-in that the bundle was designed to avoid.
-  // (if doCheck then {
-    goLocalArchives = builtins.mapAttrs (
-      importPath: pkg: "${pkg}/${importPath}.a"
-    ) localPackages;
-  } else { })
 )

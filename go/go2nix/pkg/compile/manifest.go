@@ -47,6 +47,40 @@ func LoadCompileManifest(path string) (*CompileManifest, error) {
 	return &m, nil
 }
 
+// ManifestKindTest is the kind value for test manifests.
+const ManifestKindTest = "test"
+
+// TestManifest is the JSON contract between Nix and go2nix test-packages.
+type TestManifest struct {
+	Version        int               `json:"version"`
+	Kind           string            `json:"kind"`
+	ImportcfgParts []string          `json:"importcfgParts"`
+	LocalArchives  map[string]string `json:"localArchives"`
+	ModuleRoot     string            `json:"moduleRoot"`
+	Tags           []string          `json:"tags"`
+	GCFlags        []string          `json:"gcflags"`
+	CheckFlags     []string          `json:"checkFlags"`
+}
+
+// LoadTestManifest reads and validates a test manifest from path.
+func LoadTestManifest(path string) (*TestManifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading test manifest: %w", err)
+	}
+	var m TestManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parsing test manifest: %w", err)
+	}
+	if m.Version != ManifestVersion {
+		return nil, fmt.Errorf("test manifest: unsupported version %d (expected %d)", m.Version, ManifestVersion)
+	}
+	if m.Kind != ManifestKindTest {
+		return nil, fmt.Errorf("test manifest: wrong kind %q (expected %q)", m.Kind, ManifestKindTest)
+	}
+	return &m, nil
+}
+
 // MergeImportcfg merges multiple importcfg files into a single file.
 // Each input file is read line by line; lines starting with "packagefile "
 // or "importmap " are included. Blank lines and comments are skipped.
