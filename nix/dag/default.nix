@@ -54,6 +54,8 @@
 let
   inherit (builtins) concatStringsSep;
 
+  normalizedSubPackages = helpers.normalizeSubPackages subPackages;
+
   # --- Module resolution from lockfile (pure-Nix TOML parsing) ---
   lockfile = builtins.fromTOML (builtins.readFile goLock);
   modTable = lockfile.mod or { };
@@ -87,10 +89,10 @@ let
       inherit
         src
         tags
-        subPackages
         modRoot
         doCheck
         ;
+      subPackages = normalizedSubPackages;
     }
     // (if goProxy != null then { inherit goProxy; } else { })
   );
@@ -383,7 +385,7 @@ let
       subPkgDirs = map (sp:
         let clean = lib.removePrefix "./" sp;
         in if modRoot == "." then clean else "${modRoot}/${clean}"
-      ) subPackages;
+      ) normalizedSubPackages;
       # Include modRoot for go.mod access.
       allowedDirs = [ modRoot ] ++ subPkgDirs;
       # When modRoot is "." or any subPackage resolves to ".", the entire
@@ -469,7 +471,7 @@ stdenv.mkDerivation (
 
     env = {
       goModuleRoot = moduleRoot;
-      goSubPackages = concatStringsSep " " subPackages;
+      goSubPackages = concatStringsSep " " normalizedSubPackages;
       goLdflags = ldflagsStr;
       goGcflags = gcflagsStr;
       goLockfile = "${builtins.path { path = goLock; name = "go2nix-lockfile"; }}";

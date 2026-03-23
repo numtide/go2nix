@@ -25,6 +25,7 @@
   cacert,
   netrcFile,
   stdlib,
+  helpers,
 }:
 
 {
@@ -55,6 +56,8 @@ assert
   lib.assertMsg (lib.versionAtLeast "${major}.${minor}" "2.34") "go2nix dynamic mode requires Nix >= 2.34 (v4 derivation JSON format), got ${nixPackage.version}";
 
 let
+  normalizedSubPackages = helpers.normalizeSubPackages subPackages;
+
   # Validate packageOverrides: experimental mode only supports nativeBuildInputs.
   # Derivations are synthesized at build time by `go2nix resolve`, so env and
   # other attrs cannot be forwarded. Fail early instead of silently dropping.
@@ -135,7 +138,7 @@ let
         --bash ${bash}/bin/bash \
         --coreutils ${coreutils}/bin/mkdir \
         --pname ${lib.escapeShellArg pname} \
-        --sub-packages ${lib.escapeShellArg (lib.concatStringsSep "," subPackages)} \
+        --sub-packages ${lib.escapeShellArg (lib.concatStringsSep "," normalizedSubPackages)} \
         --tags ${lib.escapeShellArg (lib.concatStringsSep "," tags)} \
         --ldflags ${lib.escapeShellArg (lib.concatStringsSep " " ldflags)} \
         --overrides ${lib.escapeShellArg overridesJSON} \
