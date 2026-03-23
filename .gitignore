@@ -7,3 +7,10 @@ result
 
 # Rust
 rust/target/
+
+# Local docs
+docs/plans/
+
+# Benchmark results
+.bench-results/
+
