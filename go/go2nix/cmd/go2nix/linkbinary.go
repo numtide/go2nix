@@ -244,11 +244,7 @@ func linkBinary(manifestPath, output string) error {
 			"-buildmode=" + buildMode,
 			"-importcfg", linkCfg,
 		}
-		// Each ldflag element may contain spaces (e.g. "-X main.Version=1.6")
-		// that need splitting into separate args for the linker binary.
-		for _, ldf := range m.LDFlags {
-			linkArgs = append(linkArgs, strings.Fields(ldf)...)
-		}
+		linkArgs = append(linkArgs, expandLDFlags(m.LDFlags)...)
 		linkArgs = append(linkArgs, linkFlags...)
 		linkArgs = append(linkArgs, "-o", filepath.Join(binDir, binname))
 		linkArgs = append(linkArgs, mainArchive)
@@ -290,5 +286,17 @@ func goToolchainVersion() (string, error) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// expandLDFlags splits each ldflag element by whitespace into separate args.
+// Nix users write ldflags like ["-X main.Version=1.6"] (one string with a
+// space). When invoking the linker directly (not via `go build`), each token
+// must be a separate exec arg.
+func expandLDFlags(flags []string) []string {
+	var out []string
+	for _, f := range flags {
+		out = append(out, strings.Fields(f)...)
+	}
+	return out
 }
 
