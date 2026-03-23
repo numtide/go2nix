@@ -40,9 +40,11 @@ func main() {
 		runGenTestMainCmd(os.Args[2:])
 	case "test-packages":
 		runTestPackagesCmd(os.Args[2:])
+	case "link-binary":
+		runLinkBinaryCmd(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
-		fmt.Fprintf(os.Stderr, "usage: go2nix <generate|list-files|list-packages|compile-package|compile-packages|check|resolve|build-modinfo|generate-test-main|test-packages> [flags]\n")
+		fmt.Fprintf(os.Stderr, "usage: go2nix <generate|list-files|list-packages|compile-package|compile-packages|check|resolve|build-modinfo|generate-test-main|test-packages|link-binary> [flags]\n")
 		os.Exit(1)
 	}
 }

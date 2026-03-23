@@ -2,32 +2,13 @@
 #
 # Two composite hooks:
 #   goModuleHook  — compile a third-party Go package
-#   goAppHook     — compile local packages and link a binary
+#   goAppHook     — link a binary via go2nix link-binary
 {
   go,
   go2nix,
-  stdlib,
-  stdenv,
   makeSetupHook,
-  tagFlag,
 }:
 let
-  tagArg = if tagFlag == "" then "" else "--tags ${tagFlag}";
-  goos = stdenv.hostPlatform.go.GOOS;
-  # Match Go's internal/platform.DefaultPIE: PIE for darwin, windows, android, ios.
-  buildMode =
-    if
-      builtins.elem goos [
-        "darwin"
-        "windows"
-        "android"
-        "ios"
-      ]
-    then
-      "pie"
-    else
-      "exe";
-
   setupGoEnv = makeSetupHook {
     name = "go2nix-setup-go-env";
   } ./setup-go-env.sh;
@@ -37,9 +18,9 @@ in
 
   # Hook for compiling third-party Go packages.
   # Derivations using this hook must set:
-  #   env.goPackagePath   — import path
-  #   env.goPackageSrcDir — source directory
-  #   buildInputs         — dependency package derivations
+  #   env.goPackagePath        — import path
+  #   env.goPackageSrcDir      — source directory
+  #   env.compileManifestJSON  — compile manifest content (JSON string)
   goModuleHook = makeSetupHook {
     name = "go2nix-module-hook";
     propagatedBuildInputs = [
@@ -53,15 +34,8 @@ in
 
   # Hook for building and linking Go application binaries.
   # Derivations using this hook must set:
-  #   env.goModuleRoot  — path containing go.mod
-  #   env.goSubPackages — space-separated sub-packages (default: ".")
-  #   env.goLockfile    — path to go2nix.toml lockfile
-  #   env.goLdflags     — linker flags (optional)
-  #   env.goGcflags     — compiler flags (optional)
-  #   env.goPname       — binary name for "." package (optional)
-  #   buildInputs       — all third-party package derivations
-  #
-  # Note: goModulePath is extracted from go.mod at build time (see link-go-binary.sh).
+  #   env.linkManifestJSON — link manifest content (JSON string)
+  #   env.testManifestJSON — test manifest content (optional, when doCheck=true)
   goAppHook = makeSetupHook {
     name = "go2nix-app-hook";
     propagatedBuildInputs = [
@@ -69,10 +43,7 @@ in
       setupGoEnv
     ];
     substitutions = {
-      go = "${go}/bin/go";
       go2nix = "${go2nix}/bin/go2nix";
-      stdlib = "${stdlib}";
-      inherit tagArg buildMode;
     };
   } ./link-go-binary.sh;
 }

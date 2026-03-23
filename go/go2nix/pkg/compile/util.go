@@ -30,8 +30,8 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// goEnvVar queries a single Go env variable, checking os.Getenv first.
-func goEnvVar(key string) string {
+// GoEnvVar queries a single Go env variable, checking os.Getenv first.
+func GoEnvVar(key string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
@@ -51,10 +51,13 @@ func goRoot() (string, error) {
 }
 
 func goEnv() (goos, goarch string) {
-	return goEnvVar("GOOS"), goEnvVar("GOARCH")
+	return GoEnvVar("GOOS"), GoEnvVar("GOARCH")
 }
 
 func extraGCFlags(opts Options) []string {
+	if len(opts.GCFlagsList) > 0 {
+		return opts.GCFlagsList
+	}
 	if opts.GCFlags == "" {
 		return nil
 	}
@@ -67,17 +70,17 @@ func asmArchDefines(goarch string) []string {
 	var defs []string
 	switch goarch {
 	case "386":
-		v := goEnvVar("GO386")
+		v := GoEnvVar("GO386")
 		if v != "" {
 			defs = append(defs, "-D", "GO386_"+v)
 		}
 	case "amd64":
-		v := goEnvVar("GOAMD64")
+		v := GoEnvVar("GOAMD64")
 		if v != "" {
 			defs = append(defs, "-D", "GOAMD64_"+v)
 		}
 	case "arm":
-		v := goEnvVar("GOARM")
+		v := GoEnvVar("GOARM")
 		switch {
 		case strings.Contains(v, "7"):
 			defs = append(defs, "-D", "GOARM_7")
@@ -89,22 +92,22 @@ func asmArchDefines(goarch string) []string {
 			defs = append(defs, "-D", "GOARM_5")
 		}
 	case "arm64":
-		v := goEnvVar("GOARM64")
+		v := GoEnvVar("GOARM64")
 		if strings.Contains(v, "lse") {
 			defs = append(defs, "-D", "GOARM64_LSE")
 		}
 	case "mips", "mipsle":
-		v := goEnvVar("GOMIPS")
+		v := GoEnvVar("GOMIPS")
 		if v != "" {
 			defs = append(defs, "-D", "GOMIPS_"+v)
 		}
 	case "mips64", "mips64le":
-		v := goEnvVar("GOMIPS64")
+		v := GoEnvVar("GOMIPS64")
 		if v != "" {
 			defs = append(defs, "-D", "GOMIPS64_"+v)
 		}
 	case "ppc64", "ppc64le":
-		v := goEnvVar("GOPPC64")
+		v := GoEnvVar("GOPPC64")
 		switch v {
 		case "power10":
 			defs = append(defs, "-D", "GOPPC64_power10")
@@ -116,7 +119,7 @@ func asmArchDefines(goarch string) []string {
 			defs = append(defs, "-D", "GOPPC64_power8")
 		}
 	case "riscv64":
-		v := goEnvVar("GORISCV64")
+		v := GoEnvVar("GORISCV64")
 		if v != "" {
 			defs = append(defs, "-D", "GORISCV64_"+v)
 		}

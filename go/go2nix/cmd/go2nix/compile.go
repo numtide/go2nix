@@ -58,16 +58,16 @@ func runCompilePackageCmd(args []string) {
 		}
 
 		opts = compile.Options{
-			ImportPath: *importPath,
-			PFlag:      *pFlag,
-			SrcDir:     *srcDir,
-			Output:     *output,
-			ImportCfg:  mergedCfg,
-			TrimPath:   *trimPath,
-			Tags:       strings.Join(m.Tags, ","),
-			GCFlags:    strings.Join(m.GCFlags, " "),
-			GoVersion:  *goVersion,
-			PGOProfile: pgo,
+			ImportPath:  *importPath,
+			PFlag:       *pFlag,
+			SrcDir:      *srcDir,
+			Output:      *output,
+			ImportCfg:   mergedCfg,
+			TrimPath:    *trimPath,
+			Tags:        strings.Join(m.Tags, ","),
+			GCFlagsList: m.GCFlags,
+			GoVersion:   *goVersion,
+			PGOProfile:  pgo,
 		}
 	} else {
 		// Legacy mode: flags are authoritative.

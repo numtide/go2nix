@@ -461,6 +461,25 @@ let
     && goPackagesResult ? testPackages
     && goPackagesResult.testPackages != { };
 
+  linkManifestJSON = builtins.toJSON {
+    version = 1;
+    kind = "link";
+    importcfgParts = [ "${depsImportcfg}/importcfg" ];
+    localArchives = builtins.mapAttrs (
+      importPath: pkg: "${pkg}/${importPath}.a"
+    ) localPackages;
+    subPackages = normalizedSubPackages;
+    moduleRoot = moduleRoot;
+    lockfile = "${builtins.path { path = goLock; name = "go2nix-lockfile"; }}";
+    pname = pname;
+    goos = stdenv.hostPlatform.go.GOOS or null;
+    goarch = stdenv.hostPlatform.go.GOARCH or null;
+    ldflags = ldflags;
+    inherit tags;
+    gcflags = gcflags;
+    pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
+  };
+
   testManifestJSON = lib.optionalString doCheck (builtins.toJSON {
     version = 1;
     kind = "test";
@@ -515,15 +534,9 @@ stdenv.mkDerivation (
     };
 
     env = {
-      goModuleRoot = moduleRoot;
-      goSubPackages = concatStringsSep " " normalizedSubPackages;
-      goLdflags = ldflagsStr;
-      goGcflags = gcflagsStr;
-      goLockfile = "${builtins.path { path = goLock; name = "go2nix-lockfile"; }}";
-      goPname = pname;
+      inherit linkManifestJSON;
     }
     // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { })
-    // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
     // (if doCheck then { inherit testManifestJSON; } else { });
   }
 )
