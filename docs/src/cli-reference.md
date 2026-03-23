@@ -143,3 +143,61 @@ go2nix resolve [flags]
 
 This command is not intended for direct use — it is invoked by the dynamic
 mode Nix builder inside a recursive-nix build.
+
+## build-modinfo
+
+Generate a `modinfo` linker directive for embedding `debug/buildinfo`
+metadata into the final binary. Used internally by the link hook.
+
+```
+go2nix build-modinfo [flags] <module-root>
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--lockfile` | Yes | Path to go2nix.toml lockfile |
+| `--go` | No | Path to go binary (default: from PATH) |
+
+Outputs a `modinfo` directive for the linker's importcfg (embedding
+`debug/buildinfo` metadata), and optionally a `godebug` line with the
+default GODEBUG value parsed from the module's `go.mod` (used for
+`-X=runtime.godebugDefault=...`).
+
+## generate-test-main
+
+Generate a `_testmain.go` file that registers test, benchmark, fuzz, and
+example functions. Used internally by the test runner.
+
+```
+go2nix generate-test-main [flags]
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--import-path` | Yes | Import path of the package under test |
+| `--test-files` | No | Comma-separated absolute paths to internal `_test.go` files |
+| `--xtest-files` | No | Comma-separated absolute paths to external `_test.go` files |
+| `--output` | No | Output file path (default: stdout) |
+
+## test-packages
+
+Compile and run tests for all testable local packages in a module. Used
+internally by the default mode's check phase.
+
+```
+go2nix test-packages [flags] <module-root>
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--import-cfg` | Yes | Path to importcfg file (from build phase) |
+| `--local-dir` | Yes | Directory with compiled local `.a` files |
+| `--tags` | No | Comma-separated build tags |
+| `--gc-flags` | No | Extra flags for `go tool compile` |
+| `--trim-path` | No | Path prefix to trim |
+| `--check-flags` | No | Flags passed to the test binary (e.g., `-v -count=1`) |
+
+Discovers local packages with `_test.go` files, compiles internal and
+external test archives, generates test mains, links test binaries, and
+runs them. See [test-support.md](test-support.md) for details on the
+test pipeline.
