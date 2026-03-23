@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/numtide/go2nix/internal/gonix/storepath"
+	"github.com/nix-community/go-nix/pkg/storepath"
 )
 
 // NixTool wraps the nix CLI for derivation operations.

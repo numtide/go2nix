@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/numtide/go2nix/internal/gonix/storepath"
+	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/toposort"
 )
