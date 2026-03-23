@@ -73,6 +73,16 @@
           go2nix-testgen = callPkgWith ./packages/go2nix-testgen/default.nix {
             inherit flake system;
           };
+
+          benchmark-build = callPkgWith ./packages/benchmark-build/default.nix {
+            inherit flake system;
+          };
+          benchmark-build-cross-app-isolation = callPkgWith ./packages/benchmark-build-cross-app-isolation/default.nix {
+            inherit flake system;
+          };
+          benchmark-eval = callPkgWith ./packages/benchmark-eval/default.nix {
+            inherit flake system;
+          };
         }
       );
 
