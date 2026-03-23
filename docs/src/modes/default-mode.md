@@ -27,11 +27,11 @@ import relationships change (only when modules are added or removed).
 
 ## Nix evaluation flow
 
-### 1. Module resolution (builtins.resolveGoModules)
+### 1. Lockfile parsing (builtins.fromTOML)
 
-Parses the TOML lockfile and returns `{ modules }`:
-
-- **modules**: Per-module metadata (path, version, hash, dirSuffix, fetchPath)
+The lockfile is parsed at eval time with `builtins.fromTOML`. Module metadata
+(path, version, hash) is read from the `[mod]` section, with `[replace]`
+entries applied to module fetch paths.
 
 ### 2. Package graph discovery (builtins.resolveGoPackages)
 
