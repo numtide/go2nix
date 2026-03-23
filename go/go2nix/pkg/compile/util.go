@@ -58,10 +58,7 @@ func extraGCFlags(opts Options) []string {
 	if len(opts.GCFlagsList) > 0 {
 		return opts.GCFlagsList
 	}
-	if opts.GCFlags == "" {
-		return nil
-	}
-	return strings.Fields(opts.GCFlags)
+	return nil
 }
 
 // asmArchDefines returns architecture-specific -D flags for go tool asm,

@@ -1,6 +1,5 @@
 // Package testrunner compiles and runs tests for local Go packages.
-// It is invoked during the checkPhase of default mode builds, after
-// compile-packages has already built all library archives.
+// It is invoked during the checkPhase of default mode builds.
 package testrunner
 
 import (
@@ -26,26 +25,12 @@ type Options struct {
 	LocalDir       string   // directory with compiled local .a files
 	TrimPath       string   // path prefix to trim
 	Tags           string   // comma-separated build tags
-	GCFlags        string   // extra compiler flags (space-separated, legacy)
-	GCFlagsList    []string // extra compiler flags (pre-split, preferred over GCFlags)
-	CheckFlags     string   // flags to pass to test binaries (space-separated, legacy)
-	CheckFlagsList []string // flags to pass to test binaries (pre-split, preferred over CheckFlags)
+	GCFlagsList    []string // extra compiler flags
+	CheckFlagsList []string // flags to pass to test binaries
 }
 
-// gcFlags returns the effective GC flags, preferring the pre-split list.
-func (o Options) gcFlags() (string, []string) {
-	return o.GCFlags, o.GCFlagsList
-}
-
-// checkFlagsArgs returns the effective check flags as a slice.
 func (o Options) checkFlagsArgs() []string {
-	if len(o.CheckFlagsList) > 0 {
-		return o.CheckFlagsList
-	}
-	if o.CheckFlags != "" {
-		return strings.Fields(o.CheckFlags)
-	}
-	return nil
+	return o.CheckFlagsList
 }
 
 // Run discovers testable packages and runs their tests.
@@ -231,7 +216,6 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			ImportCfg:  testImportCfg,
 			TrimPath:   opts.TrimPath,
 			Tags:       opts.Tags,
-			GCFlags:     opts.GCFlags,
 			GCFlagsList: opts.GCFlagsList,
 			GoFiles:    goFiles,
 			EmbedCfg:   mergedEmbedCfg,
@@ -286,8 +270,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 				ImportCfg:  testImportCfg,
 				TrimPath:   opts.TrimPath,
 				Tags:       opts.Tags,
-				GCFlags:     opts.GCFlags,
-			GCFlagsList: opts.GCFlagsList,
+				GCFlagsList: opts.GCFlagsList,
 			}); err != nil {
 				return fmt.Errorf("recompiling %s for test: %w", depIP, err)
 			}
@@ -332,7 +315,6 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			ImportCfg:  testImportCfg,
 			TrimPath:   opts.TrimPath,
 			Tags:       opts.Tags,
-			GCFlags:     opts.GCFlags,
 			GCFlagsList: opts.GCFlagsList,
 			GoFiles:    pkg.XTestGoFiles,
 			EmbedCfg:   pkg.XTestEmbedCfg,
@@ -385,7 +367,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		ImportCfg:  testImportCfg,
 		TrimPath:   opts.TrimPath,
 		Tags:       opts.Tags,
-		GCFlags:    opts.GCFlags,
+		GCFlagsList: opts.GCFlagsList,
 		GoFiles:    []string{"_testmain.go"},
 	}); err != nil {
 		return fmt.Errorf("compiling test main: %w", err)

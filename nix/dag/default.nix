@@ -52,8 +52,6 @@
 }@args:
 
 let
-  inherit (builtins) concatStringsSep;
-
   normalizedSubPackages = helpers.normalizeSubPackages subPackages;
 
   # Build the compile manifest JSON string for a per-package derivation.
@@ -430,8 +428,6 @@ let
     };
 
   moduleRoot = if modRoot == "." then "${mainSrc}" else "${mainSrc}/${modRoot}";
-  ldflagsStr = concatStringsSep " " ldflags;
-  gcflagsStr = concatStringsSep " " gcflags;
 
   # Filter out known args so extra attrs pass through to mkDerivation.
   extraArgs = builtins.removeAttrs args [

@@ -51,39 +51,19 @@ Compile a single Go package to an archive (`.a` file). Used internally by
 the default mode's setup hooks.
 
 ```
-go2nix compile-package [flags]
+go2nix compile-package --manifest FILE --import-path PATH --src-dir DIR --output FILE [flags]
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
+| `--manifest` | Yes | Path to compile-manifest.json |
 | `--import-path` | Yes | Go import path for the package |
 | `--src-dir` | Yes | Directory containing source files |
 | `--output` | Yes | Output `.a` archive path |
-| `--import-cfg` | Yes | Path to importcfg file |
-| `--tags` | No | Comma-separated build tags |
-| `--gc-flags` | No | Extra flags for `go tool compile` |
+| `--importcfg-output` | No | Write importcfg entry for consumers to this path |
 | `--trim-path` | No | Path prefix to trim |
 | `--p` | No | Override `-p` flag (default: import-path) |
 | `--go-version` | No | Go language version for `-lang` |
-| `--pgo-profile` | No | Path to pprof CPU profile for PGO |
-
-## compile-packages
-
-Compile all local (non-third-party) packages in a module. Discovers the
-package dependency graph and compiles in topological order.
-
-```
-go2nix compile-packages [flags] <module-root>
-```
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--import-cfg` | Yes | Path to importcfg file (appended to) |
-| `--out-dir` | Yes | Output directory for `.a` files |
-| `--tags` | No | Comma-separated build tags |
-| `--gc-flags` | No | Extra flags for `go tool compile` |
-| `--trim-path` | No | Path prefix to trim |
-| `--pgo-profile` | No | Path to pprof CPU profile for PGO |
 
 ## list-files
 
@@ -185,19 +165,30 @@ Compile and run tests for all testable local packages in a module. Used
 internally by the default mode's check phase.
 
 ```
-go2nix test-packages [flags] <module-root>
+go2nix test-packages --manifest FILE
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--import-cfg` | Yes | Path to importcfg file (from build phase) |
-| `--local-dir` | Yes | Directory with compiled local `.a` files |
-| `--tags` | No | Comma-separated build tags |
-| `--gc-flags` | No | Extra flags for `go tool compile` |
-| `--trim-path` | No | Path prefix to trim |
-| `--check-flags` | No | Flags passed to the test binary (e.g., `-v -count=1`) |
+| `--manifest` | Yes | Path to test-manifest.json |
 
 Discovers local packages with `_test.go` files, compiles internal and
 external test archives, generates test mains, links test binaries, and
 runs them. See [test-support.md](test-support.md) for details on the
 test pipeline.
+
+## link-binary
+
+Link Go application binaries. Reads a link manifest that declares all
+inputs (importcfg parts, local archives, ldflags, etc.), validates the
+lockfile, generates modinfo, compiles main packages, and invokes the
+linker. Used internally by the default mode's build phase.
+
+```
+go2nix link-binary --manifest FILE --output DIR
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--manifest` | Yes | Path to link-manifest.json |
+| `--output` | Yes | Output directory (binaries written to `<output>/bin/`) |
