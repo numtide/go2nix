@@ -177,10 +177,10 @@ func ResolveEmbedCfg(dir string, patterns []string) (*EmbedCfg, error) {
 						return err
 					}
 					relPath, err := filepath.Rel(dir, path)
-				if err != nil {
-					return fmt.Errorf("computing relative path for %s: %w", path, err)
-				}
-				rel := filepath.ToSlash(relPath)
+					if err != nil {
+						return fmt.Errorf("computing relative path for %s: %w", path, err)
+					}
+					rel := filepath.ToSlash(relPath)
 					name := d.Name()
 
 					if path != file && (isBadEmbedName(name) || ((name[0] == '.' || name[0] == '_') && !all)) {
@@ -299,7 +299,6 @@ func isBadEmbedName(name string) bool {
 	}
 	return false
 }
-
 
 func nonNil(s []string) []string {
 	if s == nil {

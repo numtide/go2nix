@@ -299,4 +299,3 @@ func expandLDFlags(flags []string) []string {
 	}
 	return out
 }
-

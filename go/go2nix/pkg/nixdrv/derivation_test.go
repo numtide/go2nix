@@ -138,7 +138,7 @@ func TestDerivationSortedKeys(t *testing.T) {
 	if aIdx == -1 || mIdx == -1 || zIdx == -1 {
 		t.Fatalf("missing env keys in JSON: %s", s)
 	}
-	if !(aIdx < mIdx && mIdx < zIdx) {
+	if aIdx >= mIdx || mIdx >= zIdx {
 		t.Errorf("env keys not sorted: AAA@%d, MMM@%d, ZZZ@%d", aIdx, mIdx, zIdx)
 	}
 }
