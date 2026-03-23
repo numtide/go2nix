@@ -195,51 +195,11 @@ linkGoBinaryInstallPhase() {
 linkGoBinaryCheckPhase() {
   runHook preCheck
 
-  # Reconstruct local-pkgs directory from goLocalArchives (structured attr).
-  # Each local package derivation produces ${pkg}/${importPath}.a; we symlink
-  # them into the flat directory layout that test-packages --local-dir expects.
-  local localdir="$NIX_BUILD_TOP/local-pkgs"
-  mkdir -p "$localdir"
-  for importPath in "${!goLocalArchives[@]}"; do
-    mkdir -p "$localdir/$(dirname "$importPath")"
-    ln -s "${goLocalArchives[$importPath]}" "$localdir/$importPath.a"
-  done
-
-  # Locate the test importcfg bundle. buildInputs contains depsImportcfg and
-  # (when doCheck with test-only deps) testDepsImportcfg. testDepsImportcfg is
-  # a strict superset, so we want the last importcfg found. If there's only
-  # depsImportcfg (no test-only deps), it's used as-is — still correct since
-  # it already contains all build + local packages.
-  local test_importcfg=""
-  for dep in "${buildInputs[@]}"; do
-    if [ -f "$dep/importcfg" ]; then
-      test_importcfg="$dep/importcfg"
-    fi
-  done
-  if [ -z "$test_importcfg" ]; then
-    echo "go2nix: no importcfg bundle found in buildInputs for check phase" >&2
-    exit 1
-  fi
-
-  # Build gcflags for test compilation, matching the build phase logic.
-  local test_gcflags="${goGcflags:-}"
-  local go_buildmode="@buildMode@"
-  if [ "$go_buildmode" = "pie" ]; then
-    test_gcflags="-shared${test_gcflags:+ $test_gcflags}"
-  fi
-  local -a testGcflagArgs=()
-  if [ -n "$test_gcflags" ]; then
-    testGcflagArgs=(--gc-flags "$test_gcflags")
-  fi
+  # Write test manifest JSON to a file for go2nix to read.
+  echo "$testManifestJSON" > "$NIX_BUILD_TOP/test-manifest.json"
 
   @go2nix@ test-packages \
-    --import-cfg "$test_importcfg" \
-    --local-dir "$localdir" \
-    --trim-path "$NIX_BUILD_TOP" \
-    @tagArg@ \
-    "${testGcflagArgs[@]}" \
-    ${goCheckFlags:+--check-flags "$goCheckFlags"} \
-    "$goModuleRoot"
+    --manifest "$NIX_BUILD_TOP/test-manifest.json"
 
   runHook postCheck
 }

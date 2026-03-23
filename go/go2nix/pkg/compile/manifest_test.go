@@ -141,6 +141,61 @@ func TestMergeImportcfg_empty(t *testing.T) {
 	}
 }
 
+func TestLoadTestManifest(t *testing.T) {
+	tests := []struct {
+		name    string
+		json    string
+		wantErr string
+	}{
+		{
+			name: "valid manifest",
+			json: `{"version":1,"kind":"test","importcfgParts":["/a/importcfg"],"localArchives":{"example.com/foo":"/nix/store/foo.a"},"moduleRoot":"/nix/store/src","tags":[],"gcflags":[],"checkFlags":["-v"]}`,
+		},
+		{
+			name:    "wrong kind",
+			json:    `{"version":1,"kind":"compile","importcfgParts":[],"localArchives":{},"moduleRoot":"/src","tags":[],"gcflags":[],"checkFlags":[]}`,
+			wantErr: `wrong kind "compile"`,
+		},
+		{
+			name:    "wrong version",
+			json:    `{"version":99,"kind":"test","importcfgParts":[],"localArchives":{},"moduleRoot":"/src","tags":[],"gcflags":[],"checkFlags":[]}`,
+			wantErr: "unsupported version 99",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "manifest.json")
+			if err := os.WriteFile(path, []byte(tt.json), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			m, err := LoadTestManifest(path)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if got := err.Error(); !contains(got, tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %q", tt.wantErr, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m.ModuleRoot != "/nix/store/src" {
+				t.Errorf("moduleRoot = %q", m.ModuleRoot)
+			}
+			if len(m.LocalArchives) != 1 || m.LocalArchives["example.com/foo"] != "/nix/store/foo.a" {
+				t.Errorf("localArchives = %v", m.LocalArchives)
+			}
+			if len(m.CheckFlags) != 1 || m.CheckFlags[0] != "-v" {
+				t.Errorf("checkFlags = %v", m.CheckFlags)
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }
