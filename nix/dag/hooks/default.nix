@@ -48,8 +48,6 @@ in
     ];
     substitutions = {
       go2nix = "${go2nix}/bin/go2nix";
-      stdlib = "${stdlib}";
-      inherit tagArg buildMode;
     };
   } ./compile-go-pkg.sh;
 

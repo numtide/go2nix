@@ -56,6 +56,31 @@ let
 
   normalizedSubPackages = helpers.normalizeSubPackages subPackages;
 
+  # Build the compile manifest JSON string for a per-package derivation.
+  # `deps` is the list of dependency derivations whose importcfg entries
+  # need to be merged with stdlib's.
+  # Passed as an env var (not builtins.toFile) because the manifest
+  # references store paths of other derivations. The shell hook writes
+  # it to a file before invoking go2nix.
+  mkCompileManifestJSON = deps: builtins.toJSON {
+    version = 1;
+    kind = "compile";
+    importcfgParts = [ "${stdlib}/importcfg" ]
+      ++ map (dep: "${dep}/importcfg") deps;
+    inherit tags;
+    gcflags =
+      let base = gcflags; in
+      if buildMode == "pie" then [ "-shared" ] ++ base else base;
+    pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
+  };
+
+  # Match Go's internal/platform.DefaultPIE: PIE for darwin, windows, android, ios.
+  buildMode =
+    let goos = stdenv.hostPlatform.go.GOOS; in
+    if builtins.elem goos [ "darwin" "windows" "android" "ios" ]
+    then "pie"
+    else "exe";
+
   # --- Module resolution from lockfile (pure-Nix TOML parsing) ---
   lockfile = builtins.fromTOML (builtins.readFile goLock);
   modTable = lockfile.mod or { };
@@ -159,9 +184,8 @@ let
       env = {
         goPackagePath = importPath;
         goPackageSrcDir = srcDir;
+        compileManifestJSON = mkCompileManifestJSON deps;
       }
-      // (if gcflagsStr != "" then { goGcflags = gcflagsStr; } else { })
-      // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
       // extraEnv;
     }
   ) goPackagesResult.packages;
@@ -238,9 +262,8 @@ let
       env = {
         goPackagePath = importPath;
         goPackageSrcDir = srcDir;
+        compileManifestJSON = mkCompileManifestJSON deps;
       }
-      // (if gcflagsStr != "" then { goGcflags = gcflagsStr; } else { })
-      // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
       // extraEnv;
     }
   ) goPackagesResult.localPackages;
@@ -331,9 +354,8 @@ let
       env = {
         goPackagePath = importPath;
         goPackageSrcDir = srcDir;
+        compileManifestJSON = mkCompileManifestJSON deps;
       }
-      // (if gcflagsStr != "" then { goGcflags = gcflagsStr; } else { })
-      // (if pgoProfile != null then { goPgoProfile = "${pgoProfile}"; } else { })
       // extraEnv;
     }
   ) goPackagesResult.testPackages);
