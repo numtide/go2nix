@@ -30,18 +30,20 @@ let
 
   fixturePath = "${go2nixSrc}/tests/fixtures/torture-project";
 
-  # GOMODCACHE for both apps (app-full is a superset of app-partial's deps).
+  # GOMODCACHE for both apps (union of their dependencies).
   goModules = pkgs.stdenvNoCC.mkDerivation {
     name = "benchmark-cross-app-gomodcache";
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-uQKbuVSzWJhqbvPwi1KL5OKlYpPjHoA437m7zgQlrbA=";
+    outputHash = "sha256-ttQDH0XOt3iKQr/WWDhRLrhAwdwoYuuTSqO3rw7yTDE=";
     nativeBuildInputs = [ go pkgs.cacert ];
     dontUnpack = true;
     buildPhase = ''
       export HOME=$TMPDIR
       export GOMODCACHE=$out
       cd ${fixturePath}/app-full
+      go mod download
+      cd ${fixturePath}/app-partial
       go mod download
     '';
     installPhase = "true";
