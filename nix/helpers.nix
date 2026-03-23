@@ -70,4 +70,11 @@
         "!y"
         "!z"
       ];
+
+  # Normalize a subPackages list: ensure all entries have "./" prefix so
+  # they are interpreted as relative paths, not stdlib packages.
+  # "." is passed through as-is.
+  normalizeSubPackages = map (
+    sp: if sp == "." || builtins.substring 0 2 sp == "./" then sp else "./${sp}"
+  );
 }
