@@ -1,7 +1,7 @@
-# Benchmark: eval-time comparison of go2nix DAG mode vs dynamic mode.
+# Benchmark: eval-time comparison of go2nix mode vs dynamic mode.
 #
 # Measures nix-instantiate cost only (no builds). This isolates the
-# evaluation overhead: plugin invocation for DAG mode vs expression
+# evaluation overhead: plugin invocation for default mode vs expression
 # setup for dynamic mode.
 #
 # Run: nix run .#benchmark-eval
@@ -29,7 +29,7 @@ let
 
   fixturePath = "${go2nixSrc}/tests/fixtures/torture-project";
 
-  # GOMODCACHE for DAG mode (plugin runs go list with GOPROXY=off).
+  # GOMODCACHE for default mode (plugin runs go list with GOPROXY=off).
   goModules = pkgs.stdenvNoCC.mkDerivation {
     name = "benchmark-eval-gomodcache";
     outputHashMode = "recursive";
@@ -46,7 +46,7 @@ let
     installPhase = "true";
   };
 
-  # go2nix DAG mode expression.
+  # go2nix mode expression.
   dagExpr = pkgs.writeText "bench-eval-dag.nix" ''
     { srcPath ? ${fixturePath} }:
     let
@@ -68,7 +68,7 @@ let
     }
   '';
 
-  # go2nix dynamic mode expression.
+  # go2nix experimental mode expression.
   dynamicExpr = pkgs.writeText "bench-eval-dynamic.nix" ''
     { srcPath ? ${fixturePath} }:
     let
@@ -147,7 +147,7 @@ pkgs.writeShellApplication {
     }
     METAEOF
 
-    echo "=== Eval benchmark: go2nix DAG vs dynamic ==="
+    echo "=== Eval benchmark: go2nix vs dynamic ==="
     echo "  GOMODCACHE=$GOMODCACHE"
     echo "  warmup: $WARMUP  runs: $RUNS"
     echo "  results: $RESULTS_DIR"
@@ -157,9 +157,9 @@ pkgs.writeShellApplication {
       --warmup "$WARMUP" --runs "$RUNS" \
       --export-json "$RESULTS_DIR/eval.json" \
       --export-markdown "$RESULTS_DIR/eval.md" \
-      -n "go2nix DAG (instantiate)" \
+      -n "go2nix (instantiate)" \
         "GOMODCACHE=$GOMODCACHE nix-instantiate $NIXPKGS_OPT $PLUGIN_OPT ${dagExpr}" \
-      -n "go2nix dynamic (instantiate)" \
+      -n "go2nix experimental (instantiate)" \
         "nix-instantiate $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr}"
 
     echo ""

@@ -1,4 +1,4 @@
-# Benchmark: shared dependency reuse + per-local-package isolation in DAG mode.
+# Benchmark: shared dependency reuse + per-local-package isolation in go2nix default mode.
 #
 # Demonstrates two properties:
 #   1. Third-party package derivations are reused between app-full and app-partial
@@ -47,7 +47,7 @@ let
     installPhase = "true";
   };
 
-  # DAG expression for app-full.
+  # go2nix expression for app-full.
   dagExprFull = pkgs.writeText "bench-cross-full.nix" ''
     { srcPath ? ${fixturePath} }:
     let
@@ -69,7 +69,7 @@ let
     }
   '';
 
-  # DAG expression for app-partial.
+  # go2nix expression for app-partial.
   dagExprPartial = pkgs.writeText "bench-cross-partial.nix" ''
     { srcPath ? ${fixturePath} }:
     let
@@ -114,7 +114,7 @@ pkgs.writeShellApplication {
         ''
       else
         ''
-          echo "ERROR: go2nix-nix-plugin not available on ${system}. DAG mode benchmarks require it."
+          echo "ERROR: go2nix-nix-plugin not available on ${system}. go2nix benchmarks require it."
           exit 1
         ''
     }
@@ -143,7 +143,7 @@ pkgs.writeShellApplication {
     }
     METAEOF
 
-    echo "=== DAG Mode: Cross-App Isolation Benchmark ==="
+    echo "=== go2nix: Cross-App Isolation Benchmark ==="
     echo "  GOMODCACHE=$GOMODCACHE"
     echo "  results:  $RESULTS_DIR"
     echo ""

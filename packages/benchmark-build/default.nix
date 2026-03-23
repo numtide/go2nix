@@ -1,4 +1,4 @@
-# Benchmark: build-time comparison of buildGoModule vs go2nix DAG vs go2nix dynamic.
+# Benchmark: build-time comparison of buildGoModule vs go2nix vs go2nix experimental.
 #
 # Measures three phases using hyperfine:
 #   1. Clean build (delete outputs, build from scratch)
@@ -31,7 +31,7 @@ let
 
   fixturePath = "${go2nixSrc}/tests/fixtures/torture-project";
 
-  # Pre-populate GOMODCACHE: DAG mode plugin runs go list with GOPROXY=off.
+  # Pre-populate GOMODCACHE: the plugin runs go list with GOPROXY=off.
   goModules = pkgs.stdenvNoCC.mkDerivation {
     name = "benchmark-app-full-gomodcache";
     outputHashMode = "recursive";
@@ -64,7 +64,7 @@ let
     }
   '';
 
-  # go2nix DAG mode: per-package build graph via go2nix-nix-plugin.
+  # go2nix mode: per-package build graph via go2nix-nix-plugin.
   dagExpr = pkgs.writeText "bench-dag.nix" ''
     { srcPath ? ${fixturePath} }:
     let
@@ -86,7 +86,7 @@ let
     }
   '';
 
-  # go2nix dynamic mode: recursive-nix + CA derivations.
+  # go2nix experimental mode: recursive-nix + CA derivations.
   dynamicExpr = pkgs.writeText "bench-dynamic.nix" ''
     { srcPath ? ${fixturePath} }:
     let
@@ -137,7 +137,7 @@ pkgs.writeShellApplication {
         ''
       else
         ''
-          echo "ERROR: go2nix-nix-plugin not available on ${system}. DAG mode benchmarks require it."
+          echo "ERROR: go2nix-nix-plugin not available on ${system}. go2nix benchmarks require it."
           exit 1
         ''
     }
@@ -170,7 +170,7 @@ pkgs.writeShellApplication {
     }
     METAEOF
 
-    echo "=== Build benchmark: buildGoModule vs go2nix DAG vs go2nix dynamic ==="
+    echo "=== Build benchmark: buildGoModule vs go2nix vs go2nix experimental ==="
     echo "  GOMODCACHE=$GOMODCACHE"
     echo "  results:  $RESULTS_DIR"
     echo ""
@@ -196,12 +196,12 @@ pkgs.writeShellApplication {
     BGM_DRV=$(nix-instantiate --show-trace $NIXPKGS_OPT ${bgmExpr})
     echo "  -> $BGM_DRV"
 
-    echo "  go2nix DAG..."
+    echo "  go2nix..."
     # shellcheck disable=SC2086
     DAG_DRV=$(GOMODCACHE="$GOMODCACHE" nix-instantiate --show-trace $NIXPKGS_OPT $PLUGIN_OPT ${dagExpr})
     echo "  -> $DAG_DRV"
 
-    echo "  go2nix dynamic..."
+    echo "  go2nix experimental..."
     # shellcheck disable=SC2086
     DYN_DRV=$(nix-instantiate --show-trace $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr})
     echo "  -> $DYN_DRV"
@@ -237,10 +237,10 @@ pkgs.writeShellApplication {
       -n "buildGoModule (evicted)" \
         --prepare 'bash -c delete_all_outputs' \
         "nix-build $NIXPKGS_OPT ${bgmExpr} --no-out-link" \
-      -n "go2nix DAG (evicted)" \
+      -n "go2nix (evicted)" \
         --prepare 'bash -c delete_all_outputs' \
         "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT ${dagExpr} --no-out-link" \
-      -n "go2nix dynamic (evicted)" \
+      -n "go2nix experimental (evicted)" \
         --prepare 'bash -c delete_all_outputs' \
         "nix-build $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr} --no-out-link"
     echo ""
@@ -259,9 +259,9 @@ pkgs.writeShellApplication {
       --export-markdown "$RESULTS_DIR/cached-rebuild.md" \
       -n "buildGoModule (cached)" \
         "nix-build $NIXPKGS_OPT ${bgmExpr} --no-out-link" \
-      -n "go2nix DAG (cached)" \
+      -n "go2nix (cached)" \
         "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT ${dagExpr} --no-out-link" \
-      -n "go2nix dynamic (cached)" \
+      -n "go2nix experimental (cached)" \
         "nix-build $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr} --no-out-link"
     echo ""
 
@@ -319,7 +319,7 @@ pkgs.writeShellApplication {
     hyperfine \
       --warmup 0 --runs "$SRC_CHANGE_RUNS" \
       --export-json "$RESULTS_DIR/src-change-dag.json" \
-      -n "go2nix DAG (src change)" \
+      -n "go2nix (src change)" \
         --prepare 'bash -c reset_and_mutate' \
         "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT --arg srcPath $FIXTURE_COPY ${dagExpr} --no-out-link"
 
@@ -327,7 +327,7 @@ pkgs.writeShellApplication {
     hyperfine \
       --warmup 0 --runs "$SRC_CHANGE_RUNS" \
       --export-json "$RESULTS_DIR/src-change-dynamic.json" \
-      -n "go2nix dynamic (src change)" \
+      -n "go2nix experimental (src change)" \
         --prepare 'bash -c reset_and_mutate' \
         "nix-build $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' --arg srcPath $FIXTURE_COPY ${dynamicExpr} --no-out-link"
 
