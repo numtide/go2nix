@@ -16,4 +16,9 @@
     dag = import ./packages/nwg-drawer/dag.nix;
     dynamic = import ./packages/nwg-drawer/dynamic.nix;
   };
+  fixtures = {
+    testify-basic = import ./fixtures/testify-basic/dag.nix;
+    xtest-local-dep = import ./fixtures/xtest-local-dep/dag.nix;
+    modroot-nested = import ./fixtures/modroot-nested/dag.nix;
+  };
 }
