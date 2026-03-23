@@ -28,8 +28,6 @@ func main() {
 		runListPackagesCmd(os.Args[2:])
 	case "compile-package":
 		runCompilePackageCmd(os.Args[2:])
-	case "compile-packages":
-		runCompileModuleCmd(os.Args[2:])
 	case "check":
 		runCheckLockfileCmd(os.Args[2:])
 	case "resolve":
@@ -44,7 +42,7 @@ func main() {
 		runLinkBinaryCmd(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
-		fmt.Fprintf(os.Stderr, "usage: go2nix <generate|list-files|list-packages|compile-package|compile-packages|check|resolve|build-modinfo|generate-test-main|test-packages|link-binary> [flags]\n")
+		fmt.Fprintf(os.Stderr, "usage: go2nix <generate|list-files|list-packages|compile-package|check|resolve|build-modinfo|generate-test-main|test-packages|link-binary> [flags]\n")
 		os.Exit(1)
 	}
 }

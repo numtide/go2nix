@@ -21,9 +21,8 @@ type Options struct {
 	Output     string // output .a archive path
 	ImportCfg  string // path to importcfg file
 	TrimPath   string // path prefix to trim (defaults to $NIX_BUILD_TOP)
-	Tags       string   // comma-separated build tags
-	GCFlags    string   // extra flags for go tool compile (space-separated, legacy)
-	GCFlagsList []string // extra flags for go tool compile (pre-split, preferred over GCFlags)
+	Tags        string   // comma-separated build tags
+	GCFlagsList []string // extra flags for go tool compile
 	GoVersion  string // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
 	PGOProfile string // path to pprof CPU profile for PGO; empty disables PGO
 	GoFiles    []string          // explicit Go files to compile (bypasses ListFiles discovery; paths relative to SrcDir)
