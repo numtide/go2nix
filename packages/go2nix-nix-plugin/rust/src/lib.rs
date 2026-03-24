@@ -4,10 +4,16 @@
 //! third-party package graph, local packages, module replacements, and
 //! (optionally) test-only dependencies as JSON.
 //!
+//! Also resolves NAR hashes for Go modules from go.sum + GOMODCACHE,
+//! eliminating the need for a checked-in lockfile.
+//!
 //! Pure Rust with no nix dependencies — the nix integration layer
 //! (`plugin/resolveGoPackages.cc`) handles primop registration and
 //! JSON ↔ nix value conversion via the nix C API.
 
+mod module_hashes;
+mod nar;
+mod nar_cache;
 mod resolve;
 
 use std::ffi::{CStr, CString};
@@ -39,7 +45,31 @@ pub unsafe extern "C" fn resolve_go_packages_json(
             serde_json::from_str(input).map_err(|e| format!("failed to parse input JSON: {e}"))?;
 
         let graph = resolve::resolve_packages(&opts).map_err(|e| format!("{e:#}"))?;
-        resolve::package_graph_to_json(&graph, &opts.src).map_err(|e| format!("{e:#}"))
+
+        // Resolve NAR hashes from go.sum + GOMODCACHE when requested.
+        let hashes = if opts.resolve_hashes {
+            let src_dir = std::path::Path::new(&opts.src);
+            let mod_root = &opts.mod_root;
+            let go_sum_path = if mod_root == "." {
+                src_dir.join("go.sum")
+            } else {
+                src_dir.join(mod_root).join("go.sum")
+            };
+
+            let gomodcache = resolve::find_gomodcache(&opts.go)
+                .map_err(|e| format!("finding GOMODCACHE: {e:#}"))?;
+
+            module_hashes::resolve_module_hashes(&go_sum_path, &gomodcache)
+                .map_err(|e| format!("resolving module hashes: {e:#}"))?
+                .into_iter()
+                .map(|(k, v)| (k, v.nar_hash))
+                .collect()
+        } else {
+            std::collections::BTreeMap::new()
+        };
+
+        resolve::package_graph_to_json(&graph, &opts.src, hashes)
+            .map_err(|e| format!("{e:#}"))
     }
 
     match inner(input_json) {

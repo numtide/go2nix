@@ -1,12 +1,17 @@
 # go2nix/nix/dag/fetch-go-module.nix — fixed-output derivation to fetch a Go module.
 #
-# Downloads a module via the Go module proxy and produces the GOMODCACHE
-# directory structure as output.
+# Two output modes controlled by `sourceOnly`:
+#
+#   sourceOnly = true (lockfile-free):
+#     Outputs only the extracted source tree. Cache metadata (.info, .zip,
+#     .ziphash, sumdb/) is excluded so the NAR hash depends solely on module
+#     content — matching the h1: hash from go.sum.
+#
+#   sourceOnly = false (lockfile, default):
+#     Outputs the full GOMODCACHE directory (backward-compatible with existing
+#     lockfile hashes).
 #
 # For private modules, set netrcFile in mk-go-env.nix to provide credentials.
-# Go's default GOPROXY (https://proxy.golang.org,direct) falls back to direct
-# VCS access when the proxy returns 404, so netrcFile is sufficient for most
-# private module setups.
 {
   go,
   stdenvNoCC,
@@ -15,13 +20,18 @@
   netrcFile,
 }:
 let
-  inherit (helpers) sanitizeName;
+  inherit (helpers) sanitizeName escapeModPath;
 in
 {
   hash,
   fetchPath,
   version,
+  sourceOnly ? false,
 }:
+let
+  escapedPath = escapeModPath fetchPath;
+  dirSuffix = "${escapedPath}@${version}";
+in
 stdenvNoCC.mkDerivation {
   name = "gomod-${sanitizeName fetchPath}-${version}";
 
@@ -40,7 +50,6 @@ stdenvNoCC.mkDerivation {
 
   buildPhase = ''
     export HOME=$TMPDIR
-    export GOMODCACHE=$out
     export GOSUMDB=off
     export GONOSUMCHECK='*'
     ${
@@ -52,8 +61,14 @@ stdenvNoCC.mkDerivation {
       else
         ""
     }
+  '' + (if sourceOnly then ''
+    export GOMODCACHE=$TMPDIR/modcache
     go mod download "${fetchPath}@${version}"
-  '';
+    cp -r "$TMPDIR/modcache/${dirSuffix}" "$out"
+  '' else ''
+    export GOMODCACHE=$out
+    go mod download "${fetchPath}@${version}"
+  '');
 
   # Skip other phases.
   dontInstall = true;
