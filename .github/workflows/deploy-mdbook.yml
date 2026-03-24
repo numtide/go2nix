@@ -31,6 +31,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
 
       - name: Install mdBook
         run: cargo install --locked mdbook
