@@ -4,8 +4,8 @@
 //
 // Usage:
 //
-//	go run .github/scripts/check-godebug-table.go              # check mode (default)
-//	go run .github/scripts/check-godebug-table.go --update     # rewrite godebug.go
+//	go run scripts/check-godebug-table.go              # check mode (default)
+//	go run scripts/check-godebug-table.go --update     # rewrite godebug.go
 //
 //go:build ignore
 
