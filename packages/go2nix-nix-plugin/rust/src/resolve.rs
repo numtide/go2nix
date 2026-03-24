@@ -120,7 +120,7 @@ struct GoListOpts<'a> {
     mod_root: &'a str,
     goos: &'a str,
     goarch: &'a str,
-    go_proxy: &'a str,
+    go_proxy: Option<&'a str>,
     cgo_enabled: &'a str,
 }
 
@@ -142,13 +142,17 @@ fn configure_go_env(cmd: &mut Command, src_dir: &str, opts: &GoListOpts) {
     for (k, v) in inherit_env(&["GOMODCACHE", "GOPATH", "HOME"]) {
         cmd.env(&k, &v);
     }
-    cmd.env("GOPROXY", opts.go_proxy);
+    if let Some(proxy) = opts.go_proxy {
+        cmd.env("GOPROXY", proxy);
+    }
     cmd.env("GONOSUMCHECK", "*");
     cmd.env("GOFLAGS", "-mod=readonly");
     cmd.env("GOENV", "off");
     cmd.env("GOWORK", "off");
 
-    if opts.go_proxy != "off" {
+    // When GOPROXY is not "off", the go toolchain needs network access.
+    let proxy_off = opts.go_proxy.map_or(false, |p| p == "off");
+    if !proxy_off {
         for (k, v) in inherit_env(&[
             "PATH",
             "TMPDIR",
@@ -515,8 +519,8 @@ pub(crate) struct JsonInput {
     goos: String,
     #[serde(default)]
     goarch: String,
-    #[serde(default = "default_off")]
-    go_proxy: String,
+    #[serde(default)]
+    go_proxy: Option<String>,
     #[serde(default)]
     cgo_enabled: String,
     /// When true, resolve NAR hashes for all modules from go.sum + GOMODCACHE.
@@ -531,9 +535,7 @@ fn default_sub_packages() -> Vec<String> {
 fn default_dot() -> String {
     ".".to_owned()
 }
-fn default_off() -> String {
-    "off".to_owned()
-}
+
 
 /// Query `go env GOMODCACHE` to find the module cache directory.
 pub(crate) fn find_gomodcache(go_bin: &str) -> Result<std::path::PathBuf> {
@@ -579,7 +581,7 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
         mod_root: &input.mod_root,
         goos: &input.goos,
         goarch: &input.goarch,
-        go_proxy: &input.go_proxy,
+        go_proxy: input.go_proxy.as_deref(),
         cgo_enabled: &input.cgo_enabled,
     };
 

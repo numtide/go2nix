@@ -132,8 +132,7 @@ let
   lockfileModules = builtins.mapAttrs parseModEntry lockfileModTable;
 
   # --- Package graph from plugin (eval-time go list) ---
-  # goProxy defaults to "off": reads from the host's GOMODCACHE (populated
-  # by `go mod download`). No network access or writes during eval.
+  # goProxy is unset by default — inherits the environment's GOPROXY.
   # When resolveHashes is true, the plugin also computes NAR hashes for all
   # modules from go.sum + GOMODCACHE, returned as moduleHashes.
   goPackagesResult = builtins.resolveGoPackages (
