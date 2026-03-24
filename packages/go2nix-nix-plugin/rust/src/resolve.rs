@@ -511,7 +511,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct JsonInput {
-    go: String,
+    pub(crate) go: String,
     pub(crate) src: String,
     #[serde(default)]
     do_check: bool,
@@ -520,7 +520,7 @@ pub(crate) struct JsonInput {
     #[serde(default = "default_sub_packages")]
     sub_packages: Vec<String>,
     #[serde(default = "default_dot")]
-    mod_root: String,
+    pub(crate) mod_root: String,
     #[serde(default)]
     goos: String,
     #[serde(default)]
@@ -529,6 +529,10 @@ pub(crate) struct JsonInput {
     go_proxy: String,
     #[serde(default)]
     cgo_enabled: String,
+    /// When true, resolve NAR hashes for all modules from go.sum + GOMODCACHE.
+    /// Enables lockfile-free builds.
+    #[serde(default)]
+    pub(crate) resolve_hashes: bool,
 }
 
 fn default_sub_packages() -> Vec<String> {
@@ -539,6 +543,39 @@ fn default_dot() -> String {
 }
 fn default_off() -> String {
     "off".to_owned()
+}
+
+/// Query `go env GOMODCACHE` to find the module cache directory.
+pub(crate) fn find_gomodcache(go_bin: &str) -> Result<std::path::PathBuf> {
+    // Check environment first (same var Go checks).
+    if let Ok(val) = std::env::var("GOMODCACHE") {
+        if !val.is_empty() {
+            return Ok(std::path::PathBuf::from(val));
+        }
+    }
+
+    let output = std::process::Command::new(go_bin)
+        .args(["env", "GOMODCACHE"])
+        .output()
+        .with_context(|| format!("running '{go_bin} env GOMODCACHE'"))?;
+
+    if !output.status.success() {
+        bail!(
+            "'go env GOMODCACHE' failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let path = String::from_utf8(output.stdout)
+        .context("GOMODCACHE is not valid UTF-8")?
+        .trim()
+        .to_owned();
+
+    if path.is_empty() {
+        bail!("GOMODCACHE is empty");
+    }
+
+    Ok(std::path::PathBuf::from(path))
 }
 
 /// Run both go list passes and return the complete package graph.
@@ -610,6 +647,10 @@ struct JsonOutput {
     replacements: BTreeMap<String, JsonReplacement>,
     local_replaces: BTreeMap<String, String>,
     test_packages: BTreeMap<String, JsonPkg>,
+    /// NAR hashes for modules, keyed by "path@version".
+    /// Only populated when resolveHashes is true.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    module_hashes: BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -671,7 +712,11 @@ fn pkg_data_to_json_pkg(p: &PkgData, allowed_imports: &dyn Fn(&str) -> bool) -> 
 }
 
 /// Convert a `PackageGraph` to a JSON string.
-pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Result<String> {
+pub(crate) fn package_graph_to_json(
+    graph: &PackageGraph,
+    src_dir: &str,
+    module_hashes: BTreeMap<String, String>,
+) -> Result<String> {
     let canon_src = std::fs::canonicalize(src_dir)
         .with_context(|| format!("failed to canonicalize src dir: {src_dir}"))?;
 
@@ -750,6 +795,7 @@ pub(crate) fn package_graph_to_json(graph: &PackageGraph, src_dir: &str) -> Resu
         replacements,
         local_replaces: graph.local_replaces.clone(),
         test_packages,
+        module_hashes,
     };
 
     serde_json::to_string(&output).context("failed to serialize output JSON")

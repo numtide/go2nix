@@ -1,16 +1,24 @@
-# go2nix/nix/dag/default.nix — build a Go binary from source + lockfile (default mode).
+# go2nix/nix/dag/default.nix — build a Go binary from source (default mode).
+#
+# Supports two modes for module hash resolution:
+#   1. Lockfile: pass goLock = ./go2nix.toml (hashes from checked-in file)
+#   2. Lockfile-free: omit goLock (hashes resolved at eval time from
+#      go.sum + GOMODCACHE via the nix plugin, cached on disk by h1: hash)
 #
 # Usage:
+#   # With lockfile:
 #   goEnv.buildGoApplication {
 #     src = ./.;
 #     goLock = ./go2nix.toml;
 #     pname = "my-app";
 #     version = "0.1.0";
-#     packageOverrides = {
-#       "github.com/foo/bar" = {
-#         nativeBuildInputs = [ pkg-config libfoo ];
-#       };
-#     };
+#   }
+#
+#   # Without lockfile (hashes from go.sum + GOMODCACHE):
+#   goEnv.buildGoApplication {
+#     src = ./.;
+#     pname = "my-app";
+#     version = "0.1.0";
 #   }
 {
   stdenv,
@@ -27,7 +35,7 @@
 
 {
   src,
-  goLock,
+  goLock ? null,
   pname,
   version,
   subPackages ? [ "." ],
@@ -79,9 +87,20 @@ let
     then "pie"
     else "exe";
 
-  # --- Module resolution from lockfile (pure-Nix TOML parsing) ---
-  lockfile = builtins.fromTOML (builtins.readFile goLock);
-  modTable = lockfile.mod or { };
+  # --- Module resolution ---
+  #
+  # Two paths:
+  #   1. Lockfile provided (goLock != null): read hashes from go2nix.toml
+  #   2. Lockfile-free (goLock == null): plugin resolves NAR hashes from
+  #      go.sum + GOMODCACHE at eval time (resolveHashes = true)
+
+  hasLockfile = goLock != null;
+
+  lockfileModTable =
+    if hasLockfile then
+      (builtins.fromTOML (builtins.readFile goLock)).mod or { }
+    else
+      { };
 
   parseModEntry =
     modKey: hash:
@@ -89,7 +108,7 @@ let
       parsed = builtins.match "(.+)@(.+)" modKey;
     in
     if parsed == null then
-      builtins.throw "go2nix lockfile: malformed module key '${modKey}' (expected 'path@version')"
+      builtins.throw "go2nix: malformed module key '${modKey}' (expected 'path@version')"
     else
       let
         path = builtins.elemAt parsed 0;
@@ -98,14 +117,15 @@ let
       {
         inherit hash path version;
         fetchPath = path;
-        dirSuffix = "${helpers.escapeModPath path}@${version}";
       };
 
-  lockfileModules = builtins.mapAttrs parseModEntry modTable;
+  lockfileModules = builtins.mapAttrs parseModEntry lockfileModTable;
 
   # --- Package graph from plugin (eval-time go list) ---
   # goProxy defaults to "off": reads from the host's GOMODCACHE (populated
   # by `go mod download`). No network access or writes during eval.
+  # When resolveHashes is true, the plugin also computes NAR hashes for all
+  # modules from go.sum + GOMODCACHE, returned as moduleHashes.
   goPackagesResult = builtins.resolveGoPackages (
     {
       go = "${go}/bin/go";
@@ -116,9 +136,21 @@ let
         doCheck
         ;
       subPackages = normalizedSubPackages;
+      resolveHashes = !hasLockfile;
     }
     // (if goProxy != null then { inherit goProxy; } else { })
   );
+
+  # Module hashes from plugin (lockfile-free path).
+  pluginModules =
+    if hasLockfile then
+      { }
+    else
+      builtins.mapAttrs (modKey: hash: parseModEntry modKey hash)
+        (goPackagesResult.moduleHashes or { });
+
+  # Merge: lockfile modules take precedence, plugin modules fill in the rest.
+  allModules = pluginModules // lockfileModules;
 
   # --- Join: apply replace directives to module fetchPaths ---
   resolvedModules = builtins.mapAttrs (
@@ -133,15 +165,22 @@ let
       inherit fetchPath;
       dirSuffix = "${helpers.escapeModPath fetchPath}@${version}";
     }
-  ) lockfileModules;
+  ) allModules;
 
   # --- Third-party package set ---
+  # sourceOnly: lockfile-free hashes cover the extracted source tree only;
+  #             lockfile hashes cover the full GOMODCACHE output.
   moduleInfo = builtins.mapAttrs (
     _: mod:
     let
-      src = fetchers.fetchGoModule { inherit (mod) hash fetchPath version; };
+      src = fetchers.fetchGoModule {
+        inherit (mod) hash fetchPath version;
+        sourceOnly = !hasLockfile;
+      };
     in
-    mod // { dir = "${src}/${mod.dirSuffix}"; }
+    mod // {
+      dir = if hasLockfile then "${src}/${mod.dirSuffix}" else "${src}";
+    }
   ) resolvedModules;
 
   packages = builtins.mapAttrs (
@@ -466,7 +505,10 @@ let
     ) localPackages;
     subPackages = normalizedSubPackages;
     moduleRoot = moduleRoot;
-    lockfile = "${builtins.path { path = goLock; name = "go2nix-lockfile"; }}";
+    lockfile =
+      if goLock != null
+      then "${builtins.path { path = goLock; name = "go2nix-lockfile"; }}"
+      else null;
     pname = pname;
     goos = stdenv.hostPlatform.go.GOOS or null;
     goarch = stdenv.hostPlatform.go.GOARCH or null;

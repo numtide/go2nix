@@ -43,9 +43,11 @@ func linkBinary(manifestPath, output string) error {
 		tmpDir = os.TempDir()
 	}
 
-	// Step 1: Validate lockfile consistency.
-	if err := mvscheck.CheckLockfile(m.ModuleRoot, m.Lockfile); err != nil {
-		return fmt.Errorf("lockfile check: %w", err)
+	// Step 1: Validate lockfile consistency (skipped in lockfile-free mode).
+	if m.Lockfile != nil && *m.Lockfile != "" {
+		if err := mvscheck.CheckLockfile(m.ModuleRoot, *m.Lockfile); err != nil {
+			return fmt.Errorf("lockfile check: %w", err)
+		}
 	}
 
 	// Step 2: Extract module path from go.mod.
@@ -82,22 +84,24 @@ func linkBinary(manifestPath, output string) error {
 		return fmt.Errorf("getting Go version: %w", err)
 	}
 
-	lock, err := lockfile.Read(m.Lockfile)
-	if err != nil {
-		return fmt.Errorf("reading lockfile: %w", err)
-	}
-
 	var deps []buildinfo.ModDep
-	for modKey := range lock.Mod {
-		modPath, version, ok := strings.Cut(modKey, "@")
-		if !ok {
-			continue
+	if m.Lockfile != nil && *m.Lockfile != "" {
+		lock, err := lockfile.Read(*m.Lockfile)
+		if err != nil {
+			return fmt.Errorf("reading lockfile: %w", err)
 		}
-		dep := buildinfo.ModDep{Path: modPath, Version: version}
-		if replacePath, ok := lock.Replace[modKey]; ok {
-			dep.Replace = &buildinfo.ModDep{Path: replacePath, Version: version}
+
+		for modKey := range lock.Mod {
+			modPath, version, ok := strings.Cut(modKey, "@")
+			if !ok {
+				continue
+			}
+			dep := buildinfo.ModDep{Path: modPath, Version: version}
+			if replacePath, ok := lock.Replace[modKey]; ok {
+				dep.Replace = &buildinfo.ModDep{Path: replacePath, Version: version}
+			}
+			deps = append(deps, dep)
 		}
-		deps = append(deps, dep)
 	}
 
 	modinfo, err := buildinfo.GenerateModinfo(m.ModuleRoot, goVersion, deps)

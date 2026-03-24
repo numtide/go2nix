@@ -58,7 +58,7 @@ type LinkManifest struct {
 	LocalArchives  map[string]string `json:"localArchives"`
 	SubPackages    []string          `json:"subPackages"`
 	ModuleRoot     string            `json:"moduleRoot"`
-	Lockfile       string            `json:"lockfile"`
+	Lockfile       *string           `json:"lockfile"`
 	Pname          string            `json:"pname"`
 	GOOS           *string           `json:"goos"`
 	GOARCH         *string           `json:"goarch"`
