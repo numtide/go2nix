@@ -350,7 +350,6 @@ pub(crate) struct PackageGraph {
     local_packages: Vec<LocalPkgData>,
     third_party_paths: BTreeSet<String>,
     replacements: BTreeMap<String, (String, String)>,
-    local_replaces: BTreeMap<String, String>,
     module_path: String,
     test_packages: Vec<PkgData>,
     test_only_paths: BTreeSet<String>,
@@ -362,7 +361,6 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
     let mut third_party_paths = BTreeSet::new();
     let mut local_paths = BTreeSet::new();
     let mut replacements: BTreeMap<String, (String, String)> = BTreeMap::new();
-    let mut local_replaces: BTreeMap<String, String> = BTreeMap::new();
     let mut module_path = String::new();
 
     // Raw local package data collected during first pass; imports are
@@ -399,13 +397,6 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         let is_local = module.main || (!replace_path.is_empty() && replace_version.is_empty());
 
         if is_local {
-            // Collect local replace directives (not main module).
-            if !module.main && !replace_path.is_empty() {
-                local_replaces
-                    .entry(module.path.clone())
-                    .or_insert(replace_path);
-            }
-
             // Capture main module path from first main-module package.
             if module.main && module_path.is_empty() {
                 module_path = module.path.clone();
@@ -496,7 +487,6 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         local_packages,
         third_party_paths,
         replacements,
-        local_replaces,
         module_path,
         test_packages: Vec::new(),
         test_only_paths: BTreeSet::new(),
@@ -645,7 +635,6 @@ struct JsonOutput {
     local_packages: BTreeMap<String, JsonLocalPkg>,
     module_path: String,
     replacements: BTreeMap<String, JsonReplacement>,
-    local_replaces: BTreeMap<String, String>,
     test_packages: BTreeMap<String, JsonPkg>,
     /// NAR hashes for modules, keyed by "path@version".
     /// Only populated when resolveHashes is true.
@@ -793,7 +782,6 @@ pub(crate) fn package_graph_to_json(
         local_packages,
         module_path: graph.module_path.clone(),
         replacements,
-        local_replaces: graph.local_replaces.clone(),
         test_packages,
         module_hashes,
     };
@@ -941,20 +929,6 @@ mod tests {
         let (path, version) = &graph.replacements["github.com/old/pkg@v2.0.0"];
         assert_eq!(path, "github.com/new/pkg");
         assert_eq!(version, "v2.0.0");
-    }
-
-    #[test]
-    fn parse_collects_local_replaces() {
-        // A local replace: Replace with empty version means filesystem path.
-        let input = format!(
-            r#"{{"ImportPath":"github.com/local/mod/pkg","Dir":"/replace/pkg","Module":{{"Path":"github.com/local/mod","Version":"","Replace":{{"Path":"../local-mod","Version":""}}}},"Imports":[]}}"#
-        );
-        let graph = parse_go_packages(input.as_bytes()).unwrap();
-        assert!(graph.packages.is_empty()); // local, not third-party
-        assert_eq!(
-            graph.local_replaces["github.com/local/mod"],
-            "../local-mod"
-        );
     }
 
     #[test]

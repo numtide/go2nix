@@ -42,7 +42,6 @@ time and returns a package graph:
 - **localPackages**: Local package metadata (dir, localImports, thirdPartyImports, isCgo)
 - **modulePath**: Main module import path
 - **replacements**: Module replacement mappings from `go.mod` `replace` directives
-- **localReplaces**: Filesystem replace directives for local modules
 - **testPackages**: Test-only third-party package metadata when `doCheck = true`
 
 Replace directives are applied to module `fetchPath` and `dirSuffix` fields
