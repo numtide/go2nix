@@ -97,7 +97,7 @@ in
 pkgs.writeShellApplication {
   name = "benchmark-build-cross-app-isolation";
   runtimeInputs = [
-    pkgs.nixVersions.latest
+    pkgs.nixVersions.nix_2_34
     pkgs.hyperfine
     pkgs.coreutils
     go

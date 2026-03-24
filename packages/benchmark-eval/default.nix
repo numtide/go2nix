@@ -77,7 +77,7 @@ let
       goEnv = go2nixLib.mkGoEnv {
         go = pkgs.go_1_26;
         go2nix = import ${go2nixSrc}/packages/go2nix { inherit pkgs; };
-        nixPackage = pkgs.nixVersions.latest;
+        nixPackage = pkgs.nixVersions.nix_2_34;
         inherit (pkgs) callPackage;
       };
     in
@@ -94,7 +94,7 @@ in
 pkgs.writeShellApplication {
   name = "benchmark-eval";
   runtimeInputs = [
-    pkgs.nixVersions.latest
+    pkgs.nixVersions.nix_2_34
     pkgs.hyperfine
     pkgs.coreutils
     go

@@ -18,7 +18,7 @@ if !(flake.packages.${system} ? go2nix-nix-plugin) then
 else
   let
     plugin = flake.packages.${system}.go2nix-nix-plugin;
-    nix = pkgs.nixVersions.latest;
+    nix = pkgs.nixVersions.nix_2_34;
     go = pkgs.go_1_26;
 
     nixpkgsPath = pkgs.path;
