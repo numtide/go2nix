@@ -542,20 +542,8 @@ func buildPackageDrv(
 		return nil, err
 	}
 
-	// Forward optional compile flags
-	if cfg.Tags != "" {
-		drv.SetEnv("tags", cfg.Tags)
-	}
-	if pkg.GoVersion != "" {
-		drv.SetEnv("goVersion", compile.LangVersion(pkg.GoVersion))
-	}
-	if cfg.CGOEnabled != "" {
-		drv.SetEnv("CGO_ENABLED", cfg.CGOEnabled)
-	}
-	if cfg.PGOProfile != "" {
-		drv.SetEnv("pgoProfile", cfg.PGOProfile)
-		drv.AddInputSrc(storeDirOf(cfg.PGOProfile))
-	}
+	// Build compile manifest JSON (same contract as default mode).
+	// The bash script writes this to a file and passes --manifest.
 	gcflags := cfg.GCFlags
 	if cfg.buildMode == "pie" {
 		if gcflags != "" {
@@ -564,8 +552,38 @@ func buildPackageDrv(
 			gcflags = "-shared"
 		}
 	}
+	var gcflagList []string
 	if gcflags != "" {
-		drv.SetEnv("gcflags", gcflags)
+		gcflagList = strings.Fields(gcflags)
+	}
+	var tagList []string
+	if cfg.Tags != "" {
+		tagList = strings.Split(cfg.Tags, ",")
+	}
+	var pgoProfile *string
+	if cfg.PGOProfile != "" {
+		pgoProfile = &cfg.PGOProfile
+		drv.AddInputSrc(storeDirOf(cfg.PGOProfile))
+	}
+	manifest := compile.CompileManifest{
+		Version:        compile.ManifestVersion,
+		Kind:           compile.ManifestKindCompile,
+		ImportcfgParts: []string{"@@IMPORTCFG@@"},
+		Tags:           tagList,
+		GCFlags:        gcflagList,
+		PGOProfile:     pgoProfile,
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling compile manifest: %w", err)
+	}
+	drv.SetEnv("compileManifestJSON", string(manifestJSON))
+
+	if pkg.GoVersion != "" {
+		drv.SetEnv("goVersion", compile.LangVersion(pkg.GoVersion))
+	}
+	if cfg.CGOEnabled != "" {
+		drv.SetEnv("CGO_ENABLED", cfg.CGOEnabled)
 	}
 
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())

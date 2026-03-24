@@ -33,8 +33,8 @@ func fodScript(goStorePath, fetchPath, version, cacertPath, netrcFile string) st
 
 // compileScript generates the bash builder script for a package compilation.
 // The script:
-// 1. Writes importcfg from the environment variable
-// 2. Calls go2nix compile-package
+// 1. Writes importcfg and compile manifest from environment variables
+// 2. Calls go2nix compile-package --manifest (same interface as default mode)
 func compileScript(go2nixBin string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
@@ -45,26 +45,25 @@ func compileScript(go2nixBin string) string {
 	// Use absolute path since compile-package changes CWD to srcdir.
 	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > \"$NIX_BUILD_TOP/importcfg\"\n\n")
 
+	// Write compile manifest from env var (JSON generated at derivation creation time).
+	// Replace @@IMPORTCFG@@ placeholder with the actual importcfg path so that
+	// the JSON consumed by compile-package contains the resolved path.
+	b.WriteString("printf '%s\\n' \"${compileManifestJSON//@@IMPORTCFG@@/$NIX_BUILD_TOP/importcfg}\" > \"$NIX_BUILD_TOP/compile-manifest.json\"\n\n")
+
 	// Source directory: modSrc/relDir for third-party, srcRoot/relDir for local
 	b.WriteString("srcdir=\"$modSrc/$relDir\"\n\n")
 
-	// Compile using go2nix compile-package
+	// Compile using go2nix compile-package with manifest
 	fmt.Fprintf(&b, "%s compile-package", shellQuote(go2nixBin))
+	b.WriteString(" \\\n  --manifest \"$NIX_BUILD_TOP/compile-manifest.json\"")
 	b.WriteString(" \\\n  --import-path \"$importPath\"")
-	b.WriteString(" \\\n  --import-cfg \"$NIX_BUILD_TOP/importcfg\"")
 	b.WriteString(" \\\n  --src-dir \"$srcdir\"")
 	b.WriteString(" \\\n  --output \"$out/pkg.a\"")
 	b.WriteString(" \\\n  --trim-path \"$NIX_BUILD_TOP\"")
 	// Override -p flag for main packages (pflag env var)
 	b.WriteString(" \\\n  ${pflag:+--p \"$pflag\"}")
-	// Only pass tags if set (env var set by createPackageDrv)
-	b.WriteString(" \\\n  ${tags:+--tags \"$tags\"}")
-	// Only pass gcflags if set
-	b.WriteString(" \\\n  ${gcflags:+--gc-flags \"$gcflags\"}")
 	// Go language version for -lang flag (from module's go.mod)
 	b.WriteString(" \\\n  ${goVersion:+--go-version \"$goVersion\"}")
-	// PGO profile for profile-guided optimization
-	b.WriteString(" \\\n  ${pgoProfile:+--pgo-profile \"$pgoProfile\"}")
 	b.WriteString("\n")
 	return b.String()
 }

@@ -69,6 +69,12 @@ func TestCompileScript(t *testing.T) {
 	if !strings.Contains(script, "$importcfg_entries") {
 		t.Error("missing importcfg_entries reference")
 	}
+	if !strings.Contains(script, "${compileManifestJSON//@@IMPORTCFG@@/$NIX_BUILD_TOP/importcfg}") {
+		t.Error("missing compileManifestJSON with @@IMPORTCFG@@ expansion")
+	}
+	if !strings.Contains(script, "--manifest") {
+		t.Error("missing --manifest flag")
+	}
 	if !strings.Contains(script, `"$modSrc/$relDir"`) {
 		t.Error("missing modSrc/relDir source dir")
 	}
@@ -127,14 +133,6 @@ func TestLinkScriptGodebug(t *testing.T) {
 
 	if !strings.Contains(script, "${godebugDefault:+-X=runtime.godebugDefault=$godebugDefault}") {
 		t.Error("missing godebugDefault conditional for GODEBUG default linker flag")
-	}
-}
-
-func TestCompileScriptPGO(t *testing.T) {
-	script := compileScript("/nix/store/zzz-go2nix/bin/go2nix")
-
-	if !strings.Contains(script, `${pgoProfile:+--pgo-profile "$pgoProfile"}`) {
-		t.Error("missing pgoProfile conditional for PGO profile")
 	}
 }
 
