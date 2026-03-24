@@ -19,7 +19,7 @@ func runLinkBinaryCmd(args []string) {
 	fs := flag.NewFlagSet("link-binary", flag.ExitOnError)
 	manifestPath := fs.String("manifest", "", "path to link-manifest.json (required)")
 	output := fs.String("output", "", "output directory (binaries written to <output>/bin/)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *manifestPath == "" || *output == "" {
 		slog.Error("usage: go2nix link-binary --manifest FILE --output DIR")
@@ -67,7 +67,9 @@ func linkBinary(manifestPath, output string) error {
 			return fmt.Errorf("opening merged importcfg: %w", err)
 		}
 		for importPath, archivePath := range m.LocalArchives {
-			fmt.Fprintf(f, "packagefile %s=%s\n", importPath, archivePath)
+			if _, err := fmt.Fprintf(f, "packagefile %s=%s\n", importPath, archivePath); err != nil {
+				return fmt.Errorf("writing importcfg entry: %w", err)
+			}
 		}
 		if err := f.Close(); err != nil {
 			return fmt.Errorf("closing merged importcfg: %w", err)
@@ -162,7 +164,7 @@ func linkBinary(manifestPath, output string) error {
 	// Do not set GOROOT: the linker reads it from os.Getenv and embeds it
 	// as runtime.defaultGOROOT. Invoking the linker directly matches what
 	// `go build -trimpath` does internally.
-	os.Setenv("GOROOT", "")
+	_ = os.Setenv("GOROOT", "")
 
 	// Step 7: Compile main packages and link.
 	mainDir := filepath.Join(tmpDir, "main-pkgs")
@@ -299,4 +301,3 @@ func expandLDFlags(flags []string) []string {
 	}
 	return out
 }
-

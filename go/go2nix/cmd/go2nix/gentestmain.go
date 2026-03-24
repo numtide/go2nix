@@ -15,7 +15,7 @@ func runGenTestMainCmd(args []string) {
 	testFiles := fs.String("test-files", "", "comma-separated absolute paths to internal _test.go files")
 	xtestFiles := fs.String("xtest-files", "", "comma-separated absolute paths to external _test.go files")
 	output := fs.String("output", "", "output file path (default: stdout)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *importPath == "" {
 		slog.Error("usage: go2nix generate-test-main --import-path PATH [--test-files FILES] [--xtest-files FILES] [--output FILE]")
@@ -44,6 +44,6 @@ func runGenTestMainCmd(args []string) {
 			os.Exit(1)
 		}
 	} else {
-		os.Stdout.Write(src)
+		_, _ = os.Stdout.Write(src)
 	}
 }

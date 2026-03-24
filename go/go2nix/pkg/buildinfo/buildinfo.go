@@ -109,7 +109,7 @@ func readGoSum(path string) map[string]string {
 	if err != nil {
 		return result
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

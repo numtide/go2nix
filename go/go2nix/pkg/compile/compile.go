@@ -15,18 +15,18 @@ import (
 
 // Options configures a package compilation.
 type Options struct {
-	ImportPath string // Go import path (e.g., "github.com/foo/bar")
-	PFlag      string // -p flag for go tool compile (defaults to ImportPath)
-	SrcDir     string // directory containing source files
-	Output     string // output .a archive path
-	ImportCfg  string // path to importcfg file
-	TrimPath   string // path prefix to trim (defaults to $NIX_BUILD_TOP)
-	Tags        string   // comma-separated build tags
-	GCFlagsList []string // extra flags for go tool compile
-	GoVersion  string // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
-	PGOProfile string // path to pprof CPU profile for PGO; empty disables PGO
-	GoFiles    []string          // explicit Go files to compile (bypasses ListFiles discovery; paths relative to SrcDir)
-	EmbedCfg   *gofiles.EmbedCfg // explicit embed config (used with GoFiles to pass pre-resolved embed metadata)
+	ImportPath  string            // Go import path (e.g., "github.com/foo/bar")
+	PFlag       string            // -p flag for go tool compile (defaults to ImportPath)
+	SrcDir      string            // directory containing source files
+	Output      string            // output .a archive path
+	ImportCfg   string            // path to importcfg file
+	TrimPath    string            // path prefix to trim (defaults to $NIX_BUILD_TOP)
+	Tags        string            // comma-separated build tags
+	GCFlagsList []string          // extra flags for go tool compile
+	GoVersion   string            // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
+	PGOProfile  string            // path to pprof CPU profile for PGO; empty disables PGO
+	GoFiles     []string          // explicit Go files to compile (bypasses ListFiles discovery; paths relative to SrcDir)
+	EmbedCfg    *gofiles.EmbedCfg // explicit embed config (used with GoFiles to pass pre-resolved embed metadata)
 
 	// Resolved once by CompilePackage; avoids repeated go env subprocesses.
 	goroot        string

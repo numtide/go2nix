@@ -68,7 +68,9 @@ func TestExtractModulePath(t *testing.T) {
 	dir := t.TempDir()
 	gomod := filepath.Join(dir, "go.mod")
 
-	os.WriteFile(gomod, []byte("module example.com/myapp\n\ngo 1.21\n"), 0o644)
+	if err := os.WriteFile(gomod, []byte("module example.com/myapp\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	got, err := extractModulePath(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +87,9 @@ func TestExtractModulePath(t *testing.T) {
 
 	// go.mod without module directive returns error.
 	nomod := filepath.Join(t.TempDir(), "go.mod")
-	os.WriteFile(nomod, []byte("go 1.21\n"), 0o644)
+	if err = os.WriteFile(nomod, []byte("go 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	_, err = extractModulePath(filepath.Dir(nomod))
 	if err == nil {
 		t.Error("expected error for go.mod without module directive")

@@ -12,7 +12,7 @@ import (
 func runListPackagesCmd(args []string) {
 	fs := flag.NewFlagSet("list-packages", flag.ExitOnError)
 	tagsFlag := fs.String("tags", "", "comma-separated build tags")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
 		slog.Error("usage: go2nix list-packages [-tags=...] <module-root>")
 		os.Exit(1)

@@ -1,0 +1,39 @@
+version: "2"
+
+run:
+  timeout: 5m
+  relative-path-mode: cfg
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - errorlint
+    - gocritic
+    - misspell
+    - nilerr
+    - nolintlint
+    - rowserrcheck
+    - unconvert
+    - unparam
+    - wastedassign
+  exclusions:
+    generated: strict
+    warn-unused: true
+    paths:
+      - tests/fixtures/
+      - packages/go2nix-nix-plugin/tests/fixtures/
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  exclusions:
+    generated: strict
+    warn-unused: true

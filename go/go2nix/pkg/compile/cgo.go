@@ -35,7 +35,7 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(cgowork)
+	defer os.RemoveAll(cgowork) //nolint:errcheck
 
 	cc := envOrDefault("CC", "gcc")
 	cxx := envOrDefault("CXX", "g++")
@@ -236,7 +236,9 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	}
 
 	// Step 5: pack C/C++ objects, assembly objects, and .syso files.
-	allOFiles := append(compiledOFiles, asmOFiles...)
+	allOFiles := make([]string, 0, len(compiledOFiles)+len(asmOFiles))
+	allOFiles = append(allOFiles, compiledOFiles...)
+	allOFiles = append(allOFiles, asmOFiles...)
 	for _, s := range files.SysoFiles {
 		allOFiles = append(allOFiles, filepath.Join(opts.SrcDir, s))
 	}
@@ -338,7 +340,7 @@ func compileCFiles(cc, cxx, cgowork, srcDir, uid string, files gofiles.PkgFiles,
 func cgoTestLinkAndDynimport(cc, cgowork string, opts Options, uid string, compiledOFiles, cgoFlagsLDFLAGS, cgoLdflags, cgoCflags []string) error {
 	cgoMainC := filepath.Join(cgowork, "_cgo_main.c")
 	if _, err := os.Stat(cgoMainC); err != nil {
-		return nil // no _cgo_main.c means cgo didn't generate one
+		return nil //nolint:nilerr // missing _cgo_main.c is expected, not an error
 	}
 
 	mainO := filepath.Join(cgowork, "_cgo_main_"+uid+".o")
@@ -367,7 +369,7 @@ func cgoTestLinkAndDynimport(cc, cgowork string, opts Options, uid string, compi
 		}
 		if err2 := runIn("", cc, append(linkArgs, flag)...); err2 != nil {
 			slog.Debug("cgo test link failed (no dynamic imports)", "err", err)
-			return nil // non-fatal: just means no dynamic imports
+			return nil //nolint:nilerr // test link failure is non-fatal, just means no dynamic imports
 		}
 	}
 	if _, err := os.Stat(testLinkO); err == nil {

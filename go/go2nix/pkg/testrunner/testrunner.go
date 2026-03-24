@@ -210,15 +210,15 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		goFiles := append(append([]string{}, pkg.GoFiles...), pkg.CgoFiles...)
 		goFiles = append(goFiles, pkg.TestGoFiles...)
 		if err := compile.CompileGoPackage(compile.Options{
-			ImportPath: pkg.ImportPath,
-			SrcDir:     mergedDir,
-			Output:     internalArchive,
-			ImportCfg:  testImportCfg,
-			TrimPath:   opts.TrimPath,
-			Tags:       opts.Tags,
+			ImportPath:  pkg.ImportPath,
+			SrcDir:      mergedDir,
+			Output:      internalArchive,
+			ImportCfg:   testImportCfg,
+			TrimPath:    opts.TrimPath,
+			Tags:        opts.Tags,
 			GCFlagsList: opts.GCFlagsList,
-			GoFiles:    goFiles,
-			EmbedCfg:   mergedEmbedCfg,
+			GoFiles:     goFiles,
+			EmbedCfg:    mergedEmbedCfg,
 		}); err != nil {
 			return fmt.Errorf("compiling internal test: %w", err)
 		}
@@ -264,12 +264,12 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			recompArchive := filepath.Join(testDir, "recomp-"+sanitize(depIP)+".a")
 			slog.Info("recompiling for test", "pkg", depIP, "because", pkg.ImportPath)
 			if err := compile.CompileGoPackage(compile.Options{
-				ImportPath: depIP,
-				SrcDir:     depPkg.SrcDir,
-				Output:     recompArchive,
-				ImportCfg:  testImportCfg,
-				TrimPath:   opts.TrimPath,
-				Tags:       opts.Tags,
+				ImportPath:  depIP,
+				SrcDir:      depPkg.SrcDir,
+				Output:      recompArchive,
+				ImportCfg:   testImportCfg,
+				TrimPath:    opts.TrimPath,
+				Tags:        opts.Tags,
 				GCFlagsList: opts.GCFlagsList,
 			}); err != nil {
 				return fmt.Errorf("recompiling %s for test: %w", depIP, err)
@@ -309,15 +309,15 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		// Explicit file list: _test.go files would be classified as
 		// TestGoFiles/XTestGoFiles by ImportDir, not GoFiles.
 		if err := compile.CompileGoPackage(compile.Options{
-			ImportPath: pkg.ImportPath + "_test",
-			SrcDir:     xtestDir,
-			Output:     externalArchive,
-			ImportCfg:  testImportCfg,
-			TrimPath:   opts.TrimPath,
-			Tags:       opts.Tags,
+			ImportPath:  pkg.ImportPath + "_test",
+			SrcDir:      xtestDir,
+			Output:      externalArchive,
+			ImportCfg:   testImportCfg,
+			TrimPath:    opts.TrimPath,
+			Tags:        opts.Tags,
 			GCFlagsList: opts.GCFlagsList,
-			GoFiles:    pkg.XTestGoFiles,
-			EmbedCfg:   pkg.XTestEmbedCfg,
+			GoFiles:     pkg.XTestGoFiles,
+			EmbedCfg:    pkg.XTestEmbedCfg,
 		}); err != nil {
 			return fmt.Errorf("compiling external test: %w", err)
 		}
@@ -360,15 +360,15 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 	// Explicit file: _testmain.go starts with _ and would be ignored by ImportDir.
 	testMainArchive := filepath.Join(testDir, "testmain.a")
 	if err := compile.CompileGoPackage(compile.Options{
-		ImportPath: pkg.ImportPath + ".test",
-		PFlag:      "main",
-		SrcDir:     testDir,
-		Output:     testMainArchive,
-		ImportCfg:  testImportCfg,
-		TrimPath:   opts.TrimPath,
-		Tags:       opts.Tags,
+		ImportPath:  pkg.ImportPath + ".test",
+		PFlag:       "main",
+		SrcDir:      testDir,
+		Output:      testMainArchive,
+		ImportCfg:   testImportCfg,
+		TrimPath:    opts.TrimPath,
+		Tags:        opts.Tags,
 		GCFlagsList: opts.GCFlagsList,
-		GoFiles:    []string{"_testmain.go"},
+		GoFiles:     []string{"_testmain.go"},
 	}); err != nil {
 		return fmt.Errorf("compiling test main: %w", err)
 	}

@@ -61,7 +61,7 @@ func CheckLockfile(dir string, lockfilePath string) error {
 		sort.Strings(missing)
 		return fmt.Errorf(
 			"go.mod requires modules not found in lockfile %s:\n  %s\n\n"+
-				"The lockfile is stale. Run `go mod tidy && go2nix generate` to update it.",
+				"the lockfile is stale; run `go mod tidy && go2nix generate` to update it",
 			lockfilePath,
 			strings.Join(missing, "\n  "),
 		)

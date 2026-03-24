@@ -27,11 +27,11 @@ type Pkg struct {
 	FFiles         []string `json:"FFiles"` // .f, .F, .for, .f90 Fortran source files
 	SFiles         []string `json:"SFiles"`
 	HFiles         []string `json:"HFiles"`
-	SysoFiles      []string `json:"SysoFiles"`      // .syso system object files
-	SwigFiles      []string `json:"SwigFiles"`      // .swig files
-	SwigCXXFiles   []string `json:"SwigCXXFiles"`   // .swigcxx files
-	EmbedPatterns  []string `json:"EmbedPatterns"`   // //go:embed patterns
-	EmbedFiles     []string `json:"EmbedFiles"`      // resolved files matching embed patterns
+	SysoFiles      []string `json:"SysoFiles"`     // .syso system object files
+	SwigFiles      []string `json:"SwigFiles"`     // .swig files
+	SwigCXXFiles   []string `json:"SwigCXXFiles"`  // .swigcxx files
+	EmbedPatterns  []string `json:"EmbedPatterns"` // //go:embed patterns
+	EmbedFiles     []string `json:"EmbedFiles"`    // resolved files matching embed patterns
 	Standard       bool     `json:"Standard"`
 	DepOnly        bool     `json:"DepOnly"`
 	Imports        []string `json:"Imports"`

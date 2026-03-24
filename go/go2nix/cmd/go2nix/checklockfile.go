@@ -11,7 +11,7 @@ import (
 func runCheckLockfileCmd(args []string) {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	lockfilePath := fs.String("lockfile", "go2nix.toml", "path to go2nix.toml lockfile")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	dir := "."
 	if fs.NArg() > 0 {

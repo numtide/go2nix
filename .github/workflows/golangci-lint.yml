@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: golangci-lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/golangci-lint.yml"
+      - ".golangci.yml"
+      - "go/go2nix/**"
+      - "packages/go2nix-testgen/**"
+  pull_request:
+    paths:
+      - ".github/workflows/golangci-lint.yml"
+      - ".golangci.yml"
+      - "go/go2nix/**"
+      - "packages/go2nix-testgen/**"
+
+permissions:
+  contents: read
+
+jobs:
+  golangci-lint:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - go/go2nix
+          - packages/go2nix-testgen
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+
+      - name: Run golangci-lint (${{ matrix.module }})
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.3
+          working-directory: ${{ matrix.module }}
+          args: --config=${{ github.workspace }}/.golangci.yml ./...

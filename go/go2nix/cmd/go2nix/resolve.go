@@ -32,7 +32,7 @@ func runResolveCmd(args []string) {
 	netrcFile := fs.String("netrc-file", "", "path to .netrc file for private module authentication")
 	nixJobs := fs.Int("nix-jobs", 0, "max concurrent nix derivation add calls (0 = auto)")
 	output := fs.String("output", "", "$out path")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *src == "" || *lockfilePath == "" || *system == "" || *goBin == "" ||
 		*stdlibPath == "" || *nixBin == "" || *pname == "" || *output == "" {

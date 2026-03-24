@@ -14,7 +14,7 @@ import (
 func runTestPackagesCmd(args []string) {
 	fs := flag.NewFlagSet("test-packages", flag.ExitOnError)
 	manifest := fs.String("manifest", "", "path to test-manifest.json (required)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *manifest == "" {
 		slog.Error("usage: go2nix test-packages --manifest FILE")

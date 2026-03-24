@@ -233,7 +233,9 @@ func TestResolveEmbedCfg_IrregularFileRejected(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "real.txt"), "real")
 	// Create a symlink — should be rejected as irregular.
-	os.Symlink("real.txt", filepath.Join(dir, "link.txt"))
+	if err := os.Symlink("real.txt", filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := ResolveEmbedCfg(dir, []string{"link.txt"})
 	if err == nil {

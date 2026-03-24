@@ -2,6 +2,7 @@
 pkgs.mkShell {
   packages = [
     pkgs.go_1_26
+    pkgs.golangci-lint
     pkgs.time
     pkgs.mdbook
   ];

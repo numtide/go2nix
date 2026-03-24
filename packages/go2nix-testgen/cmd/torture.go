@@ -705,9 +705,9 @@ func generateLibSource(baseDir string, mod ModuleDef) error {
 	}
 	for _, d := range deps {
 		if d.Alias != "" {
-			buf.WriteString(fmt.Sprintf("\t%s %q\n", d.Alias, d.Path))
+			fmt.Fprintf(&buf, "\t%s %q\n", d.Alias, d.Path)
 		} else {
-			buf.WriteString(fmt.Sprintf("\t%q\n", d.Path))
+			fmt.Fprintf(&buf, "\t%q\n", d.Path)
 		}
 	}
 	buf.WriteString(")\n\n")
@@ -720,7 +720,7 @@ func generateLibSource(baseDir string, mod ModuleDef) error {
 	for _, dep := range mod.LocalDeps {
 		for _, m := range multiModules {
 			if m.Name == dep {
-				buf.WriteString(fmt.Sprintf("\tif err := %s.Run(); err != nil {\n\t\treturn err\n\t}\n", m.PkgName))
+				fmt.Fprintf(&buf, "\tif err := %s.Run(); err != nil {\n\t\treturn err\n\t}\n", m.PkgName)
 				break
 			}
 		}
