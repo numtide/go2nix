@@ -40,6 +40,14 @@
             plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
             testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
           };
+          go2nix-nix-plugin-resolve-hashes-test = pkgs.callPackage ./packages/go2nix-nix-plugin/tests/resolve-hashes-test.nix {
+            plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
+            testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
+          };
+
+          test-package-yubikey-agent-no-lockfile = callPkgWith ./packages/test-package-yubikey-agent-no-lockfile/default.nix {
+            inherit flake system;
+          };
 
           test-package-dotool = callPkgWith ./packages/test-package-dotool/default.nix {
             inherit flake system;

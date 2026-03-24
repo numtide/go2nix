@@ -5,24 +5,7 @@
 }:
 
 let
-  # Pre-fetch Go modules as a zstd-compressed tarball (single file → fast nix copy).
-  goModCacheArchive = pkgs.stdenvNoCC.mkDerivation {
-    name = "torture-project-gomodcache.tar.zst";
-    src = testFixtures + "/torture-project";
-    nativeBuildInputs = [ pkgs.go pkgs.cacert pkgs.zstd ];
-    outputHashMode = "flat";
-    outputHashAlgo = "sha256";
-    outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    phases = [ "buildPhase" ];
-    buildPhase = ''
-      export HOME=$TMPDIR
-      export GOPATH=$TMPDIR/go
-      export GOMODCACHE=$TMPDIR/gomodcache
-      cd $src
-      go mod download
-      tar -cf - -C $TMPDIR gomodcache | zstd -19 -o $out
-    '';
-  };
+  goModules = import ./torture-project-gomodcache.nix { inherit pkgs testFixtures; };
 in
 pkgs.runCommand "go2nix-nix-plugin-eval-test"
   {
@@ -30,7 +13,6 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
       pkgs.nixVersions.nix_2_34
       pkgs.go
       pkgs.jq
-      pkgs.zstd
     ];
   }
   ''
@@ -40,11 +22,16 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
     export NIX_LOG_DIR=$TMPDIR/nix/log
     mkdir -p $NIX_STORE_DIR $NIX_STATE_DIR $NIX_LOG_DIR
 
+    # Populate a writable GOMODCACHE from the download cache FOD.
     export GOMODCACHE=$TMPDIR/gomodcache
-    tar -xf ${goModCacheArchive} -C $TMPDIR --zstd
-
+    export GOPROXY="file://${goModules}"
+    export GONOSUMCHECK='*'
+    export GONOSUMDB='*'
     cp -r ${testFixtures}/torture-project $TMPDIR/torture-project
     chmod -R u+w $TMPDIR/torture-project
+    cd $TMPDIR/torture-project
+    go mod download
+    cd /
 
     result=$(nix-instantiate --eval --strict --json --read-write-mode \
       --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
