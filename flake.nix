@@ -98,6 +98,24 @@
         default = import ./devshell.nix { inherit pkgs; };
       });
 
+      checks = forAllSystems (system: pkgs:
+        let
+          flake = self;
+          callPkg = path: pkgs.callPackage path { };
+          callPkgWith = path: args: pkgs.callPackage path args;
+        in
+        {
+          go2nix-nix-plugin-eval-test = pkgs.callPackage ./packages/go2nix-nix-plugin/tests/eval-test.nix {
+            plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
+            testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
+          };
+          go2nix-nix-plugin-resolve-hashes-test = pkgs.callPackage ./packages/go2nix-nix-plugin/tests/resolve-hashes-test.nix {
+            plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
+            testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
+          };
+        }
+      );
+
       formatter = forAllSystems (_: pkgs:
         import ./formatter.nix {
           inherit pkgs;
