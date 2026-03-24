@@ -15,7 +15,7 @@ in
 goEnv.buildGoApplication {
   pname = "test-helper-pkg";
   version = "0.0.1";
-  src = ./. ;
+  src = ./.;
   goLock = ./go2nix.toml;
   doCheck = false; # TODO: enable once test-only local packages are supported
 }

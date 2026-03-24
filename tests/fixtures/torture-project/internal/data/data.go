@@ -26,7 +26,7 @@ func Run() error {
 		return err
 	}
 	var _ arrow.DataType
-	var _ = parquet.Types
+	_ = parquet.Types
 	var _ *goavro.Codec
 	var _ *parquetreader.ParquetReader
 	var _ influxdb.Client

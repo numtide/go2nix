@@ -1,5 +1,10 @@
 # Build test: dotool (cgo with xkbcommon via pkg-config).
-{ flake, pkgs, system, ... }:
+{
+  flake,
+  pkgs,
+  system,
+  ...
+}:
 import ../test-lib/run-dag-test.nix {
   inherit flake pkgs system;
   testName = "dotool";

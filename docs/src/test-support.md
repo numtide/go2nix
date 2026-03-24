@@ -34,15 +34,15 @@ Each testable package goes through these steps:
 1. **Internal test compilation** — library source files + `_test.go` files
    in the same package are compiled together into a single archive that
    replaces the library archive.
-2. **Dependent recompilation** — local packages that transitively depend on
+1. **Dependent recompilation** — local packages that transitively depend on
    the package under test are recompiled against the test archive so the
    dependency graph stays consistent (Go's "recompileForTest" logic).
-3. **External test compilation** — `_test.go` files in the `*_test` package
+1. **External test compilation** — `_test.go` files in the `*_test` package
    (xtests) are compiled as a separate package that imports the internal
    test archive.
-4. **Test main generation** — a `_testmain.go` is generated that registers
+1. **Test main generation** — a `_testmain.go` is generated that registers
    all `Test*`, `Benchmark*`, `Fuzz*`, and `Example*` functions.
-5. **Link and run** — the test binary is linked and executed in the package's
+1. **Link and run** — the test binary is linked and executed in the package's
    source directory.
 
 ### Internal tests vs external tests (xtests)

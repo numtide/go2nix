@@ -11,7 +11,7 @@ in
 goEnv.buildGoApplication {
   pname = "testify-basic";
   version = "0.0.1";
-  src = ./. ;
+  src = ./.;
   goLock = ./go2nix.toml;
   doCheck = true;
 }

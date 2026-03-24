@@ -11,6 +11,6 @@ in
 goEnv.buildGoApplication {
   pname = "go2nix-testgen";
   version = "0.0.1";
-  src = ./. ;
+  src = ./.;
   goLock = ./go2nix.toml;
 }

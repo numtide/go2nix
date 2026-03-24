@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"encoding/xml"
+
 	btoml "github.com/BurntSushi/toml"
 	goenv "github.com/Netflix/go-env"
 	"github.com/alecthomas/kong"
@@ -36,12 +37,12 @@ import (
 
 // Run exercises imported packages.
 func Run() error {
-	var _ = godotenv.Load
-	var _ = envconfig.Process
+	_ = godotenv.Load
+	_ = envconfig.Process
 	_ = koanf.New(".")
-	var _ = goenv.UnmarshalFromEnviron
-	var _ = cleanenv.ReadEnv
-	var _ = envparse.Parse
+	_ = goenv.UnmarshalFromEnviron
+	_ = cleanenv.ReadEnv
+	_ = envparse.Parse
 	var _ *json.Decoder
 	var _ *toml.Decoder
 	var _ *yaml.Decoder
@@ -53,7 +54,7 @@ func Run() error {
 	var _ *csv.Reader
 	var _ *zstd.Decoder
 	_ = hashstructure.FormatV2
-	var _ = msgpack2.Marshal
+	_ = msgpack2.Marshal
 	_ = cobra.Command{}
 	_ = viper.New()
 	_ = cli.App{}

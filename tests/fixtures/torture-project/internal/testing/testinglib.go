@@ -26,16 +26,16 @@ func Run() error {
 	if err := common.Run(); err != nil {
 		return err
 	}
-	var _ = assert.Equal
-	var _ = require.Equal
-	var _ = ginkgo.Describe
-	var _ = gomega.Expect
-	var _ = httpmock.Activate
-	var _ = sqlmock.New
+	_ = assert.Equal
+	_ = require.Equal
+	_ = ginkgo.Describe
+	_ = gomega.Expect
+	_ = httpmock.Activate
+	_ = sqlmock.New
 	var _ *gomock.Controller
 	_ = gofakeit.Name()
 	_ = ghapi.NewClient(nil)
-	var _ = gock.New
+	_ = gock.New
 	_ = openai.ChatCompletionRequest{}
 	_ = ollamaapi.ChatRequest{}
 	_ = pgvector.NewVector(nil)

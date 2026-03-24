@@ -3,6 +3,10 @@
 package web
 
 import (
+	htmltemplate "html/template"
+	"net/http"
+	texttemplate "text/template"
+
 	sprig "github.com/Masterminds/sprig/v3"
 	templ "github.com/a-h/templ"
 	pongo2 "github.com/flosch/pongo2/v6"
@@ -24,9 +28,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/quicktemplate"
-	htmltemplate "html/template"
-	"net/http"
-	texttemplate "text/template"
 )
 
 // Run exercises imported packages.
@@ -48,7 +49,7 @@ func Run() error {
 	_ = cors.Options{}
 	_ = validator.New()
 	var _ sessions.Store
-	var _ = csrf.Protect
+	_ = csrf.Protect
 	_ = zerolog.Logger{}
 	_ = resty.New()
 	var _ *fasthttp.Server

@@ -113,7 +113,7 @@ and uses `goAppHook` (link-go-binary.sh) to invoke the Go CLI:
 1. **Build phase** — writes `linkManifestJSON` to a file and calls
    `go2nix link-binary --manifest`, which validates the lockfile, generates
    modinfo, compiles main packages, and invokes the linker.
-2. **Check phase** — writes `testManifestJSON` to a file and calls
+1. **Check phase** — writes `testManifestJSON` to a file and calls
    `go2nix test-packages --manifest`, which discovers testable local packages,
    compiles test archives, and runs them.
 

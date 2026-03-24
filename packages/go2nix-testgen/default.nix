@@ -9,11 +9,10 @@
   ...
 }:
 if !(flake.packages.${system} ? go2nix-nix-plugin) then
-  pkgs.runCommand "go2nix-testgen-unsupported" { meta.platforms = pkgs.lib.platforms.linux; }
-    ''
-      echo "go2nix-testgen requires go2nix-nix-plugin (Linux only)" >&2
-      exit 1
-    ''
+  pkgs.runCommand "go2nix-testgen-unsupported" { meta.platforms = pkgs.lib.platforms.linux; } ''
+    echo "go2nix-testgen requires go2nix-nix-plugin (Linux only)" >&2
+    exit 1
+  ''
 else
   let
     plugin = flake.packages.${system}.go2nix-nix-plugin;

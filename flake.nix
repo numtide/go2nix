@@ -15,17 +15,23 @@
   };
 
   outputs =
-    { self, nixpkgs, treefmt-nix }:
+    {
+      self,
+      nixpkgs,
+      treefmt-nix,
+    }:
     let
       systems = [
         "x86_64-linux"
         "aarch64-linux"
         "aarch64-darwin"
       ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system (import nixpkgs { inherit system; }));
+      forAllSystems =
+        f: nixpkgs.lib.genAttrs systems (system: f system (import nixpkgs { inherit system; }));
     in
     {
-      packages = forAllSystems (system: pkgs:
+      packages = forAllSystems (
+        system: pkgs:
         let
           callPkg = path: pkgs.callPackage path { };
           callPkgWith = path: args: pkgs.callPackage path args;
@@ -40,14 +46,18 @@
             plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
             testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
           };
-          go2nix-nix-plugin-resolve-hashes-test = pkgs.callPackage ./packages/go2nix-nix-plugin/tests/resolve-hashes-test.nix {
-            plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
-            testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
-          };
+          go2nix-nix-plugin-resolve-hashes-test =
+            pkgs.callPackage ./packages/go2nix-nix-plugin/tests/resolve-hashes-test.nix
+              {
+                plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
+                testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
+              };
 
-          test-package-yubikey-agent-no-lockfile = callPkgWith ./packages/test-package-yubikey-agent-no-lockfile/default.nix {
-            inherit flake system;
-          };
+          test-package-yubikey-agent-no-lockfile =
+            callPkgWith ./packages/test-package-yubikey-agent-no-lockfile/default.nix
+              {
+                inherit flake system;
+              };
 
           test-package-dotool = callPkgWith ./packages/test-package-dotool/default.nix {
             inherit flake system;
@@ -85,42 +95,62 @@
           benchmark-build = callPkgWith ./packages/benchmark-build/default.nix {
             inherit flake system;
           };
-          benchmark-build-cross-app-isolation = callPkgWith ./packages/benchmark-build-cross-app-isolation/default.nix {
-            inherit flake system;
-          };
+          benchmark-build-cross-app-isolation =
+            callPkgWith ./packages/benchmark-build-cross-app-isolation/default.nix
+              {
+                inherit flake system;
+              };
           benchmark-eval = callPkgWith ./packages/benchmark-eval/default.nix {
             inherit flake system;
           };
         }
       );
 
-      devShells = forAllSystems (_: pkgs: {
-        default = import ./devshell.nix { inherit pkgs; };
-      });
+      devShells = forAllSystems (
+        _: pkgs: {
+          default = import ./devshell.nix { inherit pkgs; };
+        }
+      );
 
-      checks = forAllSystems (system: pkgs:
+      checks = forAllSystems (
+        _system: pkgs:
         let
-          flake = self;
           callPkg = path: pkgs.callPackage path { };
           callPkgWith = path: args: pkgs.callPackage path args;
+          treefmt = import ./formatter.nix {
+            inherit pkgs;
+            inputs = { inherit treefmt-nix; };
+          };
         in
         {
+          formatting = treefmt.check self;
           go2nix-nix-plugin-eval-test = pkgs.callPackage ./packages/go2nix-nix-plugin/tests/eval-test.nix {
             plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
             testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
           };
-          go2nix-nix-plugin-resolve-hashes-test = pkgs.callPackage ./packages/go2nix-nix-plugin/tests/resolve-hashes-test.nix {
-            plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
-            testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
+          go2nix-nix-plugin-resolve-hashes-test =
+            pkgs.callPackage ./packages/go2nix-nix-plugin/tests/resolve-hashes-test.nix
+              {
+                plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
+                testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
+              };
+          golangci-lint-go2nix = callPkgWith ./packages/golangci-lint-go2nix/default.nix {
+            go2nix = callPkg ./packages/go2nix/default.nix;
           };
+          golangci-lint-go2nix-testgen = callPkg ./packages/golangci-lint-go2nix-testgen/default.nix;
+          check-godebug-table = callPkg ./packages/check-godebug-table/default.nix;
         }
       );
 
-      formatter = forAllSystems (_: pkgs:
-        import ./formatter.nix {
-          inherit pkgs;
-          inputs = { inherit treefmt-nix; };
-        }
+      formatter = forAllSystems (
+        _: pkgs:
+        let
+          treefmt = import ./formatter.nix {
+            inherit pkgs;
+            inputs = { inherit treefmt-nix; };
+          };
+        in
+        treefmt.wrapper
       );
 
       lib = import ./lib.nix { };

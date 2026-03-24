@@ -1,7 +1,16 @@
 { pkgs, ... }:
 
 let
-  inherit (pkgs) lib stdenv rustPlatform pkg-config cmake boost nlohmann_json nixVersions;
+  inherit (pkgs)
+    lib
+    stdenv
+    rustPlatform
+    pkg-config
+    cmake
+    boost
+    nlohmann_json
+    nixVersions
+    ;
   nixComponents = nixVersions.nix_2_34.libs;
 
   core = rustPlatform.buildRustPackage {

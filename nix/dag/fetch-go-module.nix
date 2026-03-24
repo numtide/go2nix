@@ -61,14 +61,20 @@ stdenvNoCC.mkDerivation {
       else
         ""
     }
-  '' + (if sourceOnly then ''
-    export GOMODCACHE=$TMPDIR/modcache
-    go mod download "${fetchPath}@${version}"
-    cp -r "$TMPDIR/modcache/${dirSuffix}" "$out"
-  '' else ''
-    export GOMODCACHE=$out
-    go mod download "${fetchPath}@${version}"
-  '');
+  ''
+  + (
+    if sourceOnly then
+      ''
+        export GOMODCACHE=$TMPDIR/modcache
+        go mod download "${fetchPath}@${version}"
+        cp -r "$TMPDIR/modcache/${dirSuffix}" "$out"
+      ''
+    else
+      ''
+        export GOMODCACHE=$out
+        go mod download "${fetchPath}@${version}"
+      ''
+  );
 
   # Skip other phases.
   dontInstall = true;

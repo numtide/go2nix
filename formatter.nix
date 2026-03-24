@@ -1,6 +1,6 @@
 { pkgs, inputs, ... }:
 let
-  treefmt-settings = {
+  treefmtModule = inputs.treefmt-nix.lib.evalModule pkgs {
     projectRootFile = "flake.nix";
     programs = {
       # nix
@@ -45,4 +45,4 @@ let
     };
   };
 in
-inputs.treefmt-nix.lib.mkWrapper pkgs treefmt-settings
+treefmtModule.config.build

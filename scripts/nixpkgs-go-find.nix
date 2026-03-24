@@ -20,22 +20,12 @@ let
     isAttrs
     map
     concatLists
-    any
     elem
     length
     head
     ;
 
   # Check if a dependency list contains pkg-config.
-  hasPkgConfig =
-    deps:
-    any (
-      dep:
-      let
-        r = tryEval (dep.pname or "");
-      in
-      r.success && (r.value == "pkg-config" || r.value == "pkg-config-wrapper")
-    ) deps;
 
   # Extract dependency names, excluding common Go/Nix tooling.
   depNames =
@@ -88,8 +78,7 @@ let
             biR = tryEval (pkg.buildInputs or [ ]);
             nbi = if nbiR.success then nbiR.value else [ ];
             bi = if biR.success then biR.value else [ ];
-          in
-          let
+
             pnameR = tryEval (pkg.pname or name);
             versionR = tryEval (pkg.version or "unknown");
             srcUrlR = tryEval (

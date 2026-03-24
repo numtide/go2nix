@@ -1,5 +1,10 @@
 # Build test: nwg-drawer (cgo with GTK3/GTK Layer Shell).
-{ flake, pkgs, system, ... }:
+{
+  flake,
+  pkgs,
+  system,
+  ...
+}:
 import ../test-lib/run-dag-test.nix {
   inherit flake pkgs system;
   testName = "nwg-drawer";

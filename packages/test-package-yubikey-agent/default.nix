@@ -1,5 +1,10 @@
 # Build test: yubikey-agent with lockfile (default mode).
-{ flake, pkgs, system, ... }:
+{
+  flake,
+  pkgs,
+  system,
+  ...
+}:
 import ../test-lib/run-dag-test.nix {
   inherit flake pkgs system;
   testName = "yubikey-agent";
