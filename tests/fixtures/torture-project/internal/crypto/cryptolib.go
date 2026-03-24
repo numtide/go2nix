@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+
 	casbin "github.com/casbin/casbin/v2"
 	"github.com/cloudflare/circl/sign/ed448"
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -38,12 +39,12 @@ func Run() error {
 	_ = tls.Config{}
 	var _ ed25519.PublicKey
 	_ = sha256.New()
-	var _ = rand.Reader
+	_ = rand.Reader
 	var _ ed448.PublicKey
 	_ = argon2.IDKey
 	_ = naclbox.Overhead
 	_ = chacha20poly1305.KeySize
-	var _ = hmac.New
+	_ = hmac.New
 	_ = aes.BlockSize
 	_ = oauth2.Token{}
 	var _ *google.Credentials

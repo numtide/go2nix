@@ -1,5 +1,10 @@
 # Build test: vinegar (puregotk, no CGO for GTK libs).
-{ flake, pkgs, system, ... }:
+{
+  flake,
+  pkgs,
+  system,
+  ...
+}:
 import ../test-lib/run-dag-test.nix {
   inherit flake pkgs system;
   testName = "vinegar";

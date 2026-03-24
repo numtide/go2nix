@@ -12,7 +12,7 @@ compileGoPkgBuildPhase() {
   runHook preBuild
 
   # Write manifest JSON to a file for go2nix to read.
-  echo "$compileManifestJSON" > "$NIX_BUILD_TOP/compile-manifest.json"
+  echo "$compileManifestJSON" >"$NIX_BUILD_TOP/compile-manifest.json"
 
   mkdir -p "$out/$(dirname "$goPackagePath")"
 

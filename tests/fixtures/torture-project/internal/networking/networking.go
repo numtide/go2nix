@@ -25,7 +25,7 @@ func Run() error {
 	_ = memberlist.DefaultLANConfig()
 	var _ raft.FSM
 	_ = interp.New(interp.Options{})
-	var _ = ghwebhooks.New
+	_ = ghwebhooks.New
 	var _ *nhws.Conn
 	_ = sarama.NewConfig()
 	var _ *kgo.Client

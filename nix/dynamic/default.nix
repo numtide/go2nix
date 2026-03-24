@@ -61,7 +61,8 @@ let
   # Validate packageOverrides: experimental mode only supports nativeBuildInputs.
   # Derivations are synthesized at build time by `go2nix resolve`, so env and
   # other attrs cannot be forwarded. Fail early instead of silently dropping.
-  validatedOverrides = lib.mapAttrs (path: cfg:
+  validatedOverrides = lib.mapAttrs (
+    path: cfg:
     let
       knownAttrs = [ "nativeBuildInputs" ];
       unknownAttrs = builtins.attrNames (builtins.removeAttrs cfg knownAttrs);

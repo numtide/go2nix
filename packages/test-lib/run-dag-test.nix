@@ -14,7 +14,7 @@
   # Which dag.nix to evaluate
   dagFile,
   # Shell command to verify the build output; $result is the store path.
-  checkCommand ? ''$result/bin/${testName} --help'',
+  checkCommand ? "$result/bin/${testName} --help",
 }:
 if !(flake.packages.${system} ? go2nix-nix-plugin) then
   pkgs.runCommand "test-dag-package-${testName}-unsupported"
@@ -30,18 +30,25 @@ else
     inherit (pkgs) go;
 
     nixpkgsPath = pkgs.path;
-    go2nixSrc = flake;
 
-    goModules = (pkgs.buildGoModule {
-      pname = "${testName}-modules";
-      version = "0-test";
-      inherit src vendorHash;
-      proxyVendor = true;
-    }).goModules;
+    inherit
+      (
+        (pkgs.buildGoModule {
+          pname = "${testName}-modules";
+          version = "0-test";
+          inherit src vendorHash;
+          proxyVendor = true;
+        })
+      )
+      goModules
+      ;
   in
   pkgs.runCommand "test-dag-package-${testName}"
     {
-      nativeBuildInputs = [ nix go ];
+      nativeBuildInputs = [
+        nix
+        go
+      ];
       requiredSystemFeatures = [ "recursive-nix" ];
     }
     ''

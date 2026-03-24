@@ -17,7 +17,7 @@ linkGoBinaryBuildPhase() {
   runHook preBuild
 
   # Write link manifest JSON to a file for go2nix to read.
-  echo "$linkManifestJSON" > "$NIX_BUILD_TOP/link-manifest.json"
+  echo "$linkManifestJSON" >"$NIX_BUILD_TOP/link-manifest.json"
 
   @go2nix@ link-binary \
     --manifest "$NIX_BUILD_TOP/link-manifest.json" \
@@ -39,7 +39,7 @@ linkGoBinaryCheckPhase() {
   runHook preCheck
 
   # Write test manifest JSON to a file for go2nix to read.
-  echo "$testManifestJSON" > "$NIX_BUILD_TOP/test-manifest.json"
+  echo "$testManifestJSON" >"$NIX_BUILD_TOP/test-manifest.json"
 
   @go2nix@ test-packages \
     --manifest "$NIX_BUILD_TOP/test-manifest.json"

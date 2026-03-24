@@ -11,7 +11,7 @@ in
 goEnv.buildGoApplication {
   pname = "modroot-nested";
   version = "0.0.1";
-  src = ./. ;
+  src = ./.;
   goLock = ./app/go2nix.toml;
   modRoot = "app";
 }

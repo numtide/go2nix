@@ -19,14 +19,8 @@ let
   go = pkgs.go_1_26;
 
   hasPlugin = flake.packages.${system} ? go2nix-nix-plugin;
-  plugin =
-    if hasPlugin
-    then flake.packages.${system}.go2nix-nix-plugin
-    else null;
-  pluginPath =
-    if plugin != null
-    then "${plugin}/lib/nix/plugins/libgo2nix_plugin.so"
-    else "";
+  plugin = if hasPlugin then flake.packages.${system}.go2nix-nix-plugin else null;
+  pluginPath = if plugin != null then "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" else "";
 
   fixturePath = "${go2nixSrc}/tests/fixtures/torture-project";
 
@@ -36,7 +30,10 @@ let
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
     outputHash = "sha256-ttQDH0XOt3iKQr/WWDhRLrhAwdwoYuuTSqO3rw7yTDE=";
-    nativeBuildInputs = [ go pkgs.cacert ];
+    nativeBuildInputs = [
+      go
+      pkgs.cacert
+    ];
     dontUnpack = true;
     buildPhase = ''
       export HOME=$TMPDIR

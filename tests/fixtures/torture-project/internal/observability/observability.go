@@ -3,6 +3,8 @@
 package observability
 
 import (
+	"log/slog"
+
 	statsd "github.com/DataDog/datadog-go/v5/statsd"
 	gogoproto "github.com/gogo/protobuf/proto"
 	pyroscope "github.com/grafana/pyroscope-go"
@@ -28,7 +30,6 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"log/slog"
 )
 
 // Run exercises imported packages.
@@ -52,11 +53,11 @@ func Run() error {
 	_ = statsd.Option(nil)
 	_ = model.LabelName("")
 	var _ *otelprom.Exporter
-	var _ = otlpmetricgrpc.New
-	var _ = otlptracegrpc.New
+	_ = otlpmetricgrpc.New
+	_ = otlptracegrpc.New
 	var _ *sdkmetric.MeterProvider
-	var _ = otelhttp.NewHandler
-	var _ = otelgrpc.NewClientHandler
+	_ = otelhttp.NewHandler
+	_ = otelgrpc.NewClientHandler
 	var _ *ottl.Parser[any]
 	_ = promlabels.Labels{}
 	var _ gogoproto.Message

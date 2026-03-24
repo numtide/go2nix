@@ -4,6 +4,8 @@ package conflictb
 
 import (
 	"database/sql"
+	"net/http"
+
 	"github.com/cockroachdb/pebble"
 	badger "github.com/dgraph-io/badger/v4"
 	elasticsearch "github.com/elastic/go-elasticsearch/v8"
@@ -33,7 +35,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"net/http"
 )
 
 // Run exercises imported packages.
@@ -52,7 +53,7 @@ func Run() error {
 	_ = cors.Options{}
 	_ = validator.New()
 	var _ sessions.Store
-	var _ = csrf.Protect
+	_ = csrf.Protect
 	_ = zerolog.Logger{}
 	_ = resty.New()
 	var _ *fasthttp.Server

@@ -10,7 +10,8 @@
   ...
 }:
 if !(flake.packages.${system} ? go2nix-nix-plugin) then
-  pkgs.runCommand "test-dag-fixture-torture-app-full-unsupported" { meta.platforms = pkgs.lib.platforms.linux; }
+  pkgs.runCommand "test-dag-fixture-torture-app-full-unsupported"
+    { meta.platforms = pkgs.lib.platforms.linux; }
     ''
       echo "test-dag-fixture-torture-app-full requires go2nix-nix-plugin (Linux only)" >&2
       exit 1

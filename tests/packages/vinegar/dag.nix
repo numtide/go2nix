@@ -20,16 +20,22 @@ let
   };
 
   # Pre-compile the GLib resource bundle so go:embed can find it.
-  src = pkgs.runCommand "vinegar-src-with-gresource" {
-    nativeBuildInputs = [ pkgs.glib pkgs.libxml2 ];
-  } ''
-    cp -r ${vinegar-src} $out
-    chmod -R u+w $out
-    glib-compile-resources \
-      --sourcedir=$out/data \
-      --target=$out/internal/gutil/vinegar.gresource \
-      $out/data/vinegar.gresource.xml
-  '';
+  src =
+    pkgs.runCommand "vinegar-src-with-gresource"
+      {
+        nativeBuildInputs = [
+          pkgs.glib
+          pkgs.libxml2
+        ];
+      }
+      ''
+        cp -r ${vinegar-src} $out
+        chmod -R u+w $out
+        glib-compile-resources \
+          --sourcedir=$out/data \
+          --target=$out/internal/gutil/vinegar.gresource \
+          $out/data/vinegar.gresource.xml
+      '';
 in
 goEnv.buildGoApplication {
   inherit src;
@@ -39,5 +45,11 @@ goEnv.buildGoApplication {
   subPackages = [ "./cmd/vinegar" ];
   # puregotk's init() calls pkg-config to locate GTK4 libs at runtime;
   # tests that transitively import puregotk need these in the sandbox.
-  nativeCheckInputs = with pkgs; [ pkg-config gtk4 graphene libadwaita gtk-layer-shell ];
+  nativeCheckInputs = with pkgs; [
+    pkg-config
+    gtk4
+    graphene
+    libadwaita
+    gtk-layer-shell
+  ];
 }

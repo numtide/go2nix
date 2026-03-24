@@ -55,7 +55,7 @@
   # the module root, so test discovery/compilation may fail. Users can override
   # with doCheck = true if their layout doesn't use out-of-tree replaces.
   doCheck ? (modRoot == "."),
-  checkFlags ? [],
+  checkFlags ? [ ],
   ...
 }@args:
 
@@ -68,24 +68,37 @@ let
   # Passed as an env var (not builtins.toFile) because the manifest
   # references store paths of other derivations. The shell hook writes
   # it to a file before invoking go2nix.
-  mkCompileManifestJSON = deps: builtins.toJSON {
-    version = 1;
-    kind = "compile";
-    importcfgParts = [ "${stdlib}/importcfg" ]
-      ++ map (dep: "${dep}/importcfg") deps;
-    inherit tags;
-    gcflags =
-      let base = gcflags; in
-      if buildMode == "pie" then [ "-shared" ] ++ base else base;
-    pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
-  };
+  mkCompileManifestJSON =
+    deps:
+    builtins.toJSON {
+      version = 1;
+      kind = "compile";
+      importcfgParts = [ "${stdlib}/importcfg" ] ++ map (dep: "${dep}/importcfg") deps;
+      inherit tags;
+      gcflags =
+        let
+          base = gcflags;
+        in
+        if buildMode == "pie" then [ "-shared" ] ++ base else base;
+      pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
+    };
 
   # Match Go's internal/platform.DefaultPIE: PIE for darwin, windows, android, ios.
   buildMode =
-    let goos = stdenv.hostPlatform.go.GOOS; in
-    if builtins.elem goos [ "darwin" "windows" "android" "ios" ]
-    then "pie"
-    else "exe";
+    let
+      goos = stdenv.hostPlatform.go.GOOS;
+    in
+    if
+      builtins.elem goos [
+        "darwin"
+        "windows"
+        "android"
+        "ios"
+      ]
+    then
+      "pie"
+    else
+      "exe";
 
   # --- Module resolution ---
   #
@@ -97,10 +110,7 @@ let
   hasLockfile = goLock != null;
 
   lockfileModTable =
-    if hasLockfile then
-      (builtins.fromTOML (builtins.readFile goLock)).mod or { }
-    else
-      { };
+    if hasLockfile then (builtins.fromTOML (builtins.readFile goLock)).mod or { } else { };
 
   parseModEntry =
     modKey: hash:
@@ -146,8 +156,7 @@ let
     if hasLockfile then
       { }
     else
-      builtins.mapAttrs (modKey: hash: parseModEntry modKey hash)
-        (goPackagesResult.moduleHashes or { });
+      builtins.mapAttrs (modKey: hash: parseModEntry modKey hash) (goPackagesResult.moduleHashes or { });
 
   # Merge: lockfile modules take precedence, plugin modules fill in the rest.
   allModules = pluginModules // lockfileModules;
@@ -178,7 +187,8 @@ let
         sourceOnly = !hasLockfile;
       };
     in
-    mod // {
+    mod
+    // {
       dir = if hasLockfile then "${src}/${mod.dirSuffix}" else "${src}";
     }
   ) resolvedModules;
@@ -248,8 +258,9 @@ let
         path = src;
         name = "golocal-${helpers.sanitizeName importPath}-src";
         filter =
-          path: type:
-          if isRoot then true
+          path: _type:
+          if isRoot then
+            true
           else
             let
               rel = lib.removePrefix (toString src + "/") (toString path);
@@ -257,7 +268,8 @@ let
             # Allow the root directory itself.
             path == toString src
             # Allow exact match and children of this package's directory.
-            || rel == relDir || lib.hasPrefix (relDir + "/") rel
+            || rel == relDir
+            || lib.hasPrefix (relDir + "/") rel
             # Allow parent directories so Nix descends into them.
             || lib.hasPrefix (rel + "/") relDir;
       };
@@ -265,8 +277,9 @@ let
       srcDir = if isRoot then "${pkgSrc}" else "${pkgSrc}/${relDir}";
 
       # Dependencies: other local packages + third-party packages.
-      deps = map (imp: localPackages.${imp}) pkg.localImports
-           ++ map (imp: packages.${imp}) pkg.thirdPartyImports;
+      deps =
+        map (imp: localPackages.${imp}) pkg.localImports
+        ++ map (imp: packages.${imp}) pkg.thirdPartyImports;
 
       # CGO handling: same pattern as third-party packages.
       isCgo = pkg.isCgo or false;
@@ -285,9 +298,11 @@ let
     in
     # Safety (defense-in-depth): reject paths with ".." path components.
     # The plugin already validates via canonical()/relative(), but guard here too.
-    assert !(builtins.any (c: c == "..") (lib.splitString "/" relDir))
+    assert
+      !(builtins.any (c: c == "..") (lib.splitString "/" relDir))
       || builtins.throw "go2nix: local package '${importPath}' has dir '${relDir}' outside source tree";
-    assert unknownAttrs == [ ]
+    assert
+      unknownAttrs == [ ]
       || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
     mkDeriv {
       name = "golocal-${helpers.sanitizeName importPath}";
@@ -319,12 +334,16 @@ let
     let
       thirdPartyEntries = map (
         importPath:
-        let pkg = packages.${importPath}; in
+        let
+          pkg = packages.${importPath};
+        in
         "packagefile ${importPath}=${pkg}/${importPath}.a"
       ) (builtins.attrNames packages);
       localEntries = map (
         importPath:
-        let pkg = localPackages.${importPath}; in
+        let
+          pkg = localPackages.${importPath};
+        in
         "packagefile ${importPath}=${pkg}/${importPath}.a"
       ) (builtins.attrNames localPackages);
     in
@@ -353,49 +372,50 @@ let
   # plugin's second `go list -deps -test` pass. Built with the same pipeline
   # as normal third-party packages. Their dependencies may include packages
   # from the normal `packages` set.
-  testPackages = lib.optionalAttrs doCheck (builtins.mapAttrs (
-    importPath: pkg:
-    let
-      minfo = moduleInfo.${pkg.modKey};
-      srcDir = if pkg.subdir == "" then minfo.dir else "${minfo.dir}/${pkg.subdir}";
+  testPackages = lib.optionalAttrs doCheck (
+    builtins.mapAttrs (
+      importPath: pkg:
+      let
+        minfo = moduleInfo.${pkg.modKey};
+        srcDir = if pkg.subdir == "" then minfo.dir else "${minfo.dir}/${pkg.subdir}";
 
-      # Dependencies: may reference both normal and test-only third-party packages.
-      deps = map (imp:
-        if builtins.hasAttr imp packages then packages.${imp}
-        else testPackages.${imp}
-      ) pkg.imports;
+        # Dependencies: may reference both normal and test-only third-party packages.
+        deps = map (
+          imp: if builtins.hasAttr imp packages then packages.${imp} else testPackages.${imp}
+        ) pkg.imports;
 
-      isCgo = pkg.isCgo or false;
-      cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-      mkDeriv = if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation;
+        isCgo = pkg.isCgo or false;
+        cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
+        mkDeriv = if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation;
 
-      pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
-      knownOverrideAttrs = [
-        "nativeBuildInputs"
-        "env"
-      ];
-      unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
-      extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
-      extraEnv = pkgOverride.env or { };
-    in
-    assert
-      unknownAttrs == [ ]
-      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
-    mkDeriv {
-      name = pkg.drvName;
-      __structuredAttrs = true;
+        pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
+        knownOverrideAttrs = [
+          "nativeBuildInputs"
+          "env"
+        ];
+        unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
+        extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
+        extraEnv = pkgOverride.env or { };
+      in
+      assert
+        unknownAttrs == [ ]
+        || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
+      mkDeriv {
+        name = pkg.drvName;
+        __structuredAttrs = true;
 
-      nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
-      buildInputs = deps;
+        nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
+        buildInputs = deps;
 
-      env = {
-        goPackagePath = importPath;
-        goPackageSrcDir = srcDir;
-        compileManifestJSON = mkCompileManifestJSON deps;
+        env = {
+          goPackagePath = importPath;
+          goPackageSrcDir = srcDir;
+          compileManifestJSON = mkCompileManifestJSON deps;
+        }
+        // extraEnv;
       }
-      // extraEnv;
-    }
-  ) goPackagesResult.testPackages);
+    ) goPackagesResult.testPackages
+  );
 
   # --- Test importcfg bundle (only when doCheck = true) ---
   # Superset of depsImportcfg: includes stdlib + all build third-party + local
@@ -407,7 +427,9 @@ let
     let
       testOnlyEntries = map (
         importPath:
-        let pkg = testPackages.${importPath}; in
+        let
+          pkg = testPackages.${importPath};
+        in
         "packagefile ${importPath}=${pkg}/${importPath}.a"
       ) (builtins.attrNames testPackages);
       testOnlyImportcfg = lib.concatStringsSep "\n" testOnlyEntries;
@@ -441,9 +463,12 @@ let
   # Source for the final link derivation: only the main package directories.
   mainSrc =
     let
-      subPkgDirs = map (sp:
-        let clean = lib.removePrefix "./" sp;
-        in if modRoot == "." then clean else "${modRoot}/${clean}"
+      subPkgDirs = map (
+        sp:
+        let
+          clean = lib.removePrefix "./" sp;
+        in
+        if modRoot == "." then clean else "${modRoot}/${clean}"
       ) normalizedSubPackages;
       # Include modRoot for go.mod access.
       allowedDirs = [ modRoot ] ++ subPkgDirs;
@@ -455,8 +480,9 @@ let
       path = src;
       name = "${pname}-main-src";
       filter =
-        path: type:
-        if includeAll then true
+        path: _type:
+        if includeAll then
+          true
         else
           let
             rel = lib.removePrefix (toString src + "/") (toString path);
@@ -492,48 +518,45 @@ let
 
   # Test manifest: only materialized when doCheck = true.
   # Selects testDepsImportcfg when test-only deps exist, depsImportcfg otherwise.
-  hasTestDeps = doCheck
-    && goPackagesResult ? testPackages
-    && goPackagesResult.testPackages != { };
+  hasTestDeps = doCheck && goPackagesResult ? testPackages && goPackagesResult.testPackages != { };
 
   linkManifestJSON = builtins.toJSON {
     version = 1;
     kind = "link";
     importcfgParts = [ "${depsImportcfg}/importcfg" ];
-    localArchives = builtins.mapAttrs (
-      importPath: pkg: "${pkg}/${importPath}.a"
-    ) localPackages;
+    localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
     subPackages = normalizedSubPackages;
-    moduleRoot = moduleRoot;
+    inherit moduleRoot;
     lockfile =
-      if goLock != null
-      then "${builtins.path { path = goLock; name = "go2nix-lockfile"; }}"
-      else null;
-    pname = pname;
+      if goLock != null then
+        "${builtins.path {
+          path = goLock;
+          name = "go2nix-lockfile";
+        }}"
+      else
+        null;
+    inherit pname;
     goos = stdenv.hostPlatform.go.GOOS or null;
     goarch = stdenv.hostPlatform.go.GOARCH or null;
-    ldflags = ldflags;
+    inherit ldflags;
     inherit tags;
-    gcflags = gcflags;
+    inherit gcflags;
     pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
   };
 
-  testManifestJSON = lib.optionalString doCheck (builtins.toJSON {
-    version = 1;
-    kind = "test";
-    importcfgParts =
-      if hasTestDeps
-      then [ "${testDepsImportcfg}/importcfg" ]
-      else [ "${depsImportcfg}/importcfg" ];
-    localArchives = builtins.mapAttrs (
-      importPath: pkg: "${pkg}/${importPath}.a"
-    ) localPackages;
-    moduleRoot = moduleRoot;
-    inherit tags;
-    gcflags =
-      if buildMode == "pie" then [ "-shared" ] ++ gcflags else gcflags;
-    checkFlags = checkFlags;
-  });
+  testManifestJSON = lib.optionalString doCheck (
+    builtins.toJSON {
+      version = 1;
+      kind = "test";
+      importcfgParts =
+        if hasTestDeps then [ "${testDepsImportcfg}/importcfg" ] else [ "${depsImportcfg}/importcfg" ];
+      localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
+      inherit moduleRoot;
+      inherit tags;
+      gcflags = if buildMode == "pie" then [ "-shared" ] ++ gcflags else gcflags;
+      inherit checkFlags;
+    }
+  );
 
 in
 stdenv.mkDerivation (
@@ -550,8 +573,7 @@ stdenv.mkDerivation (
     inherit doCheck;
 
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
-    buildInputs = [ depsImportcfg ]
-      ++ lib.optional doCheck testDepsImportcfg;
+    buildInputs = [ depsImportcfg ] ++ lib.optional doCheck testDepsImportcfg;
 
     disallowedReferences = lib.optional (!allowGoReference) go;
 

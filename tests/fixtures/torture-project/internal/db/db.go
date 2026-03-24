@@ -4,6 +4,7 @@ package db
 
 import (
 	"database/sql"
+
 	"entgo.io/ent"
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/Masterminds/squirrel"
@@ -52,14 +53,14 @@ func Run() error {
 	var _ *bun.DB
 	_ = goose.Up
 	var _ *gorm.DB
-	var _ = gormpostgres.Open
+	_ = gormpostgres.Open
 	var _ ent.Value
 	var _ *entsql.Driver
 	_ = gormcaches.Config{}
 	_ = sqlbuilder.Select("")
 	_ = goqu.Dialect("")
 	_ = squirrel.Select("")
-	var _ = pgxscan.Select
+	_ = pgxscan.Select
 	var _ *pgxpool.Pool
 	return nil
 }
