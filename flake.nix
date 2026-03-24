@@ -117,8 +117,13 @@
         let
           callPkg = path: pkgs.callPackage path { };
           callPkgWith = path: args: pkgs.callPackage path args;
+          treefmt = import ./formatter.nix {
+            inherit pkgs;
+            inputs = { inherit treefmt-nix; };
+          };
         in
         {
+          formatting = treefmt.check self;
           go2nix-nix-plugin-eval-test = pkgs.callPackage ./packages/go2nix-nix-plugin/tests/eval-test.nix {
             plugin = callPkg ./packages/go2nix-nix-plugin/default.nix;
             testFixtures = ./packages/go2nix-nix-plugin/tests/fixtures;
@@ -139,10 +144,13 @@
 
       formatter = forAllSystems (
         _: pkgs:
-        import ./formatter.nix {
-          inherit pkgs;
-          inputs = { inherit treefmt-nix; };
-        }
+        let
+          treefmt = import ./formatter.nix {
+            inherit pkgs;
+            inputs = { inherit treefmt-nix; };
+          };
+        in
+        treefmt.wrapper
       );
 
       lib = import ./lib.nix { };
