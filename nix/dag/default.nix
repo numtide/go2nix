@@ -463,15 +463,16 @@ let
   # Source for the final link derivation: only the main package directories.
   mainSrc =
     let
+      cleanModRoot = lib.removePrefix "./" modRoot;
       subPkgDirs = map (
         sp:
         let
           clean = lib.removePrefix "./" sp;
         in
-        if modRoot == "." then clean else "${modRoot}/${clean}"
+        if modRoot == "." then clean else "${cleanModRoot}/${clean}"
       ) normalizedSubPackages;
       # Include modRoot for go.mod access.
-      allowedDirs = [ modRoot ] ++ subPkgDirs;
+      allowedDirs = [ cleanModRoot ] ++ subPkgDirs;
       # When modRoot is "." or any subPackage resolves to ".", the entire
       # source tree is needed — no filtering required.
       includeAll = builtins.elem "." allowedDirs;
