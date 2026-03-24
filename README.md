@@ -2,8 +2,6 @@
 
 > **⚠️ Experimental** — APIs and lockfile formats may change without notice.
 
-test
-
 Nix-native Go builder with per-package derivations and fine-grained caching.
 
 ## Why go2nix?
