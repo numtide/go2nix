@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(go2nix-nix-plugin)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(NIX REQUIRED nix-expr>=2.32 nix-store>=2.32)
+pkg_check_modules(NIX REQUIRED nix-expr>=2.34 nix-store>=2.34)
 
 find_package(nlohmann_json REQUIRED)
 

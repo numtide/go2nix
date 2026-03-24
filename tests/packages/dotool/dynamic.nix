@@ -10,7 +10,7 @@ let
   goEnv = import ../../../nix/mk-go-env.nix {
     inherit go go2nix;
     inherit (pkgs) callPackage;
-    nixPackage = pkgs.nixVersions.git;
+    nixPackage = pkgs.nixVersions.nix_2_34;
   };
 in
 goEnv.buildGoApplicationExperimental {
