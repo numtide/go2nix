@@ -587,7 +587,7 @@ stdenv.mkDerivation (
         depsImportcfg
         mainSrc
         ;
-      inherit (goPackagesResult) localReplaces modulePath;
+      inherit (goPackagesResult) modulePath;
     }
     // lib.optionalAttrs doCheck {
       inherit testPackages testDepsImportcfg;

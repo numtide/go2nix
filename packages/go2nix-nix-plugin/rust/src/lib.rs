@@ -22,7 +22,7 @@ use std::ffi::{CStr, CString};
 ///
 /// Input JSON: `{ "go": "...", "src": "...", "tags": [], "doCheck": false, ... }`
 /// Output JSON: `{ "packages": {...}, "localPackages": {...}, "modulePath": "...",
-///   "replacements": {...}, "testPackages": {...}, "localReplaces": {...} }`
+///   "replacements": {...}, "testPackages": {...} }`
 ///
 /// Returns 0 on success, non-zero on error. Caller must free `*out` / `*err_out`
 /// with `go2nix_free_string`.
