@@ -103,7 +103,7 @@ static RegisterPrimOp rp(PrimOp {
   - `subPackages` (optional): List of package patterns (default: ["./..."])
   - `modRoot` (optional): Subdirectory containing go.mod (default: ".")
   - `goos` / `goarch` (optional): Cross-compilation targets
-  - `goProxy` (optional): GOPROXY value (default: "off")
+  - `goProxy` (optional): GOPROXY override; when unset, inherits the environment
   - `cgoEnabled` (optional): CGO_ENABLED value
   - `doCheck` (optional): When true, runs a second `go list -deps -test`
     pass to discover test-only third-party dependencies (default: false)
