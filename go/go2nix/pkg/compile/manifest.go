@@ -15,6 +15,11 @@ const (
 
 	// ManifestKindCompile is the kind value for compile manifests.
 	ManifestKindCompile = "compile"
+
+	// ImportcfgPlaceholder is substituted at build time with the actual
+	// importcfg path. Used in dynamic mode where the path depends on
+	// $NIX_BUILD_TOP which is only known inside the build sandbox.
+	ImportcfgPlaceholder = "@@IMPORTCFG@@"
 )
 
 // CompileManifest is the JSON contract between Nix and go2nix compile-package.

@@ -568,7 +568,7 @@ func buildPackageDrv(
 	manifest := compile.CompileManifest{
 		Version:        compile.ManifestVersion,
 		Kind:           compile.ManifestKindCompile,
-		ImportcfgParts: []string{"@@IMPORTCFG@@"},
+		ImportcfgParts: []string{compile.ImportcfgPlaceholder},
 		Tags:           tagList,
 		GCFlags:        gcflagList,
 		PGOProfile:     pgoProfile,

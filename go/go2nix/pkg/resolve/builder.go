@@ -3,6 +3,8 @@ package resolve
 import (
 	"fmt"
 	"strings"
+
+	"github.com/numtide/go2nix/pkg/compile"
 )
 
 // shellQuote wraps a string in single quotes, escaping any embedded
@@ -48,7 +50,7 @@ func compileScript(go2nixBin string) string {
 	// Write compile manifest from env var (JSON generated at derivation creation time).
 	// Replace @@IMPORTCFG@@ placeholder with the actual importcfg path so that
 	// the JSON consumed by compile-package contains the resolved path.
-	b.WriteString("printf '%s\\n' \"${compileManifestJSON//@@IMPORTCFG@@/$NIX_BUILD_TOP/importcfg}\" > \"$NIX_BUILD_TOP/compile-manifest.json\"\n\n")
+	fmt.Fprintf(&b, "printf '%%s\\n' \"${compileManifestJSON//%s/$NIX_BUILD_TOP/importcfg}\" > \"$NIX_BUILD_TOP/compile-manifest.json\"\n\n", compile.ImportcfgPlaceholder)
 
 	// Source directory: modSrc/relDir for third-party, srcRoot/relDir for local
 	b.WriteString("srcdir=\"$modSrc/$relDir\"\n\n")
