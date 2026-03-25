@@ -1,8 +1,12 @@
 package resolve
 
 import (
+	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/numtide/go2nix/pkg/compile"
 )
 
 func TestFodScript(t *testing.T) {
@@ -133,6 +137,55 @@ func TestLinkScriptGodebug(t *testing.T) {
 
 	if !strings.Contains(script, "${godebugDefault:+-X=runtime.godebugDefault=$godebugDefault}") {
 		t.Error("missing godebugDefault conditional for GODEBUG default linker flag")
+	}
+}
+
+func TestImportcfgPlaceholderRoundTrip(t *testing.T) {
+	// Build a manifest with the placeholder, same as resolve.go does.
+	pgo := "/nix/store/abc-profile/default.pgo"
+	m := compile.CompileManifest{
+		Version:        compile.ManifestVersion,
+		Kind:           compile.ManifestKindCompile,
+		ImportcfgParts: []string{compile.ImportcfgPlaceholder},
+		Tags:           []string{"netgo", "osusergo"},
+		GCFlags:        []string{"-shared"},
+		PGOProfile:     &pgo,
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// Run the same bash substitution that compileScript generates.
+	fakeBuildTop := "/build"
+	script := `printf '%s\n' "${compileManifestJSON//@@IMPORTCFG@@/$NIX_BUILD_TOP/importcfg}"`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = []string{
+		"compileManifestJSON=" + string(raw),
+		"NIX_BUILD_TOP=" + fakeBuildTop,
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("bash substitution failed: %v", err)
+	}
+
+	// Parse the result back and verify.
+	var got compile.CompileManifest
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("result is not valid JSON: %v\nraw output: %s", err, out)
+	}
+	wantPath := fakeBuildTop + "/importcfg"
+	if len(got.ImportcfgParts) != 1 || got.ImportcfgParts[0] != wantPath {
+		t.Errorf("importcfgParts = %v, want [%q]", got.ImportcfgParts, wantPath)
+	}
+	if got.Version != compile.ManifestVersion {
+		t.Errorf("version = %d, want %d", got.Version, compile.ManifestVersion)
+	}
+	if len(got.Tags) != 2 || got.Tags[0] != "netgo" {
+		t.Errorf("tags = %v, want [netgo osusergo]", got.Tags)
+	}
+	if got.PGOProfile == nil || *got.PGOProfile != pgo {
+		t.Errorf("pgoProfile = %v, want %q", got.PGOProfile, pgo)
 	}
 }
 
