@@ -138,7 +138,7 @@ goEnv = go2nix.lib.mkGoEnv {
   # Optional:
   tags = [ "nethttpomithttp2" ];
   netrcFile = ./my-netrc;
-  nixPackage = pkgs.nixVersions.latest;  # required for experimental mode
+  nixPackage = pkgs.nixVersions.nix_2_34;  # required for experimental mode
 };
 ```
 
