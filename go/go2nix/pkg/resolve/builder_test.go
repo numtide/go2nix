@@ -220,6 +220,32 @@ func TestBuildCompileGCFlags(t *testing.T) {
 	}
 }
 
+// TestExtractSanitizerFlags verifies that -race/-msan/-asan are extracted from
+// gcflags while other flags (like -shared, -N) are left out.
+func TestExtractSanitizerFlags(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty", "", ""},
+		{"none", "-shared -N", ""},
+		{"race_only", "-race", "-race"},
+		{"msan_only", "-msan", "-msan"},
+		{"asan_only", "-asan", "-asan"},
+		{"race_and_shared", "-shared -race", "-race"},
+		{"all_three", "-race -msan -asan", "-race -msan -asan"},
+		{"mixed", "-shared -race -N -asan", "-race -asan"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractSanitizerFlags(tt.input); got != tt.want {
+				t.Errorf("extractSanitizerFlags(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCollectScript(t *testing.T) {
 	script := collectScript([]string{"/placeholder1", "/placeholder2"})
 
