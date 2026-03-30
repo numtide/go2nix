@@ -542,30 +542,37 @@ func buildPackageDrv(
 		return nil, err
 	}
 
-	// Forward optional compile flags
+	// Build compile manifest JSON (same contract as default mode).
+	// The bash script writes this to a file and passes --manifest.
+	gcflagList := buildCompileGCFlags(cfg.buildMode, cfg.GCFlags)
+	var tagList []string
 	if cfg.Tags != "" {
-		drv.SetEnv("tags", cfg.Tags)
+		tagList = strings.Split(cfg.Tags, ",")
 	}
+	var pgoProfile *string
+	if cfg.PGOProfile != "" {
+		pgoProfile = &cfg.PGOProfile
+		drv.AddInputSrc(storeDirOf(cfg.PGOProfile))
+	}
+	manifest := compile.CompileManifest{
+		Version:        compile.ManifestVersion,
+		Kind:           compile.ManifestKindCompile,
+		ImportcfgParts: []string{compile.ImportcfgPlaceholder},
+		Tags:           tagList,
+		GCFlags:        gcflagList,
+		PGOProfile:     pgoProfile,
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling compile manifest: %w", err)
+	}
+	drv.SetEnv("compileManifestJSON", string(manifestJSON))
+
 	if pkg.GoVersion != "" {
 		drv.SetEnv("goVersion", compile.LangVersion(pkg.GoVersion))
 	}
 	if cfg.CGOEnabled != "" {
 		drv.SetEnv("CGO_ENABLED", cfg.CGOEnabled)
-	}
-	if cfg.PGOProfile != "" {
-		drv.SetEnv("pgoProfile", cfg.PGOProfile)
-		drv.AddInputSrc(storeDirOf(cfg.PGOProfile))
-	}
-	gcflags := cfg.GCFlags
-	if cfg.buildMode == "pie" {
-		if gcflags != "" {
-			gcflags = "-shared " + gcflags
-		} else {
-			gcflags = "-shared"
-		}
-	}
-	if gcflags != "" {
-		drv.SetEnv("gcflags", gcflags)
 	}
 
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
@@ -831,15 +838,8 @@ func buildLinkDrv(
 
 	// Propagate sanitizer flags (-race, -msan, -asan) from gcflags to the
 	// linker, matching cmd/go behavior (init.go forcedLdflags).
-	var sanitizerFlags []string
-	for _, f := range strings.Fields(cfg.GCFlags) {
-		switch f {
-		case "-race", "-msan", "-asan":
-			sanitizerFlags = append(sanitizerFlags, f)
-		}
-	}
-	if len(sanitizerFlags) > 0 {
-		drv.SetEnv("sanitizerLinkFlags", strings.Join(sanitizerFlags, " "))
+	if sf := extractSanitizerFlags(cfg.GCFlags); sf != "" {
+		drv.SetEnv("sanitizerLinkFlags", sf)
 	}
 
 	// Set GOROOT so the linker embeds runtime.defaultGOROOT,
@@ -967,6 +967,36 @@ func collectStdlibImports(stdlibPath string) ([]string, error) {
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+// extractSanitizerFlags returns a space-separated string of sanitizer flags
+// (-race, -msan, -asan) present in gcflags, or empty string if none.
+// These must be propagated to the linker to match cmd/go behavior.
+func extractSanitizerFlags(gcflags string) string {
+	var out []string
+	for _, f := range strings.Fields(gcflags) {
+		switch f {
+		case "-race", "-msan", "-asan":
+			out = append(out, f)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// buildCompileGCFlags returns the gcflags list for a compile derivation.
+// For PIE builds, -shared is prepended so the Go compiler emits position-independent code.
+func buildCompileGCFlags(buildMode, gcflags string) []string {
+	if buildMode == "pie" {
+		if gcflags != "" {
+			gcflags = "-shared " + gcflags
+		} else {
+			gcflags = "-shared"
+		}
+	}
+	if gcflags == "" {
+		return nil
+	}
+	return strings.Fields(gcflags)
 }
 
 // storeDirOf returns the top-level store path for a path inside the Nix store.
