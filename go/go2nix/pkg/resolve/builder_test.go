@@ -1,8 +1,11 @@
 package resolve
 
 import (
+	"bufio"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -314,6 +317,60 @@ func TestBuildImportcfgMissingDrvPath(t *testing.T) {
 	drv := nixdrv.NewDerivation("test", "x86_64-linux", "/bin/bash")
 	if err := buildImportcfg(cfg, drv, pkg, graph); err == nil {
 		t.Fatal("expected error for nil DrvPath, got nil")
+	}
+}
+
+// TestImportcfgEntriesBashWrite verifies that the multi-line importcfg_entries
+// env var is correctly written to a file by the bash printf in both
+// compileScript and linkScript.
+func TestImportcfgEntriesBashWrite(t *testing.T) {
+	entries := strings.Join([]string{
+		"packagefile fmt=/nix/store/stdlib/fmt.a",
+		"packagefile net/http=/nix/store/stdlib/net/http.a",
+		"packagefile mymod/lib=/run/build/placeholder/pkg.a",
+	}, "\n")
+
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "importcfg")
+
+	// Run the same bash snippet used by both compileScript and linkScript.
+	script := `printf '%s\n' "$importcfg_entries" > "$outfile"`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = []string{
+		"importcfg_entries=" + entries,
+		"outfile=" + outFile,
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bash write failed: %v\n%s", err, out)
+	}
+
+	f, err := os.Open(outFile)
+	if err != nil {
+		t.Fatalf("opening importcfg: %v", err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scanning: %v", err)
+	}
+
+	want := []string{
+		"packagefile fmt=/nix/store/stdlib/fmt.a",
+		"packagefile net/http=/nix/store/stdlib/net/http.a",
+		"packagefile mymod/lib=/run/build/placeholder/pkg.a",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines, want %d: %v", len(lines), len(want), lines)
+	}
+	for i, w := range want {
+		if lines[i] != w {
+			t.Errorf("line[%d]: got %q, want %q", i, lines[i], w)
+		}
 	}
 }
 
