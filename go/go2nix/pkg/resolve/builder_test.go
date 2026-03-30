@@ -189,6 +189,37 @@ func TestImportcfgPlaceholderRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBuildCompileGCFlags verifies that -shared is injected for PIE builds and
+// that user-supplied flags are preserved and correctly split by whitespace.
+func TestBuildCompileGCFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		buildMode string
+		gcflags   string
+		want      []string
+	}{
+		{"pie_no_extra", "pie", "", []string{"-shared"}},
+		{"pie_with_race", "pie", "-race", []string{"-shared", "-race"}},
+		{"pie_with_multiple", "pie", "-race -N", []string{"-shared", "-race", "-N"}},
+		{"exe_no_extra", "exe", "", nil},
+		{"exe_with_race", "exe", "-race", []string{"-race"}},
+		{"exe_with_multiple", "exe", "-race -N", []string{"-race", "-N"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildCompileGCFlags(tt.buildMode, tt.gcflags)
+			if len(got) != len(tt.want) {
+				t.Fatalf("buildCompileGCFlags(%q, %q) = %v, want %v", tt.buildMode, tt.gcflags, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("[%d] got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestCollectScript(t *testing.T) {
 	script := collectScript([]string{"/placeholder1", "/placeholder2"})
 

@@ -544,18 +544,7 @@ func buildPackageDrv(
 
 	// Build compile manifest JSON (same contract as default mode).
 	// The bash script writes this to a file and passes --manifest.
-	gcflags := cfg.GCFlags
-	if cfg.buildMode == "pie" {
-		if gcflags != "" {
-			gcflags = "-shared " + gcflags
-		} else {
-			gcflags = "-shared"
-		}
-	}
-	var gcflagList []string
-	if gcflags != "" {
-		gcflagList = strings.Fields(gcflags)
-	}
+	gcflagList := buildCompileGCFlags(cfg.buildMode, cfg.GCFlags)
 	var tagList []string
 	if cfg.Tags != "" {
 		tagList = strings.Split(cfg.Tags, ",")
@@ -985,6 +974,22 @@ func collectStdlibImports(stdlibPath string) ([]string, error) {
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+// buildCompileGCFlags returns the gcflags list for a compile derivation.
+// For PIE builds, -shared is prepended so the Go compiler emits position-independent code.
+func buildCompileGCFlags(buildMode, gcflags string) []string {
+	if buildMode == "pie" {
+		if gcflags != "" {
+			gcflags = "-shared " + gcflags
+		} else {
+			gcflags = "-shared"
+		}
+	}
+	if gcflags == "" {
+		return nil
+	}
+	return strings.Fields(gcflags)
 }
 
 // storeDirOf returns the top-level store path for a path inside the Nix store.
