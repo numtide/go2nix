@@ -64,6 +64,15 @@ func (d *Derivation) AddArg(arg string) *Derivation {
 	return d
 }
 
+// Env returns a copy of the derivation's environment variables.
+func (d *Derivation) Env() map[string]string {
+	copy := make(map[string]string, len(d.env))
+	for k, v := range d.env {
+		copy[k] = v
+	}
+	return copy
+}
+
 // SetEnv sets an environment variable.
 func (d *Derivation) SetEnv(key, value string) *Derivation {
 	d.env[key] = value
