@@ -374,6 +374,87 @@ func TestImportcfgEntriesBashWrite(t *testing.T) {
 	}
 }
 
+// TestCreateFilteredPkgDir verifies that only compilation-relevant files are
+// copied and that embed files with subdirectory paths are handled correctly.
+func TestCreateFilteredPkgDir(t *testing.T) {
+	src := t.TempDir()
+
+	// Create a realistic package directory with files of every type.
+	allFiles := map[string]string{
+		"main.go":               "package main",
+		"main_cgo.go":           "package main // cgo",
+		"bridge.c":              "// c file",
+		"bridge.cc":             "// c++ file",
+		"bridge.f":              "// fortran file",
+		"asm.s":                 "// asm file",
+		"types.h":               "// header",
+		"blob.syso":             "\x00binary",
+		"templates/index.html":  "<html/>",        // embed in subdir
+		"templates/style.css":   "body{}",         // embed in subdir
+		"unrelated.go":          "package other",  // not in any file list
+	}
+	for rel, content := range allFiles {
+		full := filepath.Join(src, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pkg := &ResolvedPkg{
+		ImportPath: "mymod/app",
+		GoFiles:    []string{"main.go"},
+		CgoFiles:   []string{"main_cgo.go"},
+		CFiles:     []string{"bridge.c"},
+		CXXFiles:   []string{"bridge.cc"},
+		FFiles:     []string{"bridge.f"},
+		SFiles:     []string{"asm.s"},
+		HFiles:     []string{"types.h"},
+		SysoFiles:  []string{"blob.syso"},
+		EmbedFiles: []string{"templates/index.html", "templates/style.css"},
+	}
+
+	filtered, err := createFilteredPkgDir(src, pkg)
+	if err != nil {
+		t.Fatalf("createFilteredPkgDir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(filtered) }) //nolint:errcheck
+
+	// All declared files must be present.
+	wantPresent := []string{
+		"main.go", "main_cgo.go", "bridge.c", "bridge.cc",
+		"bridge.f", "asm.s", "types.h", "blob.syso",
+		"templates/index.html", "templates/style.css",
+	}
+	for _, f := range wantPresent {
+		if _, err := os.Stat(filepath.Join(filtered, f)); err != nil {
+			t.Errorf("expected %s to be present: %v", f, err)
+		}
+	}
+
+	// Unrelated files must NOT appear.
+	if _, err := os.Stat(filepath.Join(filtered, "unrelated.go")); err == nil {
+		t.Error("unrelated.go should not be in filtered dir")
+	}
+
+	// Verify content integrity for a text file and the binary blob.
+	checkContent := func(rel, want string) {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(filtered, rel))
+		if err != nil {
+			t.Fatalf("reading %s: %v", rel, err)
+		}
+		if string(data) != want {
+			t.Errorf("%s: got %q, want %q", rel, data, want)
+		}
+	}
+	checkContent("main.go", "package main")
+	checkContent("templates/index.html", "<html/>")
+	checkContent("blob.syso", "\x00binary")
+}
+
 func TestCollectScript(t *testing.T) {
 	script := collectScript([]string{"/placeholder1", "/placeholder2"})
 
