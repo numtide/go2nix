@@ -21,10 +21,10 @@ in
 # --- sanitizeName ---
 assert assertEq "sanitizeName slashes" (sanitizeName "github.com/foo/bar") "github.com-foo-bar";
 
-assert assertEq "sanitizeName plus" (sanitizeName "google.golang.org/grpc+extra")
-  "google.golang.org-grpc_extra";
+assert assertEq "sanitizeName plus preserved" (sanitizeName "google.golang.org/grpc+extra")
+  "google.golang.org-grpc+extra";
 
-assert assertEq "sanitizeName both" (sanitizeName "github.com/a+b/c+d") "github.com-a_b-c_d";
+assert assertEq "sanitizeName slash with plus" (sanitizeName "github.com/a+b/c+d") "github.com-a+b-c+d";
 
 assert assertEq "sanitizeName no change" (sanitizeName "simple-name") "simple-name";
 
