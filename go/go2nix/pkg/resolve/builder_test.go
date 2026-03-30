@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/numtide/go2nix/pkg/compile"
+	"github.com/numtide/go2nix/pkg/nixdrv"
 )
 
 func TestFodScript(t *testing.T) {
@@ -243,6 +245,75 @@ func TestExtractSanitizerFlags(t *testing.T) {
 				t.Errorf("extractSanitizerFlags(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBuildImportcfg verifies that buildImportcfg produces correct packagefile
+// entries: stdlib imports point to the stdlib path, non-stdlib imports use CA
+// placeholders, and a missing DrvPath is detected as a bug.
+func TestBuildImportcfg(t *testing.T) {
+	stdlibPath := "/nix/store/stdlib123-go-stdlib"
+
+	// Build a fake dependency drv path (must end in .drv).
+	depDrvPath, err := storepath.FromAbsolutePath(
+		"/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-dep-pkg.drv")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Config{StdlibPath: stdlibPath}
+
+	pkg := &ResolvedPkg{
+		ImportPath: "mymod/cmd/app",
+		Imports:    []string{"fmt", "mymod/internal/util"},
+	}
+	graph := map[string]*ResolvedPkg{
+		"mymod/internal/util": {
+			ImportPath: "mymod/internal/util",
+			DrvPath:    depDrvPath,
+		},
+	}
+
+	drv := nixdrv.NewDerivation("test-pkg", "x86_64-linux", "/bin/bash")
+	if err := buildImportcfg(cfg, drv, pkg, graph); err != nil {
+		t.Fatalf("buildImportcfg: %v", err)
+	}
+
+	entries := strings.Split(drv.Env()["importcfg_entries"], "\n")
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(entries), entries)
+	}
+
+	// fmt is not in the graph → stdlib path.
+	if want := "packagefile fmt=" + stdlibPath + "/fmt.a"; entries[0] != want {
+		t.Errorf("stdlib entry: got %q, want %q", entries[0], want)
+	}
+
+	// mymod/internal/util is in the graph → CA placeholder.
+	ph, err := nixdrv.CAOutput(depDrvPath, "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "packagefile mymod/internal/util=" + ph.Render() + "/pkg.a"; entries[1] != want {
+		t.Errorf("dep entry: got %q, want %q", entries[1], want)
+	}
+}
+
+// TestBuildImportcfgMissingDrvPath verifies that buildImportcfg returns an
+// error when a non-stdlib dependency has no computed .drv path yet
+// (i.e., a graph construction bug).
+func TestBuildImportcfgMissingDrvPath(t *testing.T) {
+	cfg := Config{StdlibPath: "/nix/store/stdlib-go"}
+	pkg := &ResolvedPkg{
+		ImportPath: "mymod/app",
+		Imports:    []string{"mymod/lib"},
+	}
+	graph := map[string]*ResolvedPkg{
+		"mymod/lib": {ImportPath: "mymod/lib", DrvPath: nil},
+	}
+	drv := nixdrv.NewDerivation("test", "x86_64-linux", "/bin/bash")
+	if err := buildImportcfg(cfg, drv, pkg, graph); err == nil {
+		t.Fatal("expected error for nil DrvPath, got nil")
 	}
 }
 
