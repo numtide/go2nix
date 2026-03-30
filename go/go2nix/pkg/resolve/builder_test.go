@@ -381,17 +381,17 @@ func TestCreateFilteredPkgDir(t *testing.T) {
 
 	// Create a realistic package directory with files of every type.
 	allFiles := map[string]string{
-		"main.go":               "package main",
-		"main_cgo.go":           "package main // cgo",
-		"bridge.c":              "// c file",
-		"bridge.cc":             "// c++ file",
-		"bridge.f":              "// fortran file",
-		"asm.s":                 "// asm file",
-		"types.h":               "// header",
-		"blob.syso":             "\x00binary",
-		"templates/index.html":  "<html/>",        // embed in subdir
-		"templates/style.css":   "body{}",         // embed in subdir
-		"unrelated.go":          "package other",  // not in any file list
+		"main.go":              "package main",
+		"main_cgo.go":          "package main // cgo",
+		"bridge.c":             "// c file",
+		"bridge.cc":            "// c++ file",
+		"bridge.f":             "// fortran file",
+		"asm.s":                "// asm file",
+		"types.h":              "// header",
+		"blob.syso":            "\x00binary",
+		"templates/index.html": "<html/>",       // embed in subdir
+		"templates/style.css":  "body{}",        // embed in subdir
+		"unrelated.go":         "package other", // not in any file list
 	}
 	for rel, content := range allFiles {
 		full := filepath.Join(src, rel)
