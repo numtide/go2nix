@@ -30,6 +30,7 @@
   fetchers,
   helpers,
   stdlib,
+  goEnv,
   ...
 }:
 
@@ -227,12 +228,14 @@ let
       nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
       buildInputs = deps;
 
-      env = {
-        goPackagePath = importPath;
-        goPackageSrcDir = srcDir;
-        compileManifestJSON = mkCompileManifestJSON deps;
-      }
-      // extraEnv;
+      env =
+        goEnv
+        // {
+          goPackagePath = importPath;
+          goPackageSrcDir = srcDir;
+          compileManifestJSON = mkCompileManifestJSON deps;
+        }
+        // extraEnv;
     }
   ) goPackagesResult.packages;
 
@@ -310,12 +313,14 @@ let
       nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
       buildInputs = deps;
 
-      env = {
-        goPackagePath = importPath;
-        goPackageSrcDir = srcDir;
-        compileManifestJSON = mkCompileManifestJSON deps;
-      }
-      // extraEnv;
+      env =
+        goEnv
+        // {
+          goPackagePath = importPath;
+          goPackageSrcDir = srcDir;
+          compileManifestJSON = mkCompileManifestJSON deps;
+        }
+        // extraEnv;
     }
   ) goPackagesResult.localPackages;
 
@@ -406,12 +411,14 @@ let
         nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
         buildInputs = deps;
 
-        env = {
-          goPackagePath = importPath;
-          goPackageSrcDir = srcDir;
-          compileManifestJSON = mkCompileManifestJSON deps;
-        }
-        // extraEnv;
+        env =
+          goEnv
+          // {
+            goPackagePath = importPath;
+            goPackageSrcDir = srcDir;
+            compileManifestJSON = mkCompileManifestJSON deps;
+          }
+          // extraEnv;
       }
     ) goPackagesResult.testPackages
   );
@@ -593,10 +600,12 @@ stdenv.mkDerivation (
       inherit testPackages testDepsImportcfg;
     };
 
-    env = {
-      inherit linkManifestJSON;
-    }
-    // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { })
-    // (if doCheck then { inherit testManifestJSON; } else { });
+    env =
+      goEnv
+      // {
+        inherit linkManifestJSON;
+      }
+      // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { })
+      // (if doCheck then { inherit testManifestJSON; } else { });
   }
 )

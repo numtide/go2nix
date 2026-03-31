@@ -14,6 +14,7 @@
   tags ? [ ],
   netrcFile ? null,
   nixPackage ? null,
+  goEnv ? { },
 }:
 let
   tagFlag = if tags == [ ] then "" else builtins.concatStringsSep "," tags;
@@ -45,11 +46,12 @@ lib.makeScope newScope (
       netrcFile
       nixPackage
       hasDynamicDerivations
+      goEnv
       ;
 
     helpers = import ./helpers.nix;
 
-    stdlib = callPackage ./stdlib.nix { };
+    stdlib = callPackage ./stdlib.nix { inherit goEnv; };
 
     hooks = callPackage ./dag/hooks { };
 
