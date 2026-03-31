@@ -3,10 +3,15 @@
 //! Runs `go list -json -deps -e`, parses the output into a `PackageGraph`,
 //! and serializes it to JSON for the C++ nix shim.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
+
+/// Baked-in default Go binary path, set at compile time via GO2NIX_DEFAULT_GO.
+/// `option_env!` (not `env!`) so the plugin still compiles when the var is unset;
+/// an explicit `go` field in the input always takes precedence.
+pub(crate) const DEFAULT_GO: Option<&str> = option_env!("GO2NIX_DEFAULT_GO");
 
 // ---------------------------------------------------------------------------
 // Go list JSON types
@@ -505,7 +510,8 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct JsonInput {
-    pub(crate) go: String,
+    #[serde(default)]
+    pub(crate) go: Option<String>,
     pub(crate) src: String,
     #[serde(default)]
     do_check: bool,
@@ -576,6 +582,12 @@ pub(crate) fn find_gomodcache(go_bin: &str) -> Result<std::path::PathBuf> {
 /// When `do_check` is set and local packages exist, a second pass
 /// (`go list -deps -test`) discovers test-only third-party dependencies.
 pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
+    let go_bin = input
+        .go
+        .as_deref()
+        .or(DEFAULT_GO)
+        .ok_or_else(|| anyhow!("resolveGoPackages: 'go' not provided and GO2NIX_DEFAULT_GO was unset at plugin build time"))?;
+
     let opts = GoListOpts {
         tags: &input.tags,
         mod_root: &input.mod_root,
@@ -585,7 +597,7 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
         cgo_enabled: &input.cgo_enabled,
     };
 
-    let stdout = run_go_list(&input.go, &input.src, &input.sub_packages, &opts)?;
+    let stdout = run_go_list(go_bin, &input.src, &input.sub_packages, &opts)?;
     let mut graph = parse_go_packages(&stdout)?;
 
     if input.do_check && !graph.local_packages.is_empty() {
@@ -596,7 +608,7 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
             .collect();
 
         let test_stdout =
-            run_go_list_test(&input.go, &input.src, &local_ips, &opts)?;
+            run_go_list_test(go_bin, &input.src, &local_ips, &opts)?;
 
         let test_pkgs = parse_test_packages(
             &test_stdout,

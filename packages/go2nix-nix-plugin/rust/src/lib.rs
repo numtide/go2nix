@@ -56,7 +56,12 @@ pub unsafe extern "C" fn resolve_go_packages_json(
                 src_dir.join(mod_root).join("go.sum")
             };
 
-            let gomodcache = resolve::find_gomodcache(&opts.go)
+            let go_bin = opts
+                .go
+                .as_deref()
+                .or(resolve::DEFAULT_GO)
+                .ok_or_else(|| "resolveGoPackages: 'go' not provided and GO2NIX_DEFAULT_GO was unset at plugin build time".to_owned())?;
+            let gomodcache = resolve::find_gomodcache(go_bin)
                 .map_err(|e| format!("finding GOMODCACHE: {e:#}"))?;
 
             module_hashes::resolve_module_hashes(&go_sum_path, &gomodcache)
