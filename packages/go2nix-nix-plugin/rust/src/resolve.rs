@@ -1133,6 +1133,45 @@ mod tests {
         assert_eq!(jp.mod_key, "github.com/foo/bar@v2.0.0");
     }
 
+    // --- go field resolution ---
+
+    #[test]
+    fn json_input_go_absent_deserializes_to_none() {
+        let input: JsonInput =
+            serde_json::from_str(r##"{"src":"/src","subPackages":["./..."]}"##).unwrap();
+        assert!(input.go.is_none());
+    }
+
+    #[test]
+    fn json_input_go_explicit_deserializes_to_some() {
+        let input: JsonInput = serde_json::from_str(
+            r##"{"go":"/nix/store/xxx-go/bin/go","src":"/src","subPackages":["./..."]}"##,
+        )
+        .unwrap();
+        assert_eq!(input.go.as_deref(), Some("/nix/store/xxx-go/bin/go"));
+    }
+
+    /// When go is absent and DEFAULT_GO is unset at compile time (the normal CI
+    /// case), resolve_packages must return the descriptive error immediately,
+    /// before attempting to spawn any subprocess.
+    #[test]
+    fn resolve_packages_errors_without_go_field() {
+        // DEFAULT_GO is None in test builds (GO2NIX_DEFAULT_GO not set in CI).
+        if DEFAULT_GO.is_some() {
+            return; // compiled with default baked in — skip
+        }
+        let input: JsonInput =
+            serde_json::from_str(r##"{"src":"/nonexistent","subPackages":["./..."]}"##).unwrap();
+        let err = match resolve_packages(&input) {
+            Err(e) => e,
+            Ok(_) => panic!("expected error when go is absent"),
+        };
+        assert!(
+            err.to_string().contains("GO2NIX_DEFAULT_GO"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[test]
     fn json_pkg_filters_imports() {
         let p = PkgData {
