@@ -12,6 +12,10 @@
   tags ? [ ],
   netrcFile ? null,
   nixPackage ? null,
+  # Env vars forwarded to stdlib compilation and go tool invocations.
+  # Scope-level because stdlib is scope-level — every buildGoApplication
+  # call in this scope shares the same stdlib derivation.
+  goEnv ? { },
 }:
 callPackage ./scope.nix {
   inherit
@@ -20,5 +24,6 @@ callPackage ./scope.nix {
     tags
     netrcFile
     nixPackage
+    goEnv
     ;
 }

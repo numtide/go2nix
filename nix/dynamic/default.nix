@@ -26,6 +26,7 @@
   netrcFile,
   stdlib,
   helpers,
+  goEnv,
 }:
 
 {
@@ -123,7 +124,13 @@ let
     dontInstall = true;
     dontFixup = true;
 
+    # goEnv exports reach `go2nix resolve` (which runs go list), but not the
+    # synthesized per-package derivations — same limitation as packageOverrides.env
+    # above. stdlib is already goEnv-aware via the scope.
     buildPhase = ''
+      ${lib.concatStringsSep "\n" (
+        lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg (toString v)}") goEnv
+      )}
       export NIX_CONFIG="extra-experimental-features = nix-command ca-derivations dynamic-derivations"
       export HOME=$TMPDIR
 
