@@ -96,6 +96,14 @@ let
   # otherwise it's in the single output and points at the .a.
   depCompileCfg = dep: "${if splitInterface then dep.iface else dep}/importcfg";
 
+  # buildInputs for per-package compiles must reference ONLY the iface
+  # output in split mode — referencing the full derivation pulls in
+  # `out` (.a link object) too, which changes whenever the body changes,
+  # defeating the iface cutoff. The actual file dependency is already
+  # captured via string context in compileManifestJSON; buildInputs here
+  # is just for the stdenv input closure.
+  depBuildInput = if splitInterface then (dep: dep.iface) else (dep: dep);
+
   normalizedSubPackages = helpers.normalizeSubPackages subPackages;
 
   # Build the compile manifest JSON string for a per-package derivation.
@@ -278,7 +286,7 @@ let
       __structuredAttrs = true;
 
       nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
-      buildInputs = deps;
+      buildInputs = map depBuildInput deps;
 
       env = mkCompileEnv {
         inherit
@@ -363,7 +371,7 @@ let
       __structuredAttrs = true;
 
       nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
-      buildInputs = deps;
+      buildInputs = map depBuildInput deps;
 
       env = mkCompileEnv {
         inherit
@@ -467,7 +475,7 @@ let
         __structuredAttrs = true;
 
         nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
-        buildInputs = deps;
+        buildInputs = map depBuildInput deps;
 
         env = mkCompileEnv {
           inherit
