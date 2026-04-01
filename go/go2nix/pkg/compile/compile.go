@@ -18,7 +18,8 @@ type Options struct {
 	ImportPath  string            // Go import path (e.g., "github.com/foo/bar")
 	PFlag       string            // -p flag for go tool compile (defaults to ImportPath)
 	SrcDir      string            // directory containing source files
-	Output      string            // output .a archive path
+	Output      string            // output .a archive path (link object when IfaceOutput is set)
+	IfaceOutput string            // optional export-data-only interface output (compile-time deps key on this; rules_go .x model)
 	ImportCfg   string            // path to importcfg file
 	TrimPath    string            // path prefix to trim (defaults to $NIX_BUILD_TOP)
 	Tags        string            // comma-separated build tags
@@ -104,9 +105,14 @@ func CompileGoPackage(opts Options) error {
 		return fmt.Errorf("no Go files found in %s (package %s)", opts.SrcDir, opts.ImportPath)
 	}
 
-	// Create output directory.
+	// Create output directories.
 	if err := os.MkdirAll(filepath.Dir(opts.Output), 0o755); err != nil {
 		return err
+	}
+	if opts.IfaceOutput != "" {
+		if err := os.MkdirAll(filepath.Dir(opts.IfaceOutput), 0o755); err != nil {
+			return err
+		}
 	}
 
 	// Write embedcfg if needed.
@@ -134,4 +140,16 @@ func CompileGoPackage(opts Options) error {
 		return compileWithAsm(opts, files, embedFlag)
 	}
 	return compileGo(opts, files, embedFlag)
+}
+
+// outputFlags returns the -o / -linkobj arguments. When IfaceOutput is set,
+// -o gets the export-data-only archive (read by downstream compiles via
+// importcfg) and -linkobj gets the linker object (read by go tool link).
+// Splitting them lets a Nix CA derivation key downstream compiles on the
+// interface only, so private-symbol changes don't cascade.
+func (o Options) outputFlags() []string {
+	if o.IfaceOutput == "" {
+		return []string{"-o", o.Output}
+	}
+	return []string{"-o", o.IfaceOutput, "-linkobj", o.Output}
 }

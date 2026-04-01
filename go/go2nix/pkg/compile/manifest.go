@@ -61,6 +61,13 @@ type LinkManifest struct {
 	Kind           string            `json:"kind"`
 	ImportcfgParts []string          `json:"importcfgParts"`
 	LocalArchives  map[string]string `json:"localArchives"`
+	// Optional interface-split mode: when set, the main-package compile
+	// reads these (export-data .x files) instead of ImportcfgParts/
+	// LocalArchives, so its inputs are stable across changes that don't
+	// touch any dependency's exported API. The link step still uses
+	// ImportcfgParts/LocalArchives (.a link objects).
+	CompileImportcfgParts []string          `json:"compileImportcfgParts,omitempty"`
+	LocalIfaces           map[string]string `json:"localIfaces,omitempty"`
 	SubPackages    []string          `json:"subPackages"`
 	ModuleRoot     string            `json:"moduleRoot"`
 	Lockfile       *string           `json:"lockfile"`

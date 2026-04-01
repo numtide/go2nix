@@ -51,6 +51,18 @@
   nativeBuildInputs ? [ ],
   modRoot ? ".",
   packageOverrides ? { },
+  # Build per-package and importcfg derivations as floating CA so that
+  # rebuilds producing byte-identical outputs short-circuit downstream
+  # recompiles. Requires the ca-derivations experimental feature; the
+  # final binary stays input-addressed.
+  contentAddressed ? false,
+  # Split each per-package derivation into out (link object, .a) and
+  # iface (export data, .x) outputs. Downstream compiles depend on iface
+  # only, so a private-symbol change (which alters the .a but not its
+  # export data) doesn't cascade. Mirrors rules_go's .x model. Implies
+  # contentAddressed — without CA, iface stability buys nothing because
+  # the input-addressed iface path still changes whenever src does.
+  splitInterface ? false,
   # Phase 1: checks only supported for modRoot == "." (single-module case).
   # When modRoot != ".", mainSrc doesn't include local replace targets outside
   # the module root, so test discovery/compilation may fail. Users can override
@@ -61,6 +73,29 @@
 }@args:
 
 let
+  ca = contentAddressed || splitInterface;
+  caAttrs = lib.optionalAttrs ca {
+    __contentAddressed = true;
+    outputHashMode = "recursive";
+    outputHashAlgo = "sha256";
+  };
+  ifaceAttrs = lib.optionalAttrs splitInterface {
+    outputs = [
+      "out"
+      "iface"
+    ];
+  };
+  # caOnly: CA without the iface output — for derivations that don't
+  # compile a package (importcfg bundles).
+  # caMk: CA + iface split — for per-package compiles.
+  caOnly = mk: attrs: mk (attrs // caAttrs);
+  caMk = mk: attrs: mk (attrs // caAttrs // ifaceAttrs);
+
+  # Where to find a dep's importcfg fragment for downstream COMPILES.
+  # In split mode it lives in the iface output and points at the .x file;
+  # otherwise it's in the single output and points at the .a.
+  depCompileCfg = dep: "${if splitInterface then dep.iface else dep}/importcfg";
+
   normalizedSubPackages = helpers.normalizeSubPackages subPackages;
 
   # Build the compile manifest JSON string for a per-package derivation.
@@ -74,7 +109,7 @@ let
     builtins.toJSON {
       version = 1;
       kind = "compile";
-      importcfgParts = [ "${stdlib}/importcfg" ] ++ map (dep: "${dep}/importcfg") deps;
+      importcfgParts = [ "${stdlib}/importcfg" ] ++ map depCompileCfg deps;
       inherit tags;
       gcflags =
         let
@@ -233,7 +268,7 @@ let
       # Auto-add CC for CGO packages; use stdenvNoCC for pure Go packages.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-      mkDeriv = if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation;
+      mkDeriv = caMk (if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation);
     in
     assert
       unknownAttrs == [ ]
@@ -303,7 +338,7 @@ let
       # CGO handling: same pattern as third-party packages.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-      mkDeriv = if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation;
+      mkDeriv = caMk (if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation);
 
       # Per-package overrides (e.g., nativeBuildInputs for cgo).
       pkgOverride = packageOverrides.${importPath} or { };
@@ -351,40 +386,46 @@ let
   # stdlib's importcfg needs to be read at build time. Store paths are captured
   # through Nix string context, so they remain derivation dependencies without
   # needing buildInputs.
-  allPkgsImportcfg =
+  mkAllPkgsCfg =
+    pick:
     let
       thirdPartyEntries = map (
-        importPath:
-        let
-          pkg = packages.${importPath};
-        in
-        "packagefile ${importPath}=${pkg}/${importPath}.a"
+        importPath: "packagefile ${importPath}=${pick packages.${importPath} importPath}"
       ) (builtins.attrNames packages);
       localEntries = map (
-        importPath:
-        let
-          pkg = localPackages.${importPath};
-        in
-        "packagefile ${importPath}=${pkg}/${importPath}.a"
+        importPath: "packagefile ${importPath}=${pick localPackages.${importPath} importPath}"
       ) (builtins.attrNames localPackages);
     in
     lib.concatStringsSep "\n" (thirdPartyEntries ++ localEntries);
 
-  depsImportcfg = stdenvNoCC.mkDerivation {
+  # Link-time cfg → .a files in the default (out) output.
+  allPkgsImportcfg = mkAllPkgsCfg (pkg: ip: "${pkg}/${ip}.a");
+  # Compile-time cfg → .x files in the iface output (only when split).
+  allPkgsCompileCfg = mkAllPkgsCfg (pkg: ip: "${pkg.iface}/${ip}.x");
+
+  depsImportcfg = caOnly stdenvNoCC.mkDerivation {
     name = "${pname}-deps-importcfg";
     __structuredAttrs = true;
     inherit allPkgsImportcfg;
+    allPkgsCompileCfg = if splitInterface then allPkgsCompileCfg else "";
     dontUnpack = true;
     dontFixup = true;
     buildPhase = ''
       runHook preBuild
       cat "${stdlib}/importcfg" > "$NIX_BUILD_TOP/importcfg"
       echo "$allPkgsImportcfg" >> "$NIX_BUILD_TOP/importcfg"
+      if [ -n "$allPkgsCompileCfg" ]; then
+        cat "${stdlib}/importcfg" > "$NIX_BUILD_TOP/compilecfg"
+        echo "$allPkgsCompileCfg" >> "$NIX_BUILD_TOP/compilecfg"
+      fi
       runHook postBuild
     '';
     installPhase = ''
       mkdir -p "$out"
       cp "$NIX_BUILD_TOP/importcfg" "$out/importcfg"
+      if [ -n "$allPkgsCompileCfg" ]; then
+        cp "$NIX_BUILD_TOP/compilecfg" "$out/compilecfg"
+      fi
     '';
   };
 
@@ -407,7 +448,7 @@ let
 
         isCgo = pkg.isCgo or false;
         cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-        mkDeriv = if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation;
+        mkDeriv = caMk (if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation);
 
         pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
         knownOverrideAttrs = [
@@ -538,17 +579,25 @@ let
     "packageOverrides"
     "doCheck"
     "checkFlags"
+    "contentAddressed"
+    "splitInterface"
   ];
 
   # Test manifest: only materialized when doCheck = true.
   # Selects testDepsImportcfg when test-only deps exist, depsImportcfg otherwise.
   hasTestDeps = doCheck && goPackagesResult ? testPackages && goPackagesResult.testPackages != { };
 
-  linkManifestJSON = builtins.toJSON {
+  linkManifestJSON = builtins.toJSON ({
     version = 1;
     kind = "link";
     importcfgParts = [ "${depsImportcfg}/importcfg" ];
     localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
+  }
+  // lib.optionalAttrs splitInterface {
+    compileImportcfgParts = [ "${depsImportcfg}/compilecfg" ];
+    localIfaces = builtins.mapAttrs (importPath: pkg: "${pkg.iface}/${importPath}.x") localPackages;
+  }
+  // {
     subPackages = normalizedSubPackages;
     inherit moduleRoot;
     lockfile =
@@ -566,7 +615,7 @@ let
     inherit tags;
     inherit gcflags;
     pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
-  };
+  });
 
   testManifestJSON = lib.optionalString doCheck (
     builtins.toJSON {
