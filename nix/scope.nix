@@ -13,6 +13,7 @@
   newScope,
   tags ? [ ],
   netrcFile ? null,
+  netrcContent ? null,
   nixPackage ? null,
   goEnv ? { },
 }:
@@ -44,6 +45,7 @@ lib.makeScope newScope (
       tags
       tagFlag
       netrcFile
+      netrcContent
       nixPackage
       hasDynamicDerivations
       goEnv
