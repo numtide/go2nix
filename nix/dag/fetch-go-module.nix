@@ -12,7 +12,10 @@
 #     lockfile hashes).
 #
 # For private modules, set netrcFile in mk-go-env.nix to provide credentials.
+# GOPROXY and NETRC are inherited from the build environment via impureEnvVars
+# (matching nixpkgs buildGoModule for GOPROXY; cmd/go reads $NETRC directly).
 {
+  lib,
   go,
   stdenvNoCC,
   cacert,
@@ -39,6 +42,14 @@ stdenvNoCC.mkDerivation {
   outputHashAlgo = "sha256";
   outputHashMode = "recursive";
   outputHash = hash;
+
+  # Inherit proxy configuration from the build environment. outputHash pins
+  # the result regardless of which proxy serves it; this just lets the fetch
+  # route through a private/caching proxy. Matches nixpkgs buildGoModule.
+  impureEnvVars = lib.fetchers.proxyImpureEnvVars ++ [
+    "GOPROXY"
+    "NETRC"
+  ];
 
   nativeBuildInputs = [
     go

@@ -142,9 +142,11 @@ fn configure_go_env(cmd: &mut Command, src_dir: &str, opts: &GoListOpts) {
     cmd.current_dir(&work_dir);
 
     // Minimal environment — GOROOT is self-detected from the binary location,
-    // -buildvcs=false avoids VCS tool lookups.
+    // -buildvcs=false avoids VCS tool lookups. GOPROXY/NETRC are inherited so
+    // private/caching proxies configured in the host environment are respected;
+    // an explicit goProxy arg still wins below.
     cmd.env_clear();
-    for (k, v) in inherit_env(&["GOMODCACHE", "GOPATH", "HOME"]) {
+    for (k, v) in inherit_env(&["GOMODCACHE", "GOPATH", "HOME", "GOPROXY", "NETRC"]) {
         cmd.env(&k, &v);
     }
     if let Some(proxy) = opts.go_proxy {
@@ -1187,5 +1189,44 @@ mod tests {
         };
         let jp = pkg_data_to_json_pkg(&p, &|imp| imp == "github.com/keep");
         assert_eq!(jp.imports, vec!["github.com/keep"]);
+    }
+
+    fn test_opts(go_proxy: Option<&str>) -> GoListOpts<'_> {
+        GoListOpts {
+            tags: &[],
+            mod_root: ".",
+            goos: "",
+            goarch: "",
+            go_proxy,
+            cgo_enabled: "",
+        }
+    }
+
+    fn cmd_env(cmd: &std::process::Command, key: &str) -> Option<String> {
+        cmd.get_envs()
+            .find(|(k, _)| *k == key)
+            .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+    }
+
+    // One test (not two) because std::env mutation is process-global and the
+    // default cargo test harness runs tests in parallel.
+    #[test]
+    fn configure_go_env_goproxy_netrc_inherit_and_override() {
+        std::env::set_var("GOPROXY", "https://proxy.example/");
+        std::env::set_var("NETRC", "/tmp/netrc-test");
+
+        // No explicit goProxy: inherit from env.
+        let mut cmd = std::process::Command::new("true");
+        configure_go_env(&mut cmd, "/tmp", &test_opts(None));
+        assert_eq!(cmd_env(&cmd, "GOPROXY").as_deref(), Some("https://proxy.example/"));
+        assert_eq!(cmd_env(&cmd, "NETRC").as_deref(), Some("/tmp/netrc-test"));
+
+        // Explicit goProxy: overrides inherited value.
+        let mut cmd = std::process::Command::new("true");
+        configure_go_env(&mut cmd, "/tmp", &test_opts(Some("https://explicit.example/")));
+        assert_eq!(cmd_env(&cmd, "GOPROXY").as_deref(), Some("https://explicit.example/"));
+
+        std::env::remove_var("GOPROXY");
+        std::env::remove_var("NETRC");
     }
 }
