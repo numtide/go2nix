@@ -799,10 +799,15 @@ stdenv.mkDerivation (
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
     buildInputs = [ depsImportcfg ] ++ lib.optional doCheck testDepsImportcfg;
 
-    # Go binaries set the interpreter directly and have no
-    # RPATH/RUNPATH; the patchelf shrink reads the whole binary just to
-    # find nothing. With -trimpath there are no /build/ references.
+    # Skip all the no-op phases. The hook sets configurePhase /
+    # buildPhase / installPhase / checkPhase explicitly; the rest are
+    # stdenv defaults that do nothing useful for a Go link:
+    #   patchPhase, updateAutotoolsGnuConfigScriptsPhase — no autotools
+    #   patchELF — no RPATH/RUNPATH (Go sets interpreter directly)
+    #   auditTmpdir — -trimpath strips /build/ refs
     # Strip stays — it actually does work and is fast.
+    dontUnpack = true;
+    dontPatch = true;
     dontPatchELF = true;
     noAuditTmpdir = true;
 
