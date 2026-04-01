@@ -379,6 +379,22 @@ let
   # only its directory. This enables:
   #   - Cross-app sharing: same local package in two apps = same derivation
   #   - Fine-grained rebuilds: changing internal/db doesn't rebuild internal/web
+
+  # Map relDir → set of immediate-child package dirs. Used to exclude
+  # nested packages from a parent's pkgSrc — without this, touching
+  # internal/store/ring.go invalidates the parent main package
+  # because the recursive filter includes everything under the parent dir.
+  # go:embed files in non-package subdirs are still included.
+  allLocalDirs = lib.mapAttrsToList (_: p: p.dir) goPackagesResult.localPackages;
+  childPkgDirsOf =
+    relDir:
+    let
+      prefix = if relDir == "." then "" else relDir + "/";
+    in
+    builtins.filter (
+      d: d != relDir && (relDir == "." || lib.hasPrefix prefix d)
+    ) allLocalDirs;
+
   localPackages = builtins.mapAttrs (
     importPath: pkg:
     let
@@ -390,18 +406,25 @@ let
       # A root-level package (relDir == ".") includes the entire source.
       isRoot = relDir == ".";
 
+      # Subdirectories under this package that are themselves packages —
+      # excluded so their source changes don't invalidate this one.
+      nestedPkgDirs = childPkgDirsOf relDir;
+      isInNestedPkg = rel: builtins.any (d: rel == d || lib.hasPrefix (d + "/") rel) nestedPkgDirs;
+
       # Per-package filtered source: only this package's directory enters the store.
       pkgSrc = builtins.path {
         path = src;
         name = "golocal-${helpers.sanitizeName importPath}-src";
         filter =
           path: _type:
-          if isRoot then
+          let
+            rel = lib.removePrefix (toString src + "/") (toString path);
+          in
+          if isInNestedPkg rel then
+            false
+          else if isRoot then
             true
           else
-            let
-              rel = lib.removePrefix (toString src + "/") (toString path);
-            in
             # Allow the root directory itself.
             path == toString src
             # Allow exact match and children of this package's directory.
@@ -473,17 +496,19 @@ let
   # stdlib's importcfg needs to be read at build time. Store paths are captured
   # through Nix string context, so they remain derivation dependencies without
   # needing buildInputs.
+  # Third-party only — local entries are passed via linkManifestJSON's
+  # localArchives/localIfaces and appended by link-binary, so
+  # depsImportcfg doesn't need them. Excluding locals here means
+  # depsImportcfg's content is stable across local-source touches
+  # (third-party packages don't change), so it CA-cuts-off and the
+  # private-touch cascade drops the importcfg rebuild.
   mkAllPkgsCfg =
     pick:
-    let
-      thirdPartyEntries = map (
+    lib.concatStringsSep "\n" (
+      map (
         importPath: "packagefile ${importPath}=${pick packages.${importPath} importPath}"
-      ) (builtins.attrNames packages);
-      localEntries = map (
-        importPath: "packagefile ${importPath}=${pick localPackages.${importPath} importPath}"
-      ) (builtins.attrNames localPackages);
-    in
-    lib.concatStringsSep "\n" (thirdPartyEntries ++ localEntries);
+      ) (builtins.attrNames packages)
+    );
 
   # Link-time cfg → .a files in the default (out) output.
   allPkgsImportcfg = mkAllPkgsCfg (pkg: ip: "${pkg}/${ip}.a");
