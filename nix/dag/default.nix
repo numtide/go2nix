@@ -31,6 +31,8 @@
   helpers,
   stdlib,
   goEnv,
+  bash,
+  coreutils,
   ...
 }:
 
@@ -56,6 +58,10 @@
   # recompiles. Requires the ca-derivations experimental feature; the
   # final binary stays input-addressed.
   contentAddressed ? false,
+  # Bypass stdenv for non-cgo per-package compiles. Skips setup.sh and
+  # the phase machinery (~4 no-op phases per derivation) in favor of a
+  # raw derivation that just execs go2nix compile-package.
+  rawCompile ? false,
   # Split each per-package derivation into out (link object, .a) and
   # iface (export data, .x) outputs. Downstream compiles depend on iface
   # only, so a private-symbol change (which alters the .a but not its
@@ -103,6 +109,71 @@ let
   # captured via string context in compileManifestJSON; buildInputs here
   # is just for the stdenv input closure.
   depBuildInput = if splitInterface then (dep: dep.iface) else (dep: dep);
+
+  # Raw-derivation builder for pure-Go packages: bypasses stdenv
+  # entirely (no setup.sh, no phase machinery). The go2nix CLI just
+  # needs go + coreutils on PATH and a writable HOME/TMPDIR. For a
+  # single rustc-style compile this saves the ~2000-line setup.sh
+  # source + 4 no-op phases per derivation.
+  #
+  # Cgo packages still go through stdenv (they need cc-wrapper's env
+  # plumbing); the caMk wrapper picks rawGoCompile vs stdenv*.mkDerivation
+  # based on isCgo.
+  rawGoCompileScript = builtins.toFile "go2nix-compile.sh" ''
+    set -eu
+    export PATH="$goPath"
+    export NIX_BUILD_TOP="$TMPDIR"
+    export HOME="$TMPDIR/home"; mkdir -p "$HOME"
+    export GOPROXY=off GOSUMDB=off GONOSUMCHECK='*'
+    echo "$compileManifestJSON" > "$TMPDIR/m.json"
+    mkdir -p "$out/$(dirname "$goPackagePath")"
+    args=(
+      compile-package
+      --manifest "$TMPDIR/m.json"
+      --import-path "$goPackagePath"
+      --src-dir "$goPackageSrcDir"
+      --output "$out/$goPackagePath.a"
+      --trim-path "$TMPDIR"
+    )
+    if [ -n "''${iface:-}" ]; then
+      mkdir -p "$iface/$(dirname "$goPackagePath")"
+      args+=(--iface-output "$iface/$goPackagePath.x" --importcfg-output "$iface/importcfg")
+    else
+      args+=(--importcfg-output "$out/importcfg")
+    fi
+    exec "$go2nixBin" "''${args[@]}"
+  '';
+  rawGoCompile =
+    attrs@{
+      name,
+      env,
+      ...
+    }:
+    let
+      # Pull through only what builtins.derivation understands. caMk
+      # adds __contentAddressed/outputHash*/outputs; everything else
+      # (nativeBuildInputs, __structuredAttrs, buildInputs) is stdenv
+      # machinery we're bypassing. The dep edges are carried via string
+      # context in env.compileManifestJSON.
+      passthrough = lib.getAttrs (lib.intersectLists (lib.attrNames attrs) [
+        "outputs"
+        "__contentAddressed"
+        "outputHashMode"
+        "outputHashAlgo"
+      ]) attrs;
+    in
+    derivation (
+      {
+        inherit name;
+        system = stdenv.hostPlatform.system;
+        builder = "${bash}/bin/bash";
+        args = [ rawGoCompileScript ];
+        goPath = "${coreutils}/bin:${go}/bin";
+        go2nixBin = "${go2nix}/bin/go2nix";
+      }
+      // env
+      // passthrough
+    );
 
   normalizedSubPackages = helpers.normalizeSubPackages subPackages;
 
@@ -276,7 +347,11 @@ let
       # Auto-add CC for CGO packages; use stdenvNoCC for pure Go packages.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-      mkDeriv = caMk (if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation);
+      mkDeriv = caMk (
+        if isCgo then stdenv.mkDerivation
+        else if rawCompile then rawGoCompile
+        else stdenvNoCC.mkDerivation
+      );
     in
     assert
       unknownAttrs == [ ]
@@ -346,7 +421,11 @@ let
       # CGO handling: same pattern as third-party packages.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-      mkDeriv = caMk (if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation);
+      mkDeriv = caMk (
+        if isCgo then stdenv.mkDerivation
+        else if rawCompile then rawGoCompile
+        else stdenvNoCC.mkDerivation
+      );
 
       # Per-package overrides (e.g., nativeBuildInputs for cgo).
       pkgOverride = packageOverrides.${importPath} or { };
@@ -411,7 +490,39 @@ let
   # Compile-time cfg → .x files in the iface output (only when split).
   allPkgsCompileCfg = mkAllPkgsCfg (pkg: ip: "${pkg.iface}/${ip}.x");
 
-  depsImportcfg = caOnly stdenvNoCC.mkDerivation {
+  # Raw-derivation importcfg bundle: just cat + printf, no stdenv.
+  # __structuredAttrs is required — allPkgsImportcfg is ~130KB for
+  # ~900 packages, over the per-env-var limit. The script sources
+  # $NIX_ATTRS_SH_FILE to read it as a bash variable.
+  rawDepsImportcfg = derivation (
+    {
+      name = "${pname}-deps-importcfg";
+      system = stdenv.hostPlatform.system;
+      builder = "${bash}/bin/bash";
+      __structuredAttrs = true;
+      PATH = "${coreutils}/bin";
+      inherit allPkgsImportcfg;
+      allPkgsCompileCfg = if splitInterface then allPkgsCompileCfg else "";
+      stdlibCfg = "${stdlib}/importcfg";
+      args = [
+        (builtins.toFile "deps-importcfg.sh" ''
+          set -eu
+          . "$NIX_ATTRS_SH_FILE"
+          out="''${outputs[out]}"
+          mkdir -p "$out"
+          cat "$stdlibCfg" > "$out/importcfg"
+          printf '%s\n' "$allPkgsImportcfg" >> "$out/importcfg"
+          if [ -n "$allPkgsCompileCfg" ]; then
+            cat "$stdlibCfg" > "$out/compilecfg"
+            printf '%s\n' "$allPkgsCompileCfg" >> "$out/compilecfg"
+          fi
+        '')
+      ];
+    }
+    // caAttrs
+  );
+
+  stdenvDepsImportcfg = caOnly stdenvNoCC.mkDerivation {
     name = "${pname}-deps-importcfg";
     __structuredAttrs = true;
     inherit allPkgsImportcfg;
@@ -437,6 +548,8 @@ let
     '';
   };
 
+  depsImportcfg = if rawCompile then rawDepsImportcfg else stdenvDepsImportcfg;
+
   # --- Test-only third-party package set (only when doCheck = true) ---
   # These are packages reachable only via test imports, discovered by the
   # plugin's second `go list -deps -test` pass. Built with the same pipeline
@@ -456,7 +569,11 @@ let
 
         isCgo = pkg.isCgo or false;
         cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-        mkDeriv = caMk (if isCgo then stdenv.mkDerivation else stdenvNoCC.mkDerivation);
+        mkDeriv = caMk (
+        if isCgo then stdenv.mkDerivation
+        else if rawCompile then rawGoCompile
+        else stdenvNoCC.mkDerivation
+      );
 
         pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
         knownOverrideAttrs = [
@@ -589,6 +706,7 @@ let
     "checkFlags"
     "contentAddressed"
     "splitInterface"
+    "rawCompile"
   ];
 
   # Test manifest: only materialized when doCheck = true.
