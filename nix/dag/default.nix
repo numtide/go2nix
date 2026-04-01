@@ -93,14 +93,25 @@ let
   };
   # caOnly: CA without the iface output — for derivations that don't
   # compile a package (importcfg bundles).
-  # caMk: CA + iface split — for per-package compiles.
+  # caMk: CA + iface split — for LOCAL per-package compiles only.
+  # Third-party packages have fixed source so they never rebuild —
+  # CA buys nothing and adds per-build resolution overhead (~0.5ms ×
+  # ~800 lookups ≈ 0.4s on every link). Keep them input-addressed,
+  # single-output; their .a includes __.PKGDEF so downstream compiles
+  # can read it directly.
   caOnly = mk: attrs: mk (attrs // caAttrs);
   caMk = mk: attrs: mk (attrs // caAttrs // ifaceAttrs);
+  pickMk =
+    isCgo:
+    if isCgo then stdenv.mkDerivation
+    else if rawCompile then rawGoCompile
+    else stdenvNoCC.mkDerivation;
 
   # Where to find a dep's importcfg fragment for downstream COMPILES.
-  # In split mode it lives in the iface output and points at the .x file;
-  # otherwise it's in the single output and points at the .a.
-  depCompileCfg = dep: "${if splitInterface then dep.iface else dep}/importcfg";
+  # Local packages in split mode have it in iface (points at .x);
+  # third-party / non-split packages have it in the single output
+  # (points at .a which contains __.PKGDEF).
+  depCompileCfg = dep: "${dep.iface or dep}/importcfg";
 
   # buildInputs for per-package compiles must reference ONLY the iface
   # output in split mode — referencing the full derivation pulls in
@@ -108,7 +119,7 @@ let
   # defeating the iface cutoff. The actual file dependency is already
   # captured via string context in compileManifestJSON; buildInputs here
   # is just for the stdenv input closure.
-  depBuildInput = if splitInterface then (dep: dep.iface) else (dep: dep);
+  depBuildInput = dep: dep.iface or dep;
 
   # Raw-derivation builder for pure-Go packages: bypasses stdenv
   # entirely (no setup.sh, no phase machinery). The go2nix CLI just
@@ -347,11 +358,7 @@ let
       # Auto-add CC for CGO packages; use stdenvNoCC for pure Go packages.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-      mkDeriv = caMk (
-        if isCgo then stdenv.mkDerivation
-        else if rawCompile then rawGoCompile
-        else stdenvNoCC.mkDerivation
-      );
+      mkDeriv = pickMk isCgo;
     in
     assert
       unknownAttrs == [ ]
@@ -444,11 +451,9 @@ let
       # CGO handling: same pattern as third-party packages.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-      mkDeriv = caMk (
-        if isCgo then stdenv.mkDerivation
-        else if rawCompile then rawGoCompile
-        else stdenvNoCC.mkDerivation
-      );
+      # Local packages get CA + iface — they're the ones that rebuild
+      # on source touches and benefit from early-cutoff.
+      mkDeriv = caMk (pickMk isCgo);
 
       # Per-package overrides (e.g., nativeBuildInputs for cgo).
       pkgOverride = packageOverrides.${importPath} or { };
@@ -510,10 +515,11 @@ let
       ) (builtins.attrNames packages)
     );
 
-  # Link-time cfg → .a files in the default (out) output.
+  # Third-party only → single-output .a (contains __.PKGDEF), so the
+  # same cfg works for both compile and link. Local packages flow via
+  # linkManifestJSON.localArchives / .localIfaces.
   allPkgsImportcfg = mkAllPkgsCfg (pkg: ip: "${pkg}/${ip}.a");
-  # Compile-time cfg → .x files in the iface output (only when split).
-  allPkgsCompileCfg = mkAllPkgsCfg (pkg: ip: "${pkg.iface}/${ip}.x");
+  allPkgsCompileCfg = allPkgsImportcfg;
 
   # Raw-derivation importcfg bundle: just cat + printf, no stdenv.
   # __structuredAttrs is required — allPkgsImportcfg is ~130KB for
@@ -594,11 +600,7 @@ let
 
         isCgo = pkg.isCgo or false;
         cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-        mkDeriv = caMk (
-        if isCgo then stdenv.mkDerivation
-        else if rawCompile then rawGoCompile
-        else stdenvNoCC.mkDerivation
-      );
+        mkDeriv = pickMk isCgo;
 
         pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
         knownOverrideAttrs = [
