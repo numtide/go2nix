@@ -799,6 +799,13 @@ stdenv.mkDerivation (
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
     buildInputs = [ depsImportcfg ] ++ lib.optional doCheck testDepsImportcfg;
 
+    # Go binaries set the interpreter directly and have no
+    # RPATH/RUNPATH; the patchelf shrink reads the whole binary just to
+    # find nothing. With -trimpath there are no /build/ references.
+    # Strip stays — it actually does work and is fast.
+    dontPatchELF = true;
+    noAuditTmpdir = true;
+
     disallowedReferences = lib.optional (!allowGoReference) go;
 
     passthru = {
