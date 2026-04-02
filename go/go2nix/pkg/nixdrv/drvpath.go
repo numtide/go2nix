@@ -157,6 +157,40 @@ func parseSRIHash(sri string) (algo string, hexHash string, err error) {
 	return h.Algo().String(), hex.EncodeToString(h.Digest()), nil
 }
 
+// ATerm serializes the derivation to ATerm bytes — the .drv file content —
+// and returns the set of store paths it references (inputSrcs + inputDrvs).
+// FOD output paths are filled in to match what `nix derivation add` writes.
+func (d *Derivation) ATerm() ([]byte, []string, error) {
+	gnd, err := d.toGoNixDerivation()
+	if err != nil {
+		return nil, nil, fmt.Errorf("converting derivation %q: %w", d.name, err)
+	}
+	if isFOD(gnd) {
+		outputPaths, err := gnd.CalculateOutputPaths(nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("computing FOD output paths for %q: %w", d.name, err)
+		}
+		for name, path := range outputPaths {
+			gnd.Outputs[name].Path = path
+			gnd.Env[name] = path
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := gnd.WriteDerivation(&buf); err != nil {
+		return nil, nil, fmt.Errorf("writing ATerm for %q: %w", d.name, err)
+	}
+
+	refs := make([]string, 0, len(gnd.InputSources)+len(gnd.InputDerivations))
+	refs = append(refs, gnd.InputSources...)
+	for drvPath := range gnd.InputDerivations {
+		refs = append(refs, drvPath)
+	}
+	sort.Strings(refs)
+
+	return buf.Bytes(), refs, nil
+}
+
 // DebugATerm returns the ATerm representation this derivation would produce,
 // after filling in FOD output paths. For debugging only.
 func (d *Derivation) DebugATerm() string {

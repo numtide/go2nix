@@ -159,6 +159,7 @@ let
         --cacert ${cacert}/etc/ssl/certs/ca-bundle.crt \
         ${lib.optionalString (netrcFile != null) "--netrc-file ${netrcFile}"} \
         ${lib.optionalString (pgoProfile != null) "--pgo-profile ${pgoProfile}"} \
+        --daemon-socket "''${NIX_REMOTE#unix://}" \
         --output $out
     '';
 
