@@ -62,38 +62,53 @@ func ConnectDaemon(ctx context.Context, socketPath string, maxConns int) (*Daemo
 // pool is empty and the live-connection budget allows. Blocks if maxConns
 // connections are already checked out.
 func (s *DaemonStore) acquire() (*daemon.Client, error) {
-	for {
-		select {
-		case <-s.closed:
-			return nil, fmt.Errorf("DaemonStore is closed")
-		case c := <-s.idle:
-			return c, nil
-		case s.sem <- struct{}{}:
-			c, err := daemon.Connect(s.ctx, s.socketPath)
-			if err != nil {
-				<-s.sem
-				return nil, err
-			}
-			return c, nil
+	// Prefer reuse over dialling — Go's select is uniformly random when
+	// multiple cases are ready, so without this fast path we'd dial up to
+	// maxConns even with idle connections available.
+	select {
+	case c := <-s.idle:
+		return c, nil
+	default:
+	}
+	select {
+	case <-s.closed:
+		return nil, fmt.Errorf("DaemonStore is closed")
+	case c := <-s.idle:
+		return c, nil
+	case s.sem <- struct{}{}:
+		c, err := daemon.Connect(s.ctx, s.socketPath)
+		if err != nil {
+			<-s.sem
+			return nil, err
 		}
+		return c, nil
 	}
 }
 
-// release returns a connection to the pool. If the operation that used it
-// errored, the connection is closed instead — a protocol error can leave the
-// stream in an undefined state, and the next acquire will dial fresh.
-func (s *DaemonStore) release(c *daemon.Client, opErr error) {
-	if opErr != nil {
+// release returns a connection to the pool. If rpcErr is non-nil the
+// connection is closed instead — a protocol-level error can leave the stream
+// desynced. Application-level errors (build status, parse failures) should
+// pass rpcErr=nil; the RPC completed and the stream is healthy.
+//
+// The invariant len(idle)+checked_out == len(sem) ≤ maxConns means idle
+// always has capacity for a checked-out conn, so the send never blocks.
+func (s *DaemonStore) release(c *daemon.Client, rpcErr error) {
+	if rpcErr != nil {
 		_ = c.Close()
 		<-s.sem
 		return
 	}
+	// Priority-check closed before idle so post-Close releases don't leak.
+	// A Close() between this check and the send below is not reachable in
+	// resolve's call pattern (Close is deferred after errgroup.Wait).
 	select {
-	case s.idle <- c:
 	case <-s.closed:
 		_ = c.Close()
 		<-s.sem
+		return
+	default:
 	}
+	s.idle <- c
 }
 
 // Close drains the idle pool and closes each connection. In-flight
@@ -117,7 +132,7 @@ func (s *DaemonStore) Close() error {
 // DerivationAdd registers a derivation by writing its ATerm content to the
 // store with text:sha256 content-addressing — the same operation
 // `nix derivation add` performs after parsing JSON.
-func (s *DaemonStore) DerivationAdd(drv *Derivation) (sp *storepath.StorePath, err error) {
+func (s *DaemonStore) DerivationAdd(drv *Derivation) (*storepath.StorePath, error) {
 	aterm, refs, err := drv.ATerm()
 	if err != nil {
 		return nil, err
@@ -127,16 +142,15 @@ func (s *DaemonStore) DerivationAdd(drv *Derivation) (sp *storepath.StorePath, e
 	if err != nil {
 		return nil, err
 	}
-	defer func() { s.release(c, err) }()
-
-	info, err := c.AddToStore(s.ctx, &daemon.AddToStoreRequest{
+	info, rpcErr := c.AddToStore(s.ctx, &daemon.AddToStoreRequest{
 		Name:             drv.name + ".drv",
 		CAMethodWithAlgo: "text:sha256",
 		References:       refs,
 		Source:           bytes.NewReader(aterm),
 	})
-	if err != nil {
-		return nil, fmt.Errorf("daemon AddToStore for %q: %w", drv.name, err)
+	s.release(c, rpcErr)
+	if rpcErr != nil {
+		return nil, fmt.Errorf("daemon AddToStore for %q: %w", drv.name, rpcErr)
 	}
 	return storepath.FromAbsolutePath(info.StorePath)
 }
@@ -145,7 +159,7 @@ func (s *DaemonStore) DerivationAdd(drv *Derivation) (sp *storepath.StorePath, e
 // The Store interface accepts CLI-style "^" output separators; the daemon
 // worker protocol parses DerivedPath with the legacy "!" separator
 // (libstore/worker-protocol.cc → DerivedPath::parseLegacy), so translate.
-func (s *DaemonStore) Build(installables ...string) (paths []*storepath.StorePath, err error) {
+func (s *DaemonStore) Build(installables ...string) ([]*storepath.StorePath, error) {
 	derivedPaths := make([]string, len(installables))
 	for i, inst := range installables {
 		derivedPaths[i] = strings.ReplaceAll(inst, "^", "!")
@@ -155,21 +169,21 @@ func (s *DaemonStore) Build(installables ...string) (paths []*storepath.StorePat
 	if err != nil {
 		return nil, err
 	}
-	defer func() { s.release(c, err) }()
-
-	results, err := c.BuildPathsWithResults(s.ctx, derivedPaths, daemon.BuildModeNormal)
-	if err != nil {
-		return nil, fmt.Errorf("daemon BuildPathsWithResults: %w", err)
+	results, rpcErr := c.BuildPathsWithResults(s.ctx, derivedPaths, daemon.BuildModeNormal)
+	s.release(c, rpcErr)
+	if rpcErr != nil {
+		return nil, fmt.Errorf("daemon BuildPathsWithResults: %w", rpcErr)
 	}
 
+	var paths []*storepath.StorePath
 	for i, r := range results {
 		if r.Status > daemon.BuildStatusAlreadyValid {
 			return nil, fmt.Errorf("build %s: %s: %s", installables[i], r.Status, r.ErrorMsg)
 		}
 		for _, real := range r.BuiltOutputs {
-			sp, perr := storepath.FromAbsolutePath(real.OutPath)
-			if perr != nil {
-				return nil, fmt.Errorf("parsing build output %q: %w", real.OutPath, perr)
+			sp, err := storepath.FromAbsolutePath(real.OutPath)
+			if err != nil {
+				return nil, fmt.Errorf("parsing build output %q: %w", real.OutPath, err)
 			}
 			paths = append(paths, sp)
 		}
@@ -179,7 +193,7 @@ func (s *DaemonStore) Build(installables ...string) (paths []*storepath.StorePat
 
 // StoreAdd recursively imports a local directory by streaming its NAR
 // representation to the daemon.
-func (s *DaemonStore) StoreAdd(name, path string) (sp *storepath.StorePath, err error) {
+func (s *DaemonStore) StoreAdd(name, path string) (*storepath.StorePath, error) {
 	pr, pw := io.Pipe()
 	go func() {
 		pw.CloseWithError(nar.DumpPath(pw, path))
@@ -192,15 +206,14 @@ func (s *DaemonStore) StoreAdd(name, path string) (sp *storepath.StorePath, err 
 	if err != nil {
 		return nil, err
 	}
-	defer func() { s.release(c, err) }()
-
-	info, err := c.AddToStore(s.ctx, &daemon.AddToStoreRequest{
+	info, rpcErr := c.AddToStore(s.ctx, &daemon.AddToStoreRequest{
 		Name:             name,
 		CAMethodWithAlgo: "fixed:r:sha256",
 		Source:           pr,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("daemon AddToStore %q: %w", name, err)
+	s.release(c, rpcErr)
+	if rpcErr != nil {
+		return nil, fmt.Errorf("daemon AddToStore %q: %w", name, rpcErr)
 	}
 	return storepath.FromAbsolutePath(info.StorePath)
 }
