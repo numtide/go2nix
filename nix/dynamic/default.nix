@@ -133,6 +133,8 @@ let
       )}
       export NIX_CONFIG="extra-experimental-features = nix-command ca-derivations dynamic-derivations"
       export HOME=$TMPDIR
+      # recursive-nix exports NIX_REMOTE=unix:///build/.../socket; default for set -u.
+      : "''${NIX_REMOTE:=}"
 
       go2nix resolve \
         --src ${src} \
