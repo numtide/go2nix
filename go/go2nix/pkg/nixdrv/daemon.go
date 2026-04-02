@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
@@ -68,11 +69,19 @@ func (s *DaemonStore) DerivationAdd(drv *Derivation) (*storepath.StorePath, erro
 }
 
 // Build realises installables (e.g. "/nix/store/...drv^out") and returns output paths.
+// The Store interface accepts CLI-style "^" output separators; the daemon
+// worker protocol parses DerivedPath with the legacy "!" separator
+// (libstore/worker-protocol.cc → DerivedPath::parseLegacy), so translate.
 func (s *DaemonStore) Build(installables ...string) ([]*storepath.StorePath, error) {
+	derivedPaths := make([]string, len(installables))
+	for i, inst := range installables {
+		derivedPaths[i] = strings.ReplaceAll(inst, "^", "!")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	results, err := s.client.BuildPathsWithResults(s.ctx, installables, daemon.BuildModeNormal)
+	results, err := s.client.BuildPathsWithResults(s.ctx, derivedPaths, daemon.BuildModeNormal)
 	if err != nil {
 		return nil, fmt.Errorf("daemon BuildPathsWithResults: %w", err)
 	}
@@ -100,6 +109,9 @@ func (s *DaemonStore) StoreAdd(name, path string) (*storepath.StorePath, error) 
 	go func() {
 		pw.CloseWithError(nar.DumpPath(pw, path))
 	}()
+	// If AddToStore errors before draining pr, closing it makes the goroutine's
+	// next pw.Write return io.ErrClosedPipe and exit instead of blocking forever.
+	defer func() { _ = pr.Close() }()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
