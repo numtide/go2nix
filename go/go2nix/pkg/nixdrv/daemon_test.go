@@ -3,8 +3,18 @@ package nixdrv
 import (
 	"context"
 	"os"
+	"runtime"
 	"testing"
 )
+
+// nixSystem returns the Nix system string for the current host.
+func nixSystem() string {
+	arch := map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[runtime.GOARCH]
+	if arch == "" {
+		arch = runtime.GOARCH
+	}
+	return arch + "-" + runtime.GOOS
+}
 
 // daemonSocket returns the nix-daemon socket path from the environment, or "" if unavailable.
 func daemonSocket() string {
@@ -49,6 +59,58 @@ func TestDaemonDerivationAddMatchesDrvPath(t *testing.T) {
 
 	if got.String() != want.String() {
 		t.Errorf("daemon path = %s, in-process path = %s", got, want)
+	}
+}
+
+// TestDaemonBuildWarmReturnsOutputs verifies that DaemonStore.Build returns
+// output paths even when the derivation is already valid (warm cache).
+// buildFODs in pkg/resolve relies on len(outputs) == len(installables); if
+// BuildPathsWithResults returned empty BuiltOutputs for AlreadyValid, that
+// invariant would break on the second build of any module set.
+func TestDaemonBuildWarmReturnsOutputs(t *testing.T) {
+	sock := daemonSocket()
+	if sock == "" {
+		t.Skip("no nix-daemon socket available")
+	}
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh on this system")
+	}
+
+	ds, err := ConnectDaemon(context.Background(), sock)
+	if err != nil {
+		t.Skipf("daemon connect failed: %v", err)
+	}
+	defer func() { _ = ds.Close() }()
+
+	// CA-floating derivation; /bin/sh is in nix's default sandbox-paths.
+	drv := NewDerivation("go2nix-daemon-warm-test", nixSystem(), "/bin/sh").
+		AddArg("-c").
+		AddArg(`echo warm-test > "$out"`).
+		AddCAOutput("out", "sha256", "nar")
+
+	drvPath, err := ds.DerivationAdd(drv)
+	if err != nil {
+		t.Fatalf("DerivationAdd: %v", err)
+	}
+	inst := drvPath.Absolute() + "^out"
+
+	cold, err := ds.Build(inst)
+	if err != nil {
+		t.Skipf("cold build failed (sandbox/builder config?): %v", err)
+	}
+	if len(cold) != 1 {
+		t.Fatalf("cold build returned %d paths, want 1", len(cold))
+	}
+
+	warm, err := ds.Build(inst)
+	if err != nil {
+		t.Fatalf("warm build: %v", err)
+	}
+	if len(warm) != 1 {
+		t.Fatalf("warm build returned %d paths, want 1 — BuiltOutputs not populated for AlreadyValid?", len(warm))
+	}
+	if warm[0].String() != cold[0].String() {
+		t.Errorf("warm path %s != cold path %s", warm[0], cold[0])
 	}
 }
 
