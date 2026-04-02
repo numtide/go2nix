@@ -2,8 +2,10 @@ package nixdrv
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -37,7 +39,7 @@ func TestDaemonDerivationAddMatchesDrvPath(t *testing.T) {
 		t.Skip("no nix-daemon socket available")
 	}
 
-	ds, err := ConnectDaemon(context.Background(), sock)
+	ds, err := ConnectDaemon(context.Background(), sock, 4)
 	if err != nil {
 		t.Skipf("daemon connect failed: %v", err)
 	}
@@ -76,7 +78,7 @@ func TestDaemonBuildWarmReturnsOutputs(t *testing.T) {
 		t.Skip("no /bin/sh on this system")
 	}
 
-	ds, err := ConnectDaemon(context.Background(), sock)
+	ds, err := ConnectDaemon(context.Background(), sock, 4)
 	if err != nil {
 		t.Skipf("daemon connect failed: %v", err)
 	}
@@ -121,7 +123,7 @@ func TestDaemonStoreAddRoundTrip(t *testing.T) {
 		t.Skip("no nix-daemon socket available")
 	}
 
-	ds, err := ConnectDaemon(context.Background(), sock)
+	ds, err := ConnectDaemon(context.Background(), sock, 4)
 	if err != nil {
 		t.Skipf("daemon connect failed: %v", err)
 	}
@@ -138,5 +140,45 @@ func TestDaemonStoreAddRoundTrip(t *testing.T) {
 	}
 	if _, err := os.Stat(sp.Absolute()); err != nil {
 		t.Errorf("store path not present on disk: %v", err)
+	}
+}
+
+// TestDaemonPoolConcurrentDerivationAdd exercises the connection pool with
+// more goroutines than maxConns. Each derivation has a unique name so the
+// daemon does real work per call. With -race this catches pool/semaphore
+// misuse and verifies a connection that errored isn't reused.
+func TestDaemonPoolConcurrentDerivationAdd(t *testing.T) {
+	sock := daemonSocket()
+	if sock == "" {
+		t.Skip("no nix-daemon socket available")
+	}
+
+	const maxConns, workers, perWorker = 4, 16, 8
+
+	ds, err := ConnectDaemon(context.Background(), sock, maxConns)
+	if err != nil {
+		t.Skipf("daemon connect failed: %v", err)
+	}
+	defer func() { _ = ds.Close() }()
+
+	var wg sync.WaitGroup
+	errs := make(chan error, workers*perWorker)
+	for w := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range perWorker {
+				drv := NewDerivation(fmt.Sprintf("go2nix-pool-test-%d-%d", w, i), nixSystem(), "/bin/sh").
+					AddCAOutput("out", "sha256", "nar")
+				if _, err := ds.DerivationAdd(drv); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
 	}
 }

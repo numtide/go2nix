@@ -100,12 +100,12 @@ func (cfg *Config) prepare() {
 
 // Resolve orchestrates the full dynamic derivation resolve flow.
 func Resolve(cfg Config) error {
+	cfg.prepare()
+
 	nix := newStore(cfg)
 	if c, ok := nix.(io.Closer); ok {
 		defer func() { _ = c.Close() }()
 	}
-
-	cfg.prepare()
 
 	// Parse overrides
 	overrides := map[string]PackageOverride{}
@@ -335,9 +335,9 @@ func buildModuleFODs(cfg Config, lock *lockfile.Lockfile) (map[string]*storepath
 // otherwise the CLI-subprocess NixTool.
 func newStore(cfg Config) nixdrv.Store {
 	if cfg.DaemonSocket != "" {
-		ds, err := nixdrv.ConnectDaemon(context.Background(), cfg.DaemonSocket)
+		ds, err := nixdrv.ConnectDaemon(context.Background(), cfg.DaemonSocket, cfg.NixJobs)
 		if err == nil {
-			slog.Info("using nix-daemon socket", "path", cfg.DaemonSocket)
+			slog.Info("using nix-daemon socket", "path", cfg.DaemonSocket, "max_conns", cfg.NixJobs)
 			return ds
 		}
 		slog.Warn("daemon connect failed, falling back to nix CLI", "path", cfg.DaemonSocket, "err", err)
