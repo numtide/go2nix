@@ -84,6 +84,13 @@ let
     __contentAddressed = true;
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
+    # Local-package CA outputs are never in any binary cache (they're a
+    # function of the working tree). Without this, nix queries every
+    # configured substituter for each CA realisation before building —
+    # ~78 HTTPS round-trips to cache.nixos.org ≈ 1.0s on every
+    # incremental build. allowSubstitutes = false skips both the
+    # path-substitution and the drv-output-substitution goals.
+    allowSubstitutes = false;
   };
   ifaceAttrs = lib.optionalAttrs splitInterface {
     outputs = [
@@ -171,6 +178,8 @@ let
         "__contentAddressed"
         "outputHashMode"
         "outputHashAlgo"
+        "allowSubstitutes"
+        "preferLocalBuild"
       ]) attrs;
     in
     derivation (
