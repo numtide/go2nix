@@ -60,8 +60,8 @@ func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) erro
 		"-symabis", symabis,
 		"-asmhdr", asmhdr,
 		"-pack",
-		"-o", opts.Output,
 	}
+	compileArgs = append(compileArgs, opts.outputFlags()...)
 	if opts.GoVersion != "" {
 		compileArgs = append(compileArgs, "-lang=go"+opts.GoVersion)
 	}

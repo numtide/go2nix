@@ -1,6 +1,9 @@
 # shellcheck shell=bash
 # Atomic hook: compile a single Go package via go2nix compile-package.
 #
+# Used for cgo packages that need stdenv (cc-wrapper). Non-cgo packages
+# use a raw derivation instead.
+#
 # Expected environment variables (set via derivation `env`):
 #   goPackagePath        — import path of the package to compile
 #   goPackageSrcDir      — absolute path to the source directory
