@@ -57,26 +57,35 @@ func linkBinary(manifestPath, output string) error {
 	}
 
 	// Step 3: Merge importcfg parts.
-	mergedCfg, err := compile.MergeImportcfg(m.ImportcfgParts, tmpDir)
-	if err != nil {
-		return fmt.Errorf("merging importcfg: %w", err)
-	}
-
-	// Add local archive entries to the merged importcfg.
-	{
-		f, err := os.OpenFile(mergedCfg, os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			return fmt.Errorf("opening merged importcfg: %w", err)
+	buildCfg := func(name string, parts []string, locals map[string]string) (string, error) {
+		dir := filepath.Join(tmpDir, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
 		}
-		for importPath, archivePath := range m.LocalArchives {
-			if _, err := fmt.Fprintf(f, "packagefile %s=%s\n", importPath, archivePath); err != nil {
-				return fmt.Errorf("writing importcfg entry: %w", err)
+		cfg, err := compile.MergeImportcfg(parts, dir)
+		if err != nil {
+			return "", fmt.Errorf("merging %s: %w", name, err)
+		}
+		f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return "", fmt.Errorf("opening %s: %w", name, err)
+		}
+		for importPath, p := range locals {
+			if _, err := fmt.Fprintf(f, "packagefile %s=%s\n", importPath, p); err != nil {
+				return "", fmt.Errorf("writing %s entry: %w", name, err)
 			}
 		}
 		if err := f.Close(); err != nil {
-			return fmt.Errorf("closing merged importcfg: %w", err)
+			return "", fmt.Errorf("closing %s: %w", name, err)
 		}
+		return cfg, nil
 	}
+
+	mergedCfg, err := buildCfg("link-cfg", m.ImportcfgParts, m.LocalArchives)
+	if err != nil {
+		return err
+	}
+	compileCfg := mergedCfg
 
 	// Step 4: Compute modinfo.
 	goVersion, err := goToolchainVersion()
@@ -205,7 +214,7 @@ func linkBinary(manifestPath, output string) error {
 			ImportPath:  "main",
 			SrcDir:      srcdir,
 			Output:      mainArchive,
-			ImportCfg:   mergedCfg,
+			ImportCfg:   compileCfg,
 			TrimPath:    tmpDir,
 			Tags:        tagsStr,
 			GCFlagsList: gcflagsList,

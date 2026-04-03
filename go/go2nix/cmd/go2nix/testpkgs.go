@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -36,6 +37,28 @@ func runTestPackagesCmd(args []string) {
 	if err != nil {
 		slog.Error("test-packages: failed to merge importcfg", "err", err)
 		os.Exit(1)
+	}
+
+	// Append local package entries to the importcfg — depsImportcfg may
+	// contain only third-party entries (when the cascade-parity
+	// optimisation is active), so local archives need explicit entries.
+	if len(m.LocalArchives) > 0 {
+		f, err := os.OpenFile(mergedCfg, os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			slog.Error("test-packages: failed to open importcfg for appending", "err", err)
+			os.Exit(1)
+		}
+		for importPath, archivePath := range m.LocalArchives {
+			if _, err := fmt.Fprintf(f, "packagefile %s=%s\n", importPath, archivePath); err != nil {
+				_ = f.Close()
+				slog.Error("test-packages: failed to append local entry", "err", err)
+				os.Exit(1)
+			}
+		}
+		if err := f.Close(); err != nil {
+			slog.Error("test-packages: failed to close importcfg", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	// Reconstruct local-pkgs directory from manifest's localArchives map.

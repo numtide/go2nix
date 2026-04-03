@@ -67,7 +67,7 @@ func runCompilePackageCmd(args []string) {
 		os.Exit(1)
 	}
 
-	// Write importcfg entry for consumers.
+	// Write importcfg entry for downstream consumers.
 	if *importcfgOutput != "" {
 		entry := fmt.Sprintf("packagefile %s=%s\n", *importPath, *output)
 		if err := os.WriteFile(*importcfgOutput, []byte(entry), 0o644); err != nil {

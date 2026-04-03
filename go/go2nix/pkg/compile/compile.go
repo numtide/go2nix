@@ -104,7 +104,7 @@ func CompileGoPackage(opts Options) error {
 		return fmt.Errorf("no Go files found in %s (package %s)", opts.SrcDir, opts.ImportPath)
 	}
 
-	// Create output directory.
+	// Create output directories.
 	if err := os.MkdirAll(filepath.Dir(opts.Output), 0o755); err != nil {
 		return err
 	}
@@ -134,4 +134,8 @@ func CompileGoPackage(opts Options) error {
 		return compileWithAsm(opts, files, embedFlag)
 	}
 	return compileGo(opts, files, embedFlag)
+}
+
+func (o Options) outputFlags() []string {
+	return []string{"-o", o.Output}
 }
