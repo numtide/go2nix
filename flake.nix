@@ -165,7 +165,7 @@
           # nix on it.
           go2nix = pkgs.callPackage ./packages/go2nix/default.nix { };
           benchIncremental = pkgs.writeShellScriptBin "bench-incremental" ''
-            export PATH="${pkgs.lib.makeBinPath [ pkgs.nix ]}:$PATH"
+            export PATH="${pkgs.lib.makeBinPath [ pkgs.nixVersions.nix_2_34 ]}:$PATH"
             exec ${go2nix}/bin/bench-incremental "$@"
           '';
         in
