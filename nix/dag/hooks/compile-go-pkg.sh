@@ -19,13 +19,29 @@ compileGoPkgBuildPhase() {
 
   mkdir -p "$out/$(dirname "$goPackagePath")"
 
-  @go2nix@ compile-package \
-    --manifest "$NIX_BUILD_TOP/compile-manifest.json" \
-    --import-path "$goPackagePath" \
-    --src-dir "$goPackageSrcDir" \
-    --output "$out/$goPackagePath.a" \
-    --importcfg-output "$out/importcfg" \
-    --trim-path "$NIX_BUILD_TOP"
+  # When the derivation has an `iface` output (interface split mode),
+  # write the export-data-only archive there and the link object to
+  # $out. The importcfg fragment goes to $iface so downstream compiles
+  # depend only on the interface.
+  if [[ -n ${iface:-} ]]; then
+    mkdir -p "$iface/$(dirname "$goPackagePath")"
+    @go2nix@ compile-package \
+      --manifest "$NIX_BUILD_TOP/compile-manifest.json" \
+      --import-path "$goPackagePath" \
+      --src-dir "$goPackageSrcDir" \
+      --output "$out/$goPackagePath.a" \
+      --iface-output "$iface/$goPackagePath.x" \
+      --importcfg-output "$iface/importcfg" \
+      --trim-path "$NIX_BUILD_TOP"
+  else
+    @go2nix@ compile-package \
+      --manifest "$NIX_BUILD_TOP/compile-manifest.json" \
+      --import-path "$goPackagePath" \
+      --src-dir "$goPackageSrcDir" \
+      --output "$out/$goPackagePath.a" \
+      --importcfg-output "$out/importcfg" \
+      --trim-path "$NIX_BUILD_TOP"
+  fi
 
   runHook postBuild
 }

@@ -53,6 +53,20 @@
   nativeBuildInputs ? [ ],
   modRoot ? ".",
   packageOverrides ? { },
+  # Build per-package and importcfg derivations as floating CA so that
+  # rebuilds producing byte-identical outputs short-circuit downstream
+  # recompiles. Requires the ca-derivations experimental feature; the
+  # final binary stays input-addressed.
+  #
+  # Each per-package derivation gets a separate `iface` output containing
+  # only the export data (.x file via go tool compile -linkobj).
+  # Downstream compiles depend on `iface`, so private-symbol changes
+  # which alter the .a but not its export data don't cascade. The two
+  # mechanisms are coupled by design — CA without iface only short-
+  # circuits comment-only and cross-module-boundary edits, while iface
+  # without CA can't cut off anything (the input-addressed .x path
+  # changes whenever src does).
+  contentAddressed ? false,
   # Phase 1: checks only supported for modRoot == "." (single-module case).
   # When modRoot != ".", mainSrc doesn't include local replace targets outside
   # the module root, so test discovery/compilation may fail. Users can override
@@ -63,12 +77,46 @@
 }@args:
 
 let
+  caAttrs = lib.optionalAttrs contentAddressed {
+    __contentAddressed = true;
+    outputHashMode = "recursive";
+    outputHashAlgo = "sha256";
+    # Local-package CA outputs are never in any binary cache (they're a
+    # function of the working tree). Without this, nix queries every
+    # configured substituter for each CA realisation before building —
+    # ~78 HTTPS round-trips to cache.nixos.org ≈ 1.0s on every
+    # incremental build. allowSubstitutes = false skips both the
+    # path-substitution and the drv-output-substitution goals.
+    allowSubstitutes = false;
+  };
+  ifaceAttrs = lib.optionalAttrs contentAddressed {
+    outputs = [
+      "out"
+      "iface"
+    ];
+  };
+  # caOnly: CA without the iface output — for importcfg bundles.
+  # caMk: CA + iface split — for per-package compiles. Third-party packages
+  # stay input-addressed (fixed source, never rebuild — CA adds resolution
+  # overhead without benefit).
+  caMk = mk: attrs: mk (attrs // caAttrs // ifaceAttrs);
   # Non-cgo packages use a raw derivation (no stdenv, no phase machinery)
   # for faster per-package compiles. Cgo packages need cc-wrapper from stdenv.
   pickMk = isCgo: if isCgo then stdenv.mkDerivation else rawGoCompile;
 
   # Where to find a dep's importcfg fragment for downstream compiles.
-  depCompileCfg = dep: "${dep}/importcfg";
+  # When CA is on, local packages have it in the iface output (points at
+  # the .x file); third-party packages have a single output and the
+  # importcfg points at the .a (which contains __.PKGDEF).
+  depCompileCfg = dep: "${dep.iface or dep}/importcfg";
+
+  # buildInputs for per-package compiles must reference ONLY the iface
+  # output when CA is on — referencing the full derivation pulls in
+  # `out` (.a link object) too, which changes whenever the body changes,
+  # defeating the iface cutoff. The actual file dependency is already
+  # captured via string context in compileManifestJSON; buildInputs here
+  # is just for the stdenv input closure.
+  depBuildInput = dep: dep.iface or dep;
 
   # Raw-derivation builder for pure-Go packages: bypasses stdenv
   # entirely (no setup.sh, no phase machinery). The go2nix CLI just
@@ -77,7 +125,7 @@ let
   # source + 4 no-op phases per derivation.
   #
   # Cgo packages still go through stdenv (they need cc-wrapper's env
-  # plumbing); pickMk picks rawGoCompile vs stdenv*.mkDerivation
+  # plumbing); the caMk wrapper picks rawGoCompile vs stdenv*.mkDerivation
   # based on isCgo.
   rawGoCompileScript = builtins.toFile "go2nix-compile.sh" ''
     set -eu
@@ -87,14 +135,27 @@ let
     export GOPROXY=off GOSUMDB=off GONOSUMCHECK='*'
     echo "$compileManifestJSON" > "$TMPDIR/m.json"
     mkdir -p "$out/$(dirname "$goPackagePath")"
-    exec "$go2nixBin" \
-      compile-package \
-      --manifest "$TMPDIR/m.json" \
-      --import-path "$goPackagePath" \
-      --src-dir "$goPackageSrcDir" \
-      --output "$out/$goPackagePath.a" \
-      --trim-path "$TMPDIR" \
-      --importcfg-output "$out/importcfg"
+    if [ -n "''${iface:-}" ]; then
+      mkdir -p "$iface/$(dirname "$goPackagePath")"
+      exec "$go2nixBin" \
+        compile-package \
+        --manifest "$TMPDIR/m.json" \
+        --import-path "$goPackagePath" \
+        --src-dir "$goPackageSrcDir" \
+        --output "$out/$goPackagePath.a" \
+        --iface-output "$iface/$goPackagePath.x" \
+        --trim-path "$TMPDIR" \
+        --importcfg-output "$iface/importcfg"
+    else
+      exec "$go2nixBin" \
+        compile-package \
+        --manifest "$TMPDIR/m.json" \
+        --import-path "$goPackagePath" \
+        --src-dir "$goPackageSrcDir" \
+        --output "$out/$goPackagePath.a" \
+        --trim-path "$TMPDIR" \
+        --importcfg-output "$out/importcfg"
+    fi
   '';
   rawGoCompile =
     attrs@{
@@ -103,11 +164,17 @@ let
       ...
     }:
     let
-      # Pull through only what builtins.derivation understands.
-      # Everything else (nativeBuildInputs, __structuredAttrs,
-      # buildInputs) is stdenv machinery we're bypassing. The dep
-      # edges are carried via string context in env.compileManifestJSON.
+      # Pull through only what builtins.derivation understands. caMk
+      # adds __contentAddressed/outputHash*/outputs; everything else
+      # (nativeBuildInputs, __structuredAttrs, buildInputs) is stdenv
+      # machinery we're bypassing. The dep edges are carried via string
+      # context in env.compileManifestJSON.
       passthrough = lib.getAttrs (lib.intersectLists (lib.attrNames attrs) [
+        "outputs"
+        "__contentAddressed"
+        "outputHashMode"
+        "outputHashAlgo"
+        "allowSubstitutes"
         "preferLocalBuild"
       ]) attrs;
     in
@@ -306,7 +373,7 @@ let
       __structuredAttrs = true;
 
       nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
-      buildInputs = deps;
+      buildInputs = map depBuildInput deps;
 
       env = mkCompileEnv {
         inherit
@@ -387,7 +454,9 @@ let
       # CGO handling: same pattern as third-party packages.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
-      mkDeriv = pickMk isCgo;
+      # Local packages get CA + iface — they're the ones that rebuild
+      # on source touches and benefit from early-cutoff.
+      mkDeriv = caMk (pickMk isCgo);
 
       # Per-package overrides (e.g., nativeBuildInputs for cgo).
       pkgOverride = packageOverrides.${importPath} or { };
@@ -412,7 +481,7 @@ let
       __structuredAttrs = true;
 
       nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
-      buildInputs = deps;
+      buildInputs = map depBuildInput deps;
 
       env = mkCompileEnv {
         inherit
@@ -477,6 +546,7 @@ let
         '')
       ];
     }
+    // caAttrs
   );
 
   depsImportcfg = rawDepsImportcfg;
@@ -519,7 +589,7 @@ let
         __structuredAttrs = true;
 
         nativeBuildInputs = [ hooks.goModuleHook ] ++ cgoBuildInputs ++ extraNativeBuildInputs;
-        buildInputs = deps;
+        buildInputs = map depBuildInput deps;
 
         env = mkCompileEnv {
           inherit
@@ -631,6 +701,7 @@ let
     "packageOverrides"
     "doCheck"
     "checkFlags"
+    "contentAddressed"
   ];
 
   # Test manifest: only materialized when doCheck = true.
@@ -643,6 +714,10 @@ let
       kind = "link";
       importcfgParts = [ "${depsImportcfg}/importcfg" ];
       localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
+    }
+    // lib.optionalAttrs contentAddressed {
+      compileImportcfgParts = [ "${depsImportcfg}/importcfg" ];
+      localIfaces = builtins.mapAttrs (importPath: pkg: "${pkg.iface}/${importPath}.x") localPackages;
     }
     // {
       subPackages = normalizedSubPackages;
@@ -666,17 +741,26 @@ let
   );
 
   testManifestJSON = lib.optionalString doCheck (
-    builtins.toJSON {
-      version = 1;
-      kind = "test";
-      importcfgParts =
-        if hasTestDeps then [ "${testDepsImportcfg}/importcfg" ] else [ "${depsImportcfg}/importcfg" ];
-      localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
-      inherit moduleRoot;
-      inherit tags;
-      gcflags = if buildMode == "pie" then [ "-shared" ] ++ gcflags else gcflags;
-      inherit checkFlags;
-    }
+    builtins.toJSON (
+      {
+        version = 1;
+        kind = "test";
+        importcfgParts =
+          if hasTestDeps then [ "${testDepsImportcfg}/importcfg" ] else [ "${depsImportcfg}/importcfg" ];
+        localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
+      }
+      // lib.optionalAttrs contentAddressed {
+        compileImportcfgParts =
+          if hasTestDeps then [ "${testDepsImportcfg}/importcfg" ] else [ "${depsImportcfg}/importcfg" ];
+        localIfaces = builtins.mapAttrs (importPath: pkg: "${pkg.iface}/${importPath}.x") localPackages;
+      }
+      // {
+        inherit moduleRoot;
+        inherit tags;
+        gcflags = if buildMode == "pie" then [ "-shared" ] ++ gcflags else gcflags;
+        inherit checkFlags;
+      }
+    )
   );
 
 in

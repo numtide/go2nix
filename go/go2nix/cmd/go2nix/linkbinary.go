@@ -85,7 +85,17 @@ func linkBinary(manifestPath, output string) error {
 	if err != nil {
 		return err
 	}
+
+	// In interface-split mode, the main-package compile reads export-data
+	// (.x) files so private-symbol changes upstream don't invalidate it.
+	// The link step always reads mergedCfg (.a link objects).
 	compileCfg := mergedCfg
+	if len(m.CompileImportcfgParts) > 0 {
+		compileCfg, err = buildCfg("compile-cfg", m.CompileImportcfgParts, m.LocalIfaces)
+		if err != nil {
+			return err
+		}
+	}
 
 	// Step 4: Compute modinfo.
 	goVersion, err := goToolchainVersion()
