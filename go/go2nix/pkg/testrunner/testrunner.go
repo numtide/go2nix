@@ -20,13 +20,18 @@ import (
 
 // Options configures the test runner.
 type Options struct {
-	ModuleRoot     string   // path to module root (containing go.mod)
-	ImportCfg      string   // path to importcfg (from build phase, has all packages)
-	LocalDir       string   // directory with compiled local .a files
-	TrimPath       string   // path prefix to trim
-	Tags           string   // comma-separated build tags
-	GCFlagsList    []string // extra compiler flags
-	CheckFlagsList []string // flags to pass to test binaries
+	ModuleRoot string // path to module root (containing go.mod)
+	ImportCfg  string // path to link importcfg (.a paths for local packages)
+	// CompileImportCfg is an optional alternate importcfg used for
+	// test-package compilation in interface-split mode (.x paths for
+	// local packages so test compiles cut off when no exported API
+	// changes). Empty means compile and link share ImportCfg.
+	CompileImportCfg string
+	LocalDir         string   // directory with compiled local .a files
+	TrimPath         string   // path prefix to trim
+	Tags             string   // comma-separated build tags
+	GCFlagsList      []string // extra compiler flags
+	CheckFlagsList   []string // flags to pass to test binaries
 }
 
 func (o Options) checkFlagsArgs() []string {
@@ -162,6 +167,29 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		return fmt.Errorf("copying importcfg: %w", err)
 	}
 
+	// In interface-split mode the test compiles read .x (export-data)
+	// for local packages while the link still reads .a. Maintain a
+	// parallel compile-cfg and apply every override to both. When
+	// CompileImportCfg is empty, compile and link share testImportCfg.
+	testCompileImportCfg := testImportCfg
+	if opts.CompileImportCfg != "" {
+		testCompileImportCfg = filepath.Join(testDir, "importcfg.compile")
+		if err := copyFile(opts.CompileImportCfg, testCompileImportCfg); err != nil {
+			return fmt.Errorf("copying compile importcfg: %w", err)
+		}
+	}
+	overrideBoth := func(importPath, archivePath string) error {
+		if err := overrideImportCfgEntry(testImportCfg, importPath, archivePath); err != nil {
+			return err
+		}
+		if testCompileImportCfg != testImportCfg {
+			if err := overrideImportCfgEntry(testCompileImportCfg, importPath, archivePath); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	// Step 1: Compile internal test archive (replaces library archive)
 	// This includes the library's GoFiles + internal _test.go files,
 	// compiled with the same import path as the original package.
@@ -213,7 +241,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			ImportPath:  pkg.ImportPath,
 			SrcDir:      mergedDir,
 			Output:      internalArchive,
-			ImportCfg:   testImportCfg,
+			ImportCfg:   testCompileImportCfg,
 			TrimPath:    opts.TrimPath,
 			Tags:        opts.Tags,
 			GCFlagsList: opts.GCFlagsList,
@@ -235,7 +263,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 	// We rewrite the importcfg filtering out any existing entry for this
 	// package to avoid duplicate packagefile directives.
 	if internalArchive != "" {
-		if err := overrideImportCfgEntry(testImportCfg, pkg.ImportPath, internalArchive); err != nil {
+		if err := overrideBoth(pkg.ImportPath, internalArchive); err != nil {
 			return fmt.Errorf("overriding importcfg for %s: %w", pkg.ImportPath, err)
 		}
 	}
@@ -267,14 +295,14 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 				ImportPath:  depIP,
 				SrcDir:      depPkg.SrcDir,
 				Output:      recompArchive,
-				ImportCfg:   testImportCfg,
+				ImportCfg:   testCompileImportCfg,
 				TrimPath:    opts.TrimPath,
 				Tags:        opts.Tags,
 				GCFlagsList: opts.GCFlagsList,
 			}); err != nil {
 				return fmt.Errorf("recompiling %s for test: %w", depIP, err)
 			}
-			if err := overrideImportCfgEntry(testImportCfg, depIP, recompArchive); err != nil {
+			if err := overrideBoth(depIP, recompArchive); err != nil {
 				return fmt.Errorf("overriding importcfg for recompiled %s: %w", depIP, err)
 			}
 		}
@@ -312,7 +340,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			ImportPath:  pkg.ImportPath + "_test",
 			SrcDir:      xtestDir,
 			Output:      externalArchive,
-			ImportCfg:   testImportCfg,
+			ImportCfg:   testCompileImportCfg,
 			TrimPath:    opts.TrimPath,
 			Tags:        opts.Tags,
 			GCFlagsList: opts.GCFlagsList,
@@ -322,16 +350,10 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			return fmt.Errorf("compiling external test: %w", err)
 		}
 
-		// Add external test to importcfg
-		f, err := os.OpenFile(testImportCfg, os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			return err
-		}
-		_, writeErr := fmt.Fprintf(f, "packagefile %s=%s\n", pkg.ImportPath+"_test", externalArchive)
-		if closeErr := f.Close(); writeErr != nil {
-			return writeErr
-		} else if closeErr != nil {
-			return closeErr
+		// Add external test to both importcfgs (compile reads it for
+		// _testmain, link reads it for the binary).
+		if err := overrideBoth(pkg.ImportPath+"_test", externalArchive); err != nil {
+			return fmt.Errorf("adding external test entry: %w", err)
 		}
 	}
 
@@ -364,7 +386,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		PFlag:       "main",
 		SrcDir:      testDir,
 		Output:      testMainArchive,
-		ImportCfg:   testImportCfg,
+		ImportCfg:   testCompileImportCfg,
 		TrimPath:    opts.TrimPath,
 		Tags:        opts.Tags,
 		GCFlagsList: opts.GCFlagsList,

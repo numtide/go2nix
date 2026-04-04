@@ -196,8 +196,8 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		"-buildid", "", // deterministic empty buildID for Nix reproducibility
 		"-trimpath=" + opts.trimRewrite,
 		"-pack",
-		"-o", opts.Output,
 	}
+	compileArgs = append(compileArgs, opts.outputFlags()...)
 	if opts.GoVersion != "" {
 		compileArgs = append(compileArgs, "-lang=go"+opts.GoVersion)
 	}

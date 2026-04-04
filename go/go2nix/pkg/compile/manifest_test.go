@@ -290,6 +290,61 @@ func TestLoadLinkManifest_nullOptionals(t *testing.T) {
 	}
 }
 
+func TestLoadLinkManifest_iface(t *testing.T) {
+	// splitInterface mode: compileImportcfgParts and localIfaces are
+	// optional fields that route the main-package compile through .x
+	// (export data) files instead of the .a (link object) files used
+	// by the link step.
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	json := `{"version":1,"kind":"link",` +
+		`"importcfgParts":["/a/importcfg"],` +
+		`"localArchives":{"example.com/foo":"/nix/store/foo.a"},` +
+		`"compileImportcfgParts":["/i/importcfg"],` +
+		`"localIfaces":{"example.com/foo":"/nix/store/foo.x"},` +
+		`"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x",` +
+		`"goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`
+	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := LoadLinkManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.CompileImportcfgParts) != 1 || m.CompileImportcfgParts[0] != "/i/importcfg" {
+		t.Errorf("compileImportcfgParts: got %v, want [/i/importcfg]", m.CompileImportcfgParts)
+	}
+	if got, want := m.LocalIfaces["example.com/foo"], "/nix/store/foo.x"; got != want {
+		t.Errorf("localIfaces[example.com/foo]: got %q, want %q", got, want)
+	}
+	// Backwards compatibility: with the iface fields present, the
+	// link-side fields must still be readable.
+	if len(m.ImportcfgParts) != 1 || m.LocalArchives["example.com/foo"] != "/nix/store/foo.a" {
+		t.Errorf("link-side fields lost: importcfgParts=%v localArchives=%v",
+			m.ImportcfgParts, m.LocalArchives)
+	}
+}
+
+func TestLoadLinkManifest_omitIface(t *testing.T) {
+	// When iface fields are omitted (default mode), they parse to
+	// zero values — link-binary will fall through to compileCfg = mergedCfg.
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	json := `{"version":1,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`
+	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadLinkManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.CompileImportcfgParts != nil {
+		t.Errorf("compileImportcfgParts should be nil, got %v", m.CompileImportcfgParts)
+	}
+	if m.LocalIfaces != nil {
+		t.Errorf("localIfaces should be nil, got %v", m.LocalIfaces)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

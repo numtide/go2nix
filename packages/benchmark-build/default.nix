@@ -55,7 +55,7 @@ let
       version = "0.0.1";
       src = srcPath;
       modRoot = "app-full";
-      vendorHash = "sha256-e46RmcsCTgMqbl1vP9Z51fFBrq5xtL/H0xAa3OG5GlY=";
+      vendorHash = "sha256-92aiASB45oe1l42tkUpr1sGN3nwUFAarPDXMWedYLPE=";
       subPackages = [ "cmd/app-full" ];
     }
   '';
@@ -79,6 +79,30 @@ let
       pname = "torture-dag";
       version = "0.0.1";
       subPackages = [ "./cmd/app-full" ];
+    }
+  '';
+
+  # go2nix dag + CA: per-package CA derivations for early cutoff.
+  # Requires ca-derivations in the nix daemon.
+  dagCaExpr = pkgs.writeText "bench-dag-ca.nix" ''
+    { srcPath ? ${fixturePath} }:
+    let
+      pkgs = import <nixpkgs> { system = "${system}"; };
+      go2nixLib = import ${go2nixSrc}/lib.nix {};
+      goEnv = go2nixLib.mkGoEnv {
+        go = pkgs.go_1_26;
+        go2nix = import ${go2nixSrc}/packages/go2nix { inherit pkgs; };
+        inherit (pkgs) callPackage;
+      };
+    in
+    goEnv.buildGoApplication {
+      src = srcPath;
+      modRoot = "app-full";
+      goLock = "''${srcPath}/app-full/go2nix.toml";
+      pname = "torture-dag-ca";
+      version = "0.0.1";
+      subPackages = [ "./cmd/app-full" ];
+      contentAddressed = true;
     }
   '';
 
@@ -123,8 +147,9 @@ pkgs.writeShellApplication {
     SRC_CHANGE_RUNS=''${BENCH_SRC_CHANGE_RUNS:-3}
 
     NIXPKGS_OPT="-I nixpkgs=${nixpkgsPath}"
+    IFD_OPT="--option allow-import-from-derivation true"
     GOMODCACHE="${goModules}"
-    export GOMODCACHE
+    export GOMODCACHE IFD_OPT
 
     ${
       if hasPlugin then
@@ -137,6 +162,13 @@ pkgs.writeShellApplication {
           exit 1
         ''
     }
+
+    # --- Detect ca-derivations support ---
+    HAS_CA=false
+    if nix show-config 2>/dev/null | grep -q 'ca-derivations'; then
+      HAS_CA=true
+    fi
+    export HAS_CA
 
     # --- Results directory ---
     RESULTS_DIR="''${BENCH_RESULTS_ROOT:-.bench-results}/benchmark-build"
@@ -157,6 +189,7 @@ pkgs.writeShellApplication {
       "nix_version": "$(nix --version 2>/dev/null || echo unknown)",
       "go_version": "$(go version 2>/dev/null || echo unknown)",
       "plugin_enabled": ${if hasPlugin then "true" else "false"},
+      "ca_enabled": $HAS_CA,
       "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
       "revision": "$REVISION",
       "dirty": $DIRTY,
@@ -166,19 +199,24 @@ pkgs.writeShellApplication {
     }
     METAEOF
 
-    echo "=== Build benchmark: buildGoModule vs go2nix vs go2nix experimental ==="
+    echo "=== Build benchmark: buildGoModule vs go2nix ==="
     echo "  GOMODCACHE=$GOMODCACHE"
+    echo "  ca-derivations: $HAS_CA"
     echo "  results:  $RESULTS_DIR"
     echo ""
 
     # --- Build command helpers ---
+    CA_OPT="--option extra-experimental-features ca-derivations"
+    export CA_OPT
     # shellcheck disable=SC2086
-    build_bgm()     { nix-build --show-trace $NIXPKGS_OPT ${bgmExpr} "$@"; }
+    build_bgm()     { nix-build $NIXPKGS_OPT ${bgmExpr} "$@"; }
     # shellcheck disable=SC2086
-    build_dag()     { GOMODCACHE="$GOMODCACHE" nix-build --show-trace $NIXPKGS_OPT $PLUGIN_OPT ${dagExpr} "$@"; }
+    build_dag()     { GOMODCACHE="$GOMODCACHE" nix-build $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT ${dagExpr} "$@"; }
     # shellcheck disable=SC2086
-    build_dynamic() { nix-build --show-trace $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr} "$@"; }
-    export -f build_bgm build_dag build_dynamic
+    build_dag_ca()  { GOMODCACHE="$GOMODCACHE" nix-build $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT $CA_OPT ${dagCaExpr} "$@"; }
+    # shellcheck disable=SC2086
+    build_dynamic() { nix-build $NIXPKGS_OPT $IFD_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr} "$@"; }
+    export -f build_bgm build_dag build_dag_ca build_dynamic
     export NIXPKGS_OPT GOMODCACHE PLUGIN_OPT
 
     # --- Collect .drv paths and their outputs for store cleanup ---
@@ -194,13 +232,29 @@ pkgs.writeShellApplication {
 
     echo "  go2nix..."
     # shellcheck disable=SC2086
-    DAG_DRV=$(GOMODCACHE="$GOMODCACHE" nix-instantiate --show-trace $NIXPKGS_OPT $PLUGIN_OPT ${dagExpr})
+    DAG_DRV=$(GOMODCACHE="$GOMODCACHE" nix-instantiate --show-trace $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT ${dagExpr})
     echo "  -> $DAG_DRV"
 
-    echo "  go2nix experimental..."
-    # shellcheck disable=SC2086
-    DYN_DRV=$(nix-instantiate --show-trace $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr})
-    echo "  -> $DYN_DRV"
+    DAG_CA_DRV=""
+    if [ "$HAS_CA" = "true" ]; then
+      echo "  go2nix-CA..."
+      # shellcheck disable=SC2086
+      DAG_CA_DRV=$(GOMODCACHE="$GOMODCACHE" nix-instantiate --show-trace $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT $CA_OPT ${dagCaExpr})
+      echo "  -> $DAG_CA_DRV"
+    else
+      echo "  go2nix-CA... SKIPPED (ca-derivations not enabled in daemon)"
+    fi
+
+    DYN_DRV=""
+    if [ "$HAS_CA" = "true" ]; then
+      echo "  go2nix experimental..."
+      # shellcheck disable=SC2086
+      DYN_DRV=$(nix-instantiate --show-trace $NIXPKGS_OPT $IFD_OPT \
+        --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr})
+      echo "  -> $DYN_DRV"
+    else
+      echo "  go2nix experimental... SKIPPED (ca-derivations not enabled in daemon)"
+    fi
     echo ""
 
     # Collect output paths for cleanup
@@ -212,33 +266,41 @@ pkgs.writeShellApplication {
     }
     drv_outputs_file "$BGM_DRV" "$CLEANUP_DIR/bgm-outputs"
     drv_outputs_file "$DAG_DRV" "$CLEANUP_DIR/dag-outputs"
-    drv_outputs_file "$DYN_DRV" "$CLEANUP_DIR/dyn-outputs"
+    touch "$CLEANUP_DIR/dag-ca-outputs" "$CLEANUP_DIR/dyn-outputs"
+    if [ -n "$DAG_CA_DRV" ]; then drv_outputs_file "$DAG_CA_DRV" "$CLEANUP_DIR/dag-ca-outputs"; fi
+    if [ -n "$DYN_DRV" ]; then drv_outputs_file "$DYN_DRV" "$CLEANUP_DIR/dyn-outputs"; fi
     ALL_OUTPUTS_FILE="$CLEANUP_DIR/all-outputs"
-    sort -u "$CLEANUP_DIR/bgm-outputs" "$CLEANUP_DIR/dag-outputs" "$CLEANUP_DIR/dyn-outputs" > "$ALL_OUTPUTS_FILE"
+    sort -u "$CLEANUP_DIR/bgm-outputs" "$CLEANUP_DIR/dag-outputs" "$CLEANUP_DIR/dag-ca-outputs" "$CLEANUP_DIR/dyn-outputs" > "$ALL_OUTPUTS_FILE"
     export ALL_OUTPUTS_FILE
 
     delete_all_outputs() { xargs nix store delete < "$ALL_OUTPUTS_FILE" 2>/dev/null || true; }
     export -f delete_all_outputs
 
     # --- Phase 1: Build after output eviction ---
-    # Deletes reachable outputs from the host store, but shared deps (go, stdenv)
-    # may survive if other store paths reference them. This is an approximation;
-    # true cold builds require VM-backed strict mode.
     echo "=== Phase 1: Build after output eviction ($CLEAN_RUNS run, host-store) ==="
     echo ""
-    hyperfine \
-      --warmup 0 --runs "$CLEAN_RUNS" \
-      --export-json "$RESULTS_DIR/evicted-build.json" \
-      --export-markdown "$RESULTS_DIR/evicted-build.md" \
-      -n "buildGoModule (evicted)" \
-        --prepare 'bash -c delete_all_outputs' \
-        "nix-build $NIXPKGS_OPT ${bgmExpr} --no-out-link" \
-      -n "go2nix (evicted)" \
-        --prepare 'bash -c delete_all_outputs' \
-        "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT ${dagExpr} --no-out-link" \
-      -n "go2nix experimental (evicted)" \
-        --prepare 'bash -c delete_all_outputs' \
-        "nix-build $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr} --no-out-link"
+    evicted_args=(
+      --warmup 0 --runs "$CLEAN_RUNS"
+      --export-json "$RESULTS_DIR/evicted-build.json"
+      --export-markdown "$RESULTS_DIR/evicted-build.md"
+      -n "buildGoModule (evicted)"
+        --prepare 'bash -c delete_all_outputs'
+        "nix-build $NIXPKGS_OPT ${bgmExpr} --no-out-link"
+      -n "go2nix (evicted)"
+        --prepare 'bash -c delete_all_outputs'
+        "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT ${dagExpr} --no-out-link"
+    )
+    if [ "$HAS_CA" = "true" ]; then
+      evicted_args+=(
+        -n "go2nix-CA (evicted)"
+          --prepare 'bash -c delete_all_outputs'
+          "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT $CA_OPT ${dagCaExpr} --no-out-link"
+        -n "go2nix experimental (evicted)"
+          --prepare 'bash -c delete_all_outputs'
+          "nix-build $NIXPKGS_OPT $IFD_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr} --no-out-link"
+      )
+    fi
+    hyperfine "''${evicted_args[@]}"
     echo ""
 
     # --- Phase 2: Cached rebuild (no-op) ---
@@ -246,29 +308,33 @@ pkgs.writeShellApplication {
     echo "  Pre-building all..."
     build_bgm --no-out-link >/dev/null 2>&1
     build_dag --no-out-link >/dev/null 2>&1
-    build_dynamic --no-out-link >/dev/null 2>&1
+    if [ "$HAS_CA" = "true" ]; then
+      build_dag_ca --no-out-link >/dev/null 2>&1
+      build_dynamic --no-out-link >/dev/null 2>&1
+    fi
     echo "  done."
     echo ""
-    hyperfine \
-      --warmup "$CACHED_WARMUP" --runs "$CACHED_RUNS" \
-      --export-json "$RESULTS_DIR/cached-rebuild.json" \
-      --export-markdown "$RESULTS_DIR/cached-rebuild.md" \
-      -n "buildGoModule (cached)" \
-        "nix-build $NIXPKGS_OPT ${bgmExpr} --no-out-link" \
-      -n "go2nix (cached)" \
-        "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT ${dagExpr} --no-out-link" \
-      -n "go2nix experimental (cached)" \
-        "nix-build $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr} --no-out-link"
+    cached_args=(
+      --warmup "$CACHED_WARMUP" --runs "$CACHED_RUNS"
+      --export-json "$RESULTS_DIR/cached-rebuild.json"
+      --export-markdown "$RESULTS_DIR/cached-rebuild.md"
+      -n "buildGoModule (cached)"
+        "nix-build $NIXPKGS_OPT ${bgmExpr} --no-out-link"
+      -n "go2nix (cached)"
+        "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT ${dagExpr} --no-out-link"
+    )
+    if [ "$HAS_CA" = "true" ]; then
+      cached_args+=(
+        -n "go2nix-CA (cached)"
+          "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT $CA_OPT ${dagCaExpr} --no-out-link"
+        -n "go2nix experimental (cached)"
+          "nix-build $NIXPKGS_OPT $IFD_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' ${dynamicExpr} --no-out-link"
+      )
+    fi
+    hyperfine "''${cached_args[@]}"
     echo ""
 
     # --- Phase 3: Rebuild after source change ---
-    # Copy the fixture to a temp dir, then for each hyperfine iteration:
-    #   prepare: reset copy to baseline (already cached in store)
-    #   command: apply a unique mutation + build
-    #
-    # Each iteration appends a unique comment (counter-based) so the NAR hash
-    # differs every time, forcing a real rebuild. The reset step restores the
-    # baseline without cumulative drift.
     echo "=== Phase 3: Rebuild after source change ($SRC_CHANGE_RUNS runs) ==="
 
     FIXTURE_COPY=$(mktemp -d -t bench-fixture-XXXXXX)
@@ -276,11 +342,13 @@ pkgs.writeShellApplication {
     cp -a "${fixturePath}/." "$FIXTURE_COPY/"
     chmod -R u+w "$FIXTURE_COPY"
 
-    # Pre-build the baseline from the copy so the cache is warm.
     echo "  Pre-building baseline from fixture copy..."
     build_bgm --arg srcPath "$FIXTURE_COPY" --no-out-link >/dev/null 2>&1
     build_dag --arg srcPath "$FIXTURE_COPY" --no-out-link >/dev/null 2>&1
-    build_dynamic --arg srcPath "$FIXTURE_COPY" --no-out-link >/dev/null 2>&1
+    if [ "$HAS_CA" = "true" ]; then
+      build_dag_ca --arg srcPath "$FIXTURE_COPY" --no-out-link >/dev/null 2>&1
+      build_dynamic --arg srcPath "$FIXTURE_COPY" --no-out-link >/dev/null 2>&1
+    fi
     echo "  done."
     echo ""
 
@@ -289,9 +357,6 @@ pkgs.writeShellApplication {
     COUNTER_FILE=$(mktemp)
     export FIXTURE_COPY FIXTURE_SRC MAIN_GO COUNTER_FILE
 
-    # Prepare: reset fixture copy to baseline, then apply iteration N's mutation.
-    # Counter resets to 0 before each contender, so iteration N of every contender
-    # rebuilds from the exact same post-change source tree.
     reset_and_mutate() {
       rm -rf "''${FIXTURE_COPY:?}/"*
       cp -a "$FIXTURE_SRC/." "$FIXTURE_COPY/"
@@ -303,8 +368,6 @@ pkgs.writeShellApplication {
     }
     export -f reset_and_mutate
 
-    # Run each contender separately so the counter resets between them.
-    # This ensures iteration N of each contender sees the same source tree.
     echo 0 > "$COUNTER_FILE"
     hyperfine \
       --warmup 0 --runs "$SRC_CHANGE_RUNS" \
@@ -319,24 +382,33 @@ pkgs.writeShellApplication {
       --export-json "$RESULTS_DIR/src-change-dag.json" \
       -n "go2nix (src change)" \
         --prepare 'bash -c reset_and_mutate' \
-        "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT --arg srcPath $FIXTURE_COPY ${dagExpr} --no-out-link"
+        "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT --arg srcPath $FIXTURE_COPY ${dagExpr} --no-out-link"
 
-    echo 0 > "$COUNTER_FILE"
-    hyperfine \
-      --warmup 0 --runs "$SRC_CHANGE_RUNS" \
-      --export-json "$RESULTS_DIR/src-change-dynamic.json" \
-      -n "go2nix experimental (src change)" \
-        --prepare 'bash -c reset_and_mutate' \
-        "nix-build $NIXPKGS_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' --arg srcPath $FIXTURE_COPY ${dynamicExpr} --no-out-link"
+    src_change_files=("$RESULTS_DIR/src-change-bgm.json" "$RESULTS_DIR/src-change-dag.json")
+
+    if [ "$HAS_CA" = "true" ]; then
+      echo 0 > "$COUNTER_FILE"
+      hyperfine \
+        --warmup 0 --runs "$SRC_CHANGE_RUNS" \
+        --export-json "$RESULTS_DIR/src-change-dag-ca.json" \
+        -n "go2nix-CA (src change)" \
+          --prepare 'bash -c reset_and_mutate' \
+          "GOMODCACHE=$GOMODCACHE nix-build $NIXPKGS_OPT $PLUGIN_OPT $IFD_OPT $CA_OPT --arg srcPath $FIXTURE_COPY ${dagCaExpr} --no-out-link"
+      src_change_files+=("$RESULTS_DIR/src-change-dag-ca.json")
+
+      echo 0 > "$COUNTER_FILE"
+      hyperfine \
+        --warmup 0 --runs "$SRC_CHANGE_RUNS" \
+        --export-json "$RESULTS_DIR/src-change-dynamic.json" \
+        -n "go2nix experimental (src change)" \
+          --prepare 'bash -c reset_and_mutate' \
+          "nix-build $NIXPKGS_OPT $IFD_OPT --option extra-experimental-features 'dynamic-derivations ca-derivations recursive-nix' --arg srcPath $FIXTURE_COPY ${dynamicExpr} --no-out-link"
+      src_change_files+=("$RESULTS_DIR/src-change-dynamic.json")
+    fi
 
     # Merge per-contender results into combined JSON and Markdown.
-    jq -s '{ results: [ .[].results[] ] }' \
-      "$RESULTS_DIR/src-change-bgm.json" \
-      "$RESULTS_DIR/src-change-dag.json" \
-      "$RESULTS_DIR/src-change-dynamic.json" \
-      > "$RESULTS_DIR/src-change.json"
+    jq -s '{ results: [ .[].results[] ] }' "''${src_change_files[@]}" > "$RESULTS_DIR/src-change.json"
 
-    # Generate Markdown table from merged results.
     {
       echo "| Command | Mean [s] | Min [s] | Max [s] |"
       echo "|:---|---:|---:|---:|"
