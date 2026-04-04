@@ -21,22 +21,46 @@ import (
 	"time"
 )
 
-// touchScenarios maps a scenario name to the path (relative to the
-// fixture root) of the file the benchmark touches before rebuilding.
-var touchScenarios = []struct {
-	name string
-	path string
-}{
-	// Leaf: only main depends on this. Cascade = main + link.
-	{"leaf", "app-full/cmd/app-full/main.go"},
-	// Mid: aws is imported by main only. Cascade = aws + main + link.
-	{"mid", "internal/aws/aws.go"},
-	// Deep: common is imported by ~9 local modules + main.
-	{"deep", "internal/common/common.go"},
+type fixtureConfig struct {
+	dir        string // subdirectory under tests/fixtures/
+	modRoot    string
+	subPackage string
+	scenarios  []struct {
+		name string
+		path string // relative to fixture root
+	}
+}
+
+var fixtures = map[string]fixtureConfig{
+	"torture": {
+		dir:        "torture-project",
+		modRoot:    "app-full",
+		subPackage: "./cmd/app-full",
+		scenarios: []struct {
+			name string
+			path string
+		}{
+			{"leaf", "app-full/cmd/app-full/main.go"},
+			{"mid", "internal/aws/aws.go"},
+			{"deep", "internal/common/common.go"},
+		},
+	},
+	"light": {
+		dir:        "light-project",
+		modRoot:    "app",
+		subPackage: "./cmd/app",
+		scenarios: []struct {
+			name string
+			path string
+		}{
+			{"leaf", "app/cmd/app/main.go"},
+			{"mid", "internal/handler/handler.go"},
+			{"deep", "internal/core/core.go"},
+		},
+	},
 }
 
 const (
-	modRoot      = "app-full"
 	touchMarker  = "// BENCHMARK_TOUCH"
 	exprTemplate = `{ srcPath ? %s }:
 let
@@ -52,9 +76,9 @@ goEnv.buildGoApplication {
   src = srcPath;
   modRoot = "%s";
   goLock = "${srcPath}/%s/go2nix.toml";
-  pname = "torture-bench";
+  pname = "bench";
   version = "0.0.1";
-  subPackages = [ "./cmd/app-full" ];
+  subPackages = [ "%s" ];
   doCheck = false;
   %s
 }
@@ -73,10 +97,12 @@ var touchTemplates = map[string]string{
 }
 
 type result struct {
-	Scenario string
-	Tool     string
-	Times    []float64
-	Builds   []int
+	Scenario   string
+	Tool       string
+	Times      []float64
+	EvalTimes  []float64
+	BuildTimes []float64
+	Builds     []int
 }
 
 func mean(xs []float64) float64 {
@@ -152,10 +178,9 @@ func maxF(xs []float64) float64 {
 	return m
 }
 
-// runCommand runs cmd with the given env overlay and returns wall time
-// + combined stdout/stderr. Failure prints the tail of stderr but does
-// NOT exit — the caller decides what a failure means for the benchmark.
-func runCommand(name string, args []string, env map[string]string) (time.Duration, string, string) {
+// runCommand runs cmd with the given env overlay and returns wall time,
+// stdout, stderr, and any error. The caller decides what a failure means.
+func runCommand(name string, args []string, env map[string]string) (time.Duration, string, string, error) {
 	cmd := exec.Command(name, args...)
 	if len(env) > 0 {
 		cmd.Env = os.Environ()
@@ -169,14 +194,7 @@ func runCommand(name string, args []string, env map[string]string) (time.Duratio
 	t0 := time.Now()
 	err := cmd.Run()
 	elapsed := time.Since(t0)
-	if err != nil {
-		tail := stderr.String()
-		if len(tail) > 500 {
-			tail = tail[len(tail)-500:]
-		}
-		fmt.Printf("  COMMAND FAILED (%v):\n  stderr: %s\n", err, tail)
-	}
-	return elapsed, stdout.String(), stderr.String()
+	return elapsed, stdout.String(), stderr.String(), err
 }
 
 func touchFile(path, mode string) error {
@@ -199,28 +217,71 @@ type nixTool struct {
 	gomodcache  string
 	exprPath    string
 	extraOpts   []string
+	storeRoot   string // local store root (NIX_REMOTE=local?root=...)
 }
 
-func (t *nixTool) build(srcPath string) (time.Duration, int) {
-	args := []string{
+type buildResult struct {
+	total     time.Duration
+	evalTime  time.Duration
+	buildTime time.Duration
+	built     int
+}
+
+func (t *nixTool) build(srcPath string) (buildResult, error) {
+	baseArgs := []string{
 		"-I", "nixpkgs=" + t.nixpkgsPath,
 		"--option", "plugin-files", t.pluginPath,
 		"--option", "allow-import-from-derivation", "true",
 	}
-	args = append(args, t.extraOpts...)
-	args = append(args, t.exprPath, "--no-out-link")
-	if srcPath != "" {
-		args = append(args, "--arg", "srcPath", srcPath)
-	}
+	baseArgs = append(baseArgs, t.extraOpts...)
+
 	env := map[string]string{
 		"GOMODCACHE": t.gomodcache,
 	}
-	elapsed, stdout, stderr := runCommand("nix-build", args, env)
-	// Each per-derivation `building '/nix/store/...'` line is one drv.
-	// In CA mode each drv prints one "building" then one "resolved
-	// derivation" — we count "building" only.
-	built := strings.Count(stdout+stderr, "building '/nix/store/")
-	return elapsed, built
+	if t.storeRoot != "" {
+		env["NIX_REMOTE"] = "local?root=" + t.storeRoot
+	}
+
+	// Phase 1: eval (nix-instantiate produces .drv path)
+	evalArgs := make([]string, len(baseArgs))
+	copy(evalArgs, baseArgs)
+	evalArgs = append(evalArgs, t.exprPath)
+	if srcPath != "" {
+		evalArgs = append(evalArgs, "--arg", "srcPath", srcPath)
+	}
+	evalElapsed, evalOut, evalErr, err := runCommand("nix-instantiate", evalArgs, env)
+	if err != nil {
+		tail := evalErr
+		if len(tail) > 500 {
+			tail = tail[len(tail)-500:]
+		}
+		return buildResult{}, fmt.Errorf("nix-instantiate failed: %w\n%s", err, tail)
+	}
+	drvPath := strings.TrimSpace(evalOut)
+	if drvPath == "" {
+		return buildResult{}, fmt.Errorf("nix-instantiate produced no drv path\n%s", evalErr)
+	}
+
+	// Phase 2: build (nix-store --realise)
+	realiseArgs := []string{"--realise", drvPath}
+	realiseArgs = append(realiseArgs, t.extraOpts...)
+	// Pass plugin-files to nix-store too (needed for CA resolution)
+	realiseArgs = append(realiseArgs, "--option", "plugin-files", t.pluginPath)
+	buildElapsed, buildOut, buildErr, err := runCommand("nix-store", realiseArgs, env)
+	if err != nil {
+		tail := buildErr
+		if len(tail) > 500 {
+			tail = tail[len(tail)-500:]
+		}
+		return buildResult{}, fmt.Errorf("nix-store --realise failed: %w\n%s", err, tail)
+	}
+	built := strings.Count(buildOut+buildErr, "building '/nix/store/")
+	return buildResult{
+		total:     evalElapsed + buildElapsed,
+		evalTime:  evalElapsed,
+		buildTime: buildElapsed,
+		built:     built,
+	}, nil
 }
 
 func resolvePaths(repoRoot string) (nixpkgsPath, pluginPath, gomodcache string, err error) {
@@ -231,13 +292,13 @@ func resolvePaths(repoRoot string) (nixpkgsPath, pluginPath, gomodcache string, 
 	var out string
 	nixpkgsPath = strings.TrimSpace(os.Getenv("NIXPKGS_PATH"))
 	if nixpkgsPath == "" {
-		_, out, _ = runCommand("nix", []string{"eval", "--raw", "nixpkgs#path"}, nil)
+		_, out, _, _ = runCommand("nix", []string{"eval", "--raw", "nixpkgs#path"}, nil)
 		nixpkgsPath = strings.TrimSpace(out)
 	}
 	if nixpkgsPath == "" {
 		return "", "", "", fmt.Errorf("could not resolve nixpkgs path (set NIXPKGS_PATH or fix flake registry)")
 	}
-	_, out, _ = runCommand("nix",
+	_, out, _, _ = runCommand("nix",
 		[]string{"build", repoRoot + "#go2nix-nix-plugin", "--no-link", "--print-out-paths"}, nil)
 	pluginOut := strings.TrimSpace(out)
 	if pluginOut == "" {
@@ -247,14 +308,14 @@ func resolvePaths(repoRoot string) (nixpkgsPath, pluginPath, gomodcache string, 
 
 	gomodcache = os.Getenv("GOMODCACHE")
 	if gomodcache == "" {
-		_, out, _ = runCommand("go", []string{"env", "GOMODCACHE"}, nil)
+		_, out, _, _ = runCommand("go", []string{"env", "GOMODCACHE"}, nil)
 		gomodcache = strings.TrimSpace(out)
 	}
 	return nixpkgsPath, pluginPath, gomodcache, nil
 }
 
-func writeNixExpr(tmpdir, name, fixturePath, go2nixSrc, system, extraAttrs string) (string, error) {
-	content := fmt.Sprintf(exprTemplate, fixturePath, system, go2nixSrc, go2nixSrc, modRoot, modRoot, extraAttrs)
+func writeNixExpr(tmpdir, name, fixturePath, go2nixSrc, system, mr, subPkg, extraAttrs string) (string, error) {
+	content := fmt.Sprintf(exprTemplate, fixturePath, system, go2nixSrc, go2nixSrc, mr, mr, subPkg, extraAttrs)
 	path := filepath.Join(tmpdir, "bench-"+name+".nix")
 	return path, os.WriteFile(path, []byte(content), 0o644)
 }
@@ -270,7 +331,10 @@ func runTouchBenchmark(tools []*nixTool, fixtureCopy, scenario, scenarioPath, to
 
 	fmt.Println("  Warming caches...")
 	for _, t := range tools {
-		t.build(fixtureCopy)
+		if _, err := t.build(fixtureCopy); err != nil {
+			fmt.Fprintf(os.Stderr, "  FATAL: warmup failed for %s: %v\n", t.name, err)
+			os.Exit(1)
+		}
 	}
 
 	filePath := filepath.Join(fixtureCopy, scenarioPath)
@@ -282,30 +346,29 @@ func runTouchBenchmark(tools []*nixTool, fixtureCopy, scenario, scenarioPath, to
 
 	for runIdx := 1; runIdx <= runs; runIdx++ {
 		fmt.Printf("\n  Run %d/%d:\n", runIdx, runs)
-		// Touch once per run so all tools see byte-identical input.
-		// A per-tool touch produces a different rotating value (and
-		// timestamp) per tool, which is fine for `private` mode but
-		// a fairness issue for `exported` — cascade size depends on
-		// the touched file's exact bytes.
 		if err := touchFile(filePath, touchMode); err != nil {
 			fmt.Printf("    touch failed: %v\n", err)
 			continue
 		}
 		for _, t := range tools {
-			elapsed, built := t.build(fixtureCopy)
-			s := elapsed.Seconds()
+			br, err := t.build(fixtureCopy)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  FATAL: build failed for %s: %v\n", t.name, err)
+				os.Exit(1)
+			}
+			s := br.total.Seconds()
 			results[t.name].Times = append(results[t.name].Times, s)
-			results[t.name].Builds = append(results[t.name].Builds, built)
-			fmt.Printf("    [%s] %.2fs -- %d drvs built\n", t.name, s, built)
+			results[t.name].EvalTimes = append(results[t.name].EvalTimes, br.evalTime.Seconds())
+			results[t.name].BuildTimes = append(results[t.name].BuildTimes, br.buildTime.Seconds())
+			results[t.name].Builds = append(results[t.name].Builds, br.built)
+			fmt.Printf("    [%s] %.2fs (eval %.2fs + build %.2fs) -- %d drvs built\n",
+				t.name, s, br.evalTime.Seconds(), br.buildTime.Seconds(), br.built)
 		}
-		// Restore after all tools have built; faster than copying the
-		// whole fixture each iteration.
 		if err := os.WriteFile(filePath, pristine, 0o644); err != nil {
 			fmt.Printf("    restore failed: %v\n", err)
 		}
 	}
 
-	// Always restore.
 	_ = os.WriteFile(filePath, pristine, 0o644)
 	out := make([]result, 0, len(tools))
 	for _, t := range tools {
@@ -325,17 +388,27 @@ func runNoChangeBenchmark(tools []*nixTool, fixtureCopy string, runs int) []resu
 
 	fmt.Println("  Warming caches...")
 	for _, t := range tools {
-		t.build(fixtureCopy)
+		if _, err := t.build(fixtureCopy); err != nil {
+			fmt.Fprintf(os.Stderr, "  FATAL: warmup failed for %s: %v\n", t.name, err)
+			os.Exit(1)
+		}
 	}
 
 	for runIdx := 1; runIdx <= runs; runIdx++ {
 		fmt.Printf("\n  Run %d/%d:\n", runIdx, runs)
 		for _, t := range tools {
-			elapsed, built := t.build(fixtureCopy)
-			s := elapsed.Seconds()
+			br, err := t.build(fixtureCopy)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  FATAL: build failed for %s: %v\n", t.name, err)
+				os.Exit(1)
+			}
+			s := br.total.Seconds()
 			results[t.name].Times = append(results[t.name].Times, s)
-			results[t.name].Builds = append(results[t.name].Builds, built)
-			fmt.Printf("    [%s] %.2fs -- %d drvs built\n", t.name, s, built)
+			results[t.name].EvalTimes = append(results[t.name].EvalTimes, br.evalTime.Seconds())
+			results[t.name].BuildTimes = append(results[t.name].BuildTimes, br.buildTime.Seconds())
+			results[t.name].Builds = append(results[t.name].Builds, br.built)
+			fmt.Printf("    [%s] %.2fs (eval %.2fs + build %.2fs) -- %d drvs built\n",
+				t.name, s, br.evalTime.Seconds(), br.buildTime.Seconds(), br.built)
 		}
 	}
 
@@ -392,7 +465,7 @@ func formatResults(allResults [][]result) string {
 		}
 		scenarioName := scenarioResults[0].Scenario
 		var winnerName string
-		var winnerMean float64 = math.Inf(1)
+		winnerMean := math.Inf(1)
 		for name, r := range byTool {
 			m := mean(r.Times)
 			if m < winnerMean {
@@ -439,8 +512,12 @@ func formatResults(allResults [][]result) string {
 		fmt.Fprintf(&b, "### %s\n\n", scenarioResults[0].Scenario)
 		for _, r := range scenarioResults {
 			fmt.Fprintf(&b, "**%s:**\n", r.Tool)
-			fmt.Fprintf(&b, "  - Wall: %.2fs (+/-%.2fs) range %.2fs..%.2fs\n",
+			fmt.Fprintf(&b, "  - Wall:  %.2fs (+/-%.2fs) range %.2fs..%.2fs\n",
 				mean(r.Times), stddev(r.Times), minF(r.Times), maxF(r.Times))
+			fmt.Fprintf(&b, "  - Eval:  %.2fs (+/-%.2fs) range %.2fs..%.2fs\n",
+				mean(r.EvalTimes), stddev(r.EvalTimes), minF(r.EvalTimes), maxF(r.EvalTimes))
+			fmt.Fprintf(&b, "  - Build: %.2fs (+/-%.2fs) range %.2fs..%.2fs\n",
+				mean(r.BuildTimes), stddev(r.BuildTimes), minF(r.BuildTimes), maxF(r.BuildTimes))
 			fmt.Fprintf(&b, "  - Drvs built: %.1f (per-run: %v)\n\n", meanInt(r.Builds), r.Builds)
 		}
 	}
@@ -496,7 +573,7 @@ func exportJSON(allResults [][]result, outputPath string) error {
 }
 
 func getRepoRoot() (string, error) {
-	_, out, _ := runCommand("git", []string{"rev-parse", "--show-toplevel"}, nil)
+	_, out, _, _ := runCommand("git", []string{"rev-parse", "--show-toplevel"}, nil)
 	root := strings.TrimSpace(out)
 	if root == "" {
 		return "", fmt.Errorf("git rev-parse failed")
@@ -505,7 +582,7 @@ func getRepoRoot() (string, error) {
 }
 
 func detectSystem() (string, error) {
-	_, out, _ := runCommand("nix",
+	_, out, _, _ := runCommand("nix",
 		[]string{"eval", "--raw", "--impure", "--expr", "builtins.currentSystem"}, nil)
 	system := strings.TrimSpace(out)
 	if system == "" {
@@ -515,8 +592,8 @@ func detectSystem() (string, error) {
 }
 
 // scenarioPath looks up the touch path for a scenario name.
-func scenarioPath(name string) (string, bool) {
-	for _, s := range touchScenarios {
+func scenarioPath(fc fixtureConfig, name string) (string, bool) {
+	for _, s := range fc.scenarios {
 		if s.name == name {
 			return s.path, true
 		}
@@ -530,19 +607,31 @@ func main() {
 		"scenario to run (no_change|leaf|mid|deep|all)")
 	touchMode := flag.String("touch-mode", "private",
 		"edit type: private=internal symbol, exported=API change")
-	toolsCSV := flag.String("tools", "nix,nix-ca",
-		"comma-separated tools (default: nix,nix-ca)")
+	toolsCSV := flag.String("tools", "nix-nocgo,nix-ca-nocgo",
+		"comma-separated tools (nix,nix-ca,nix-nocgo,nix-ca-nocgo)")
+	fixtureName := flag.String("fixture", "light",
+		"fixture to use (torture|light)")
 	jsonOut := flag.String("json", "", "export results as JSON to this path")
 	assertCascade := flag.Int("assert-cascade", -1,
 		"fail if any tool builds more than N drvs on a touch scenario")
 	flag.Parse()
+
+	fc, ok := fixtures[*fixtureName]
+	if !ok {
+		names := make([]string, 0, len(fixtures))
+		for k := range fixtures {
+			names = append(names, k)
+		}
+		fmt.Fprintf(os.Stderr, "unknown fixture: %q (available: %v)\n", *fixtureName, names)
+		os.Exit(2)
+	}
 
 	repoRoot, err := getRepoRoot()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fixtureSrc := filepath.Join(repoRoot, "tests", "fixtures", "torture-project")
+	fixtureSrc := filepath.Join(repoRoot, "tests", "fixtures", fc.dir)
 
 	fmt.Println("Resolving dependencies...")
 	nixpkgsPath, pluginPath, gomodcache, err := resolvePaths(repoRoot)
@@ -567,32 +656,59 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Shared rooted store for both tools — same store guarantees a fair
-	// comparison (no daemon, no socat, no sandbox=false). Persistent
-	// across invocations: cold cache only matters once. Use --fresh to
-	// force a wipe.
-	exprNix, err := writeNixExpr(tmpdir, "nix", fixtureSrc, repoRoot, system, "")
+	// Shared local store for both tools — same store, same sandbox=false,
+	// no daemon. CA features are enabled client-side so the system daemon
+	// config doesn't matter. Persistent across invocations so the cold
+	// cache cost is paid once.
+	storeRoot := filepath.Join(tmpdir, "store")
+	if err := os.MkdirAll(storeRoot, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	mr := fc.modRoot
+	sp := fc.subPackage
+	exprNix, err := writeNixExpr(tmpdir, "nix", fixtureSrc, repoRoot, system, mr, sp, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	exprCA, err := writeNixExpr(tmpdir, "nix-ca", fixtureSrc, repoRoot, system, "contentAddressed = true;")
+	exprCA, err := writeNixExpr(tmpdir, "nix-ca", fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true;")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	exprNoCgo, err := writeNixExpr(tmpdir, "nix-nocgo", fixtureSrc, repoRoot, system, mr, sp, "CGO_ENABLED = \"0\";")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	exprCANoCgo, err := writeNixExpr(tmpdir, "nix-ca-nocgo", fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true; CGO_ENABLED = \"0\";")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
+	caOpts := []string{"--option", "extra-experimental-features", "ca-derivations"}
+
 	available := map[string]*nixTool{
 		"nix": {
 			name: "nix", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
-			gomodcache: gomodcache, exprPath: exprNix,
+			gomodcache: gomodcache, exprPath: exprNix, storeRoot: storeRoot,
 		},
 		"nix-ca": {
 			name: "nix-ca", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
-			gomodcache: gomodcache, exprPath: exprCA,
-			extraOpts: []string{
-				"--option", "extra-experimental-features", "ca-derivations",
-			},
+			gomodcache: gomodcache, exprPath: exprCA, storeRoot: storeRoot,
+			extraOpts: caOpts,
+		},
+		"nix-nocgo": {
+			name: "nix-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
+			gomodcache: gomodcache, exprPath: exprNoCgo, storeRoot: storeRoot,
+		},
+		"nix-ca-nocgo": {
+			name: "nix-ca-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
+			gomodcache: gomodcache, exprPath: exprCANoCgo, storeRoot: storeRoot,
+			extraOpts: caOpts,
 		},
 	}
 
@@ -625,7 +741,7 @@ func main() {
 
 	fmt.Printf("\n%s\nGO2NIX INCREMENTAL BUILD BENCHMARK\n%s\n",
 		strings.Repeat("=", 70), strings.Repeat("=", 70))
-	fmt.Println("Fixture:    torture-project/app-full")
+	fmt.Printf("Fixture:    %s/%s\n", fc.dir, fc.modRoot)
 	names := make([]string, len(tools))
 	for i, t := range tools {
 		names[i] = t.name
@@ -633,12 +749,12 @@ func main() {
 	fmt.Printf("Tools:      %s\n", strings.Join(names, ", "))
 	fmt.Printf("Touch mode: %s\n", *touchMode)
 	fmt.Printf("Runs:       %d\n", *runs)
-	fmt.Printf("Store:      user's main /nix/store\n")
+	fmt.Printf("Store:      %s\n", storeRoot)
 
 	var scenarios []string
 	if *scenario == "all" {
 		scenarios = append(scenarios, "no_change")
-		for _, s := range touchScenarios {
+		for _, s := range fc.scenarios {
 			scenarios = append(scenarios, s.name)
 		}
 	} else {
@@ -651,7 +767,7 @@ func main() {
 			allResults = append(allResults, runNoChangeBenchmark(tools, fixtureCopy, *runs))
 			continue
 		}
-		path, ok := scenarioPath(name)
+		path, ok := scenarioPath(fc, name)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "unknown scenario: %s\n", name)
 			os.Exit(2)
