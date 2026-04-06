@@ -352,10 +352,10 @@ let
       # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
       # Lookup order: exact import path, then module path, then empty.
       pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
-      knownOverrideAttrs = [
-        "nativeBuildInputs"
-        "env"
-      ];
+      # nativeBuildInputs only reaches PATH via stdenv (cgo path);
+      # rawGoCompile (non-cgo) hardcodes goPath and discards it. Reject
+      # for non-cgo so users get an error instead of a silent no-op.
+      knownOverrideAttrs = [ "env" ] ++ lib.optional isCgo "nativeBuildInputs";
       unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
       extraEnv = pkgOverride.env or { };
@@ -367,7 +367,9 @@ let
     in
     assert
       unknownAttrs == [ ]
-      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
+      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: ${lib.concatStringsSep ", " knownOverrideAttrs}${
+        lib.optionalString (!isCgo) " (nativeBuildInputs is cgo-only — rawGoCompile hardcodes PATH)"
+      }";
     mkDeriv {
       name = pkg.drvName;
       __structuredAttrs = true;
@@ -460,10 +462,9 @@ let
 
       # Per-package overrides (e.g., nativeBuildInputs for cgo).
       pkgOverride = packageOverrides.${importPath} or { };
-      knownOverrideAttrs = [
-        "nativeBuildInputs"
-        "env"
-      ];
+      # nativeBuildInputs only reaches PATH via stdenv (cgo path);
+      # rawGoCompile (non-cgo) hardcodes goPath and discards it.
+      knownOverrideAttrs = [ "env" ] ++ lib.optional isCgo "nativeBuildInputs";
       unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
       extraEnv = pkgOverride.env or { };
@@ -475,7 +476,9 @@ let
       || builtins.throw "go2nix: local package '${importPath}' has dir '${relDir}' outside source tree";
     assert
       unknownAttrs == [ ]
-      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
+      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: ${lib.concatStringsSep ", " knownOverrideAttrs}${
+        lib.optionalString (!isCgo) " (nativeBuildInputs is cgo-only — rawGoCompile hardcodes PATH)"
+      }";
     mkDeriv {
       name = "golocal-${helpers.sanitizeName importPath}";
       __structuredAttrs = true;
@@ -573,17 +576,18 @@ let
         mkDeriv = pickMk isCgo;
 
         pkgOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
-        knownOverrideAttrs = [
-          "nativeBuildInputs"
-          "env"
-        ];
+        # nativeBuildInputs only reaches PATH via stdenv (cgo path);
+        # rawGoCompile (non-cgo) hardcodes goPath and discards it.
+        knownOverrideAttrs = [ "env" ] ++ lib.optional isCgo "nativeBuildInputs";
         unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
         extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
         extraEnv = pkgOverride.env or { };
       in
       assert
         unknownAttrs == [ ]
-        || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: nativeBuildInputs, env";
+        || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: ${lib.concatStringsSep ", " knownOverrideAttrs}${
+          lib.optionalString (!isCgo) " (nativeBuildInputs is cgo-only — rawGoCompile hardcodes PATH)"
+        }";
       mkDeriv {
         name = pkg.drvName;
         __structuredAttrs = true;
