@@ -12,10 +12,7 @@ buildGoModule {
 
   src = pkgs.lib.sources.cleanSource ../../go/go2nix;
 
-  subPackages = [
-    "cmd/go2nix"
-    "cmd/bench-incremental"
-  ];
+  subPackages = [ "cmd/go2nix" ];
 
   vendorHash = "sha256-rUoUq91b6knN5soMbjgssc1Zi4UuLTprBujhuXrhUVU=";
 

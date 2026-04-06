@@ -15,4 +15,4 @@ docs/plans/
 .bench-results/
 
 # bench-incremental Go binary (built ad-hoc)
-go/go2nix/bench-incremental
+go/bench-incremental/bench-incremental
