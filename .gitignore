@@ -14,3 +14,5 @@ docs/plans/
 # Benchmark results
 .bench-results/
 
+# bench-incremental Go binary (built ad-hoc)
+go/bench-incremental/bench-incremental

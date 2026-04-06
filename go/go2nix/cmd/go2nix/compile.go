@@ -16,6 +16,7 @@ func runCompilePackageCmd(args []string) {
 	importPath := fs.String("import-path", "", "Go import path for the package")
 	srcDir := fs.String("src-dir", "", "directory containing source files")
 	output := fs.String("output", "", "output .a archive path")
+	ifaceOutput := fs.String("iface-output", "", "optional export-data-only interface output path; when set, --output receives the link object via -linkobj")
 	importcfgOutput := fs.String("importcfg-output", "", "write importcfg entry for consumers to this path")
 	trimPath := fs.String("trim-path", "", "path prefix to trim (default: $NIX_BUILD_TOP)")
 	pFlag := fs.String("p", "", "override -p flag (default: import-path)")
@@ -54,6 +55,7 @@ func runCompilePackageCmd(args []string) {
 		PFlag:       *pFlag,
 		SrcDir:      *srcDir,
 		Output:      *output,
+		IfaceOutput: *ifaceOutput,
 		ImportCfg:   mergedCfg,
 		TrimPath:    *trimPath,
 		Tags:        strings.Join(m.Tags, ","),
@@ -67,9 +69,15 @@ func runCompilePackageCmd(args []string) {
 		os.Exit(1)
 	}
 
-	// Write importcfg entry for consumers.
+	// Write importcfg entry for downstream consumers. When the interface
+	// split is on, downstream compiles must read the export-data-only file
+	// so their inputs don't change when only the link object does.
 	if *importcfgOutput != "" {
-		entry := fmt.Sprintf("packagefile %s=%s\n", *importPath, *output)
+		target := *output
+		if *ifaceOutput != "" {
+			target = *ifaceOutput
+		}
+		entry := fmt.Sprintf("packagefile %s=%s\n", *importPath, target)
 		if err := os.WriteFile(*importcfgOutput, []byte(entry), 0o644); err != nil {
 			slog.Error("compile-package: failed to write importcfg-output", "err", err)
 			os.Exit(1)

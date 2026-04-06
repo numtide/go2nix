@@ -53,6 +53,7 @@ Requires `nixPackage` to be set in `mkGoEnv` and Nix >= 2.34 with
 | `goProxy` | string or `null` | `null` | default only | Custom GOPROXY URL. |
 | `allowGoReference` | bool | `false` | default only | Allow the output to reference the Go toolchain. |
 | `meta` | attrset | `{}` | default only | Nix meta attributes. |
+| `contentAddressed` | bool | `false` | default only | Make per-package and importcfg derivations [floating-CA](https://nix.dev/manual/nix/development/development/experimental-features.html#xp-feature-ca-derivations) so byte-identical rebuilds short-circuit downstream recompiles (early cutoff). Each per-package derivation also gains an `iface` output containing only the export data (`.x` file via `go tool compile -linkobj`); downstream compiles depend on `iface`, so private-symbol changes that don't alter export data don't cascade (mirrors rules_go's `.x` model). Requires the `ca-derivations` experimental feature; the final binary stays input-addressed. Limitation on the iface cutoff: adding the *first* package-level initializer to a previously-init-free package still flips a bit in the `.x` (this is rare in practice). |
 
 ## `modRoot`
 

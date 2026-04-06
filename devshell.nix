@@ -5,6 +5,8 @@ pkgs.mkShell {
     pkgs.golangci-lint
     pkgs.time
     pkgs.mdbook
+    pkgs.socat
+    pkgs.hyperfine
   ];
 
   shellHook = ''

@@ -17,8 +17,8 @@ func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		"-buildid", "", // deterministic empty buildID for Nix reproducibility
 		"-trimpath=" + opts.trimRewrite,
 		"-pack",
-		"-o", opts.Output,
 	}
+	args = append(args, opts.outputFlags()...)
 	if opts.GoVersion != "" {
 		args = append(args, "-lang=go"+opts.GoVersion)
 	}

@@ -61,16 +61,23 @@ type LinkManifest struct {
 	Kind           string            `json:"kind"`
 	ImportcfgParts []string          `json:"importcfgParts"`
 	LocalArchives  map[string]string `json:"localArchives"`
-	SubPackages    []string          `json:"subPackages"`
-	ModuleRoot     string            `json:"moduleRoot"`
-	Lockfile       *string           `json:"lockfile"`
-	Pname          string            `json:"pname"`
-	GOOS           *string           `json:"goos"`
-	GOARCH         *string           `json:"goarch"`
-	LDFlags        []string          `json:"ldflags"`
-	GCFlags        []string          `json:"gcflags"`
-	Tags           []string          `json:"tags"`
-	PGOProfile     *string           `json:"pgoProfile"`
+	// Optional interface-split mode: when set, the main-package compile
+	// reads these (export-data .x files) instead of ImportcfgParts/
+	// LocalArchives, so its inputs are stable across changes that don't
+	// touch any dependency's exported API. The link step still uses
+	// ImportcfgParts/LocalArchives (.a link objects).
+	CompileImportcfgParts []string          `json:"compileImportcfgParts,omitempty"`
+	LocalIfaces           map[string]string `json:"localIfaces,omitempty"`
+	SubPackages           []string          `json:"subPackages"`
+	ModuleRoot            string            `json:"moduleRoot"`
+	Lockfile              *string           `json:"lockfile"`
+	Pname                 string            `json:"pname"`
+	GOOS                  *string           `json:"goos"`
+	GOARCH                *string           `json:"goarch"`
+	LDFlags               []string          `json:"ldflags"`
+	GCFlags               []string          `json:"gcflags"`
+	Tags                  []string          `json:"tags"`
+	PGOProfile            *string           `json:"pgoProfile"`
 }
 
 // LoadLinkManifest reads and validates a link manifest from path.
@@ -101,10 +108,17 @@ type TestManifest struct {
 	Kind           string            `json:"kind"`
 	ImportcfgParts []string          `json:"importcfgParts"`
 	LocalArchives  map[string]string `json:"localArchives"`
-	ModuleRoot     string            `json:"moduleRoot"`
-	Tags           []string          `json:"tags"`
-	GCFlags        []string          `json:"gcflags"`
-	CheckFlags     []string          `json:"checkFlags"`
+	// Optional interface-split mode: when set, test-package compiles
+	// (internal/xtest/_testmain) read these (export-data .x files)
+	// instead of ImportcfgParts/LocalArchives, so they're stable across
+	// changes that don't touch any local dep's exported API. The link
+	// step still uses ImportcfgParts/LocalArchives (.a link objects).
+	CompileImportcfgParts []string          `json:"compileImportcfgParts,omitempty"`
+	LocalIfaces           map[string]string `json:"localIfaces,omitempty"`
+	ModuleRoot            string            `json:"moduleRoot"`
+	Tags                  []string          `json:"tags"`
+	GCFlags               []string          `json:"gcflags"`
+	CheckFlags            []string          `json:"checkFlags"`
 }
 
 // LoadTestManifest reads and validates a test manifest from path.

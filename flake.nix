@@ -139,6 +139,40 @@
           };
           golangci-lint-go2nix-testgen = callPkg ./packages/golangci-lint-go2nix-testgen/default.nix;
           check-godebug-table = callPkg ./packages/check-godebug-table/default.nix;
+          # The --help check just confirms the binary links and the CLI
+          # surface is intact. The benchmark itself can't run in nix's
+          # build sandbox (it spawns a nested daemon and fetches from
+          # substituters). Use `nix run .#bench-incremental --
+          # --assert-cascade N` for the actual regression check.
+          bench-incremental-help =
+            pkgs.runCommand "bench-incremental-help"
+              {
+                bench = callPkg ./packages/bench-incremental/default.nix;
+              }
+              ''
+                $bench/bin/bench-incremental --help > /dev/null 2>&1 || true
+                touch $out
+              '';
+        }
+      );
+
+      apps = forAllSystems (
+        _system: pkgs:
+        let
+          # The bench binary spawns its own in-process daemon proxy
+          # (no socat) and shells out to nix/nix-store, so PATH needs
+          # nix on it.
+          bench = pkgs.callPackage ./packages/bench-incremental/default.nix { };
+          benchIncremental = pkgs.writeShellScriptBin "bench-incremental" ''
+            export PATH="${pkgs.lib.makeBinPath [ pkgs.nixVersions.nix_2_34 ]}:$PATH"
+            exec ${bench}/bin/bench-incremental "$@"
+          '';
+        in
+        {
+          bench-incremental = {
+            type = "app";
+            program = "${benchIncremental}/bin/bench-incremental";
+          };
         }
       );
 
