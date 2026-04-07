@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/numtide/go2nix/pkg/buildinfo"
 	"github.com/numtide/go2nix/pkg/compile"
@@ -269,7 +270,11 @@ func linkBinary(manifestPath, output string) error {
 			"-buildmode=" + buildMode,
 			"-importcfg", linkCfg,
 		}
-		linkArgs = append(linkArgs, expandLDFlags(m.LDFlags)...)
+		ldflags, err := expandLDFlags(m.LDFlags)
+		if err != nil {
+			return fmt.Errorf("parsing ldflags for %s: %w", importpath, err)
+		}
+		linkArgs = append(linkArgs, ldflags...)
 		linkArgs = append(linkArgs, linkFlags...)
 		linkArgs = append(linkArgs, "-o", filepath.Join(binDir, binname))
 		linkArgs = append(linkArgs, mainArchive)
@@ -313,14 +318,89 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// expandLDFlags splits each ldflag element by whitespace into separate args.
-// Nix users write ldflags like ["-X main.Version=1.6"] (one string with a
-// space). When invoking the linker directly (not via `go build`), each token
-// must be a separate exec arg.
-func expandLDFlags(flags []string) []string {
+// expandLDFlags splits each ldflag element into separate exec arguments using
+// shell-style quoting rules.
+//
+// Nix users write ldflags like ["-X main.Version=1.6"] or
+// ["-extldflags '-static -L/foo/lib'"] and expect the quoted value to stay
+// intact when invoking the linker directly.
+func expandLDFlags(flags []string) ([]string, error) {
 	var out []string
 	for _, f := range flags {
-		out = append(out, strings.Fields(f)...)
+		parts, err := splitShellFields(f)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, parts...)
 	}
-	return out
+	return out, nil
+}
+
+func splitShellFields(s string) ([]string, error) {
+	var (
+		out          []string
+		token        strings.Builder
+		quote        rune
+		escaped      bool
+		tokenStarted bool
+	)
+
+	flush := func() {
+		if !tokenStarted {
+			return
+		}
+		out = append(out, token.String())
+		token.Reset()
+		tokenStarted = false
+	}
+
+	for _, r := range s {
+		if escaped {
+			token.WriteRune(r)
+			escaped = false
+			continue
+		}
+
+		switch quote {
+		case '\'':
+			if r == '\'' {
+				quote = 0
+				continue
+			}
+			token.WriteRune(r)
+		case '"':
+			switch r {
+			case '"':
+				quote = 0
+			case '\\':
+				escaped = true
+			default:
+				token.WriteRune(r)
+			}
+		default:
+			switch {
+			case unicode.IsSpace(r):
+				flush()
+			case r == '\'' || r == '"':
+				tokenStarted = true
+				quote = r
+			case r == '\\':
+				tokenStarted = true
+				escaped = true
+			default:
+				tokenStarted = true
+				token.WriteRune(r)
+			}
+		}
+	}
+
+	if escaped {
+		return nil, fmt.Errorf("unterminated escape sequence")
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quoted string")
+	}
+
+	flush()
+	return out, nil
 }
