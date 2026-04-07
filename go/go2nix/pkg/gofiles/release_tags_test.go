@@ -83,9 +83,12 @@ func TestReleaseTagsForVersion(t *testing.T) {
 		}
 	}
 
-	// Empty input means "do not override" — return nil so callers fall
-	// back to build.Default.ReleaseTags.
-	if got := ReleaseTagsForVersion(""); got != nil {
-		t.Errorf("ReleaseTagsForVersion(\"\") = %v, want nil", got)
+	// Empty or unparseable input means "do not override" — must return nil
+	// (not an empty slice) so BuildContext falls back to
+	// build.Default.ReleaseTags rather than setting ReleaseTags = []string{}.
+	for _, in := range []string{"", "1", "1.0", "2.0", "garbage", "go"} {
+		if got := ReleaseTagsForVersion(in); got != nil {
+			t.Errorf("ReleaseTagsForVersion(%q) = %v, want nil", in, got)
+		}
 	}
 }

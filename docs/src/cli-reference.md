@@ -71,17 +71,20 @@ List Go source files for a package directory, respecting build tags and
 constraints.
 
 ```
-go2nix list-files [-tags=...] <package-dir>
+go2nix list-files [-tags=...] [-go-version=...] <package-dir>
 ```
 
 Outputs JSON with categorized file lists (Go files, C files, assembly, etc.).
+
+`-go-version` sets the target Go toolchain version (e.g. `1.25`) used to
+evaluate `//go:build go1.N` constraints; defaults to `go env GOVERSION`.
 
 ## list-packages
 
 List all local packages in a Go module with their import dependencies.
 
 ```
-go2nix list-packages [-tags=...] <module-root>
+go2nix list-packages [-tags=...] [-go-version=...] <module-root>
 ```
 
 Outputs JSON with each package's import path and dependencies.
