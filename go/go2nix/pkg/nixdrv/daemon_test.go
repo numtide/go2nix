@@ -17,14 +17,18 @@ func nixSystem() string {
 }
 
 // daemonSocket returns the nix-daemon socket path from the environment, or "" if unavailable.
-func daemonSocket() string {
+func daemonSocket(t *testing.T) string {
 	if p := os.Getenv("NIX_DAEMON_SOCKET_PATH"); p != "" {
 		return p
 	}
+
 	const def = "/nix/var/nix/daemon-socket/socket"
 	if _, err := os.Stat(def); err == nil {
 		return def
 	}
+
+	t.Skip("no nix-daemon socket available")
+
 	return ""
 }
 
@@ -32,10 +36,7 @@ func daemonSocket() string {
 // AddToStore returns the same .drv path that DrvPath() computes in-process.
 // Both implement the algorithm `nix derivation add` uses.
 func TestDaemonDerivationAddMatchesDrvPath(t *testing.T) {
-	sock := daemonSocket()
-	if sock == "" {
-		t.Skip("no nix-daemon socket available")
-	}
+	sock := daemonSocket(t)
 
 	ds, err := ConnectDaemon(context.Background(), sock)
 	if err != nil {
@@ -68,10 +69,7 @@ func TestDaemonDerivationAddMatchesDrvPath(t *testing.T) {
 // BuildPathsWithResults returned empty BuiltOutputs for AlreadyValid, that
 // invariant would break on the second build of any module set.
 func TestDaemonBuildWarmReturnsOutputs(t *testing.T) {
-	sock := daemonSocket()
-	if sock == "" {
-		t.Skip("no nix-daemon socket available")
-	}
+	sock := daemonSocket(t)
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		t.Skip("no /bin/sh on this system")
 	}
@@ -116,10 +114,7 @@ func TestDaemonBuildWarmReturnsOutputs(t *testing.T) {
 
 // TestDaemonStoreAddRoundTrip verifies StoreAdd produces a valid store path.
 func TestDaemonStoreAddRoundTrip(t *testing.T) {
-	sock := daemonSocket()
-	if sock == "" {
-		t.Skip("no nix-daemon socket available")
-	}
+	sock := daemonSocket(t)
 
 	ds, err := ConnectDaemon(context.Background(), sock)
 	if err != nil {
