@@ -1,7 +1,6 @@
 package nixdrv
 
 import (
-	"context"
 	"os"
 	"runtime"
 	"testing"
@@ -38,7 +37,7 @@ func daemonSocket(t *testing.T) string {
 func TestDaemonDerivationAddMatchesDrvPath(t *testing.T) {
 	sock := daemonSocket(t)
 
-	ds, err := ConnectDaemon(context.Background(), sock)
+	ds, err := ConnectDaemon(t.Context(), sock)
 	if err != nil {
 		t.Skipf("daemon connect failed: %v", err)
 	}
@@ -74,7 +73,7 @@ func TestDaemonBuildWarmReturnsOutputs(t *testing.T) {
 		t.Skip("no /bin/sh on this system")
 	}
 
-	ds, err := ConnectDaemon(context.Background(), sock)
+	ds, err := ConnectDaemon(t.Context(), sock)
 	if err != nil {
 		t.Skipf("daemon connect failed: %v", err)
 	}
@@ -116,7 +115,7 @@ func TestDaemonBuildWarmReturnsOutputs(t *testing.T) {
 func TestDaemonStoreAddRoundTrip(t *testing.T) {
 	sock := daemonSocket(t)
 
-	ds, err := ConnectDaemon(context.Background(), sock)
+	ds, err := ConnectDaemon(t.Context(), sock)
 	if err != nil {
 		t.Skipf("daemon connect failed: %v", err)
 	}
