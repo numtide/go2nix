@@ -36,7 +36,10 @@ type LocalPkg struct {
 
 // ListLocalPackages discovers all local packages under root (the directory
 // containing go.mod) and returns them in topological dependency order.
-func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
+//
+// goVersion is the target Go toolchain version (e.g. "1.25"); see
+// gofiles.BuildContext for the meaning. Pass "" to use build.Default.
+func ListLocalPackages(root string, tags string, goVersion string) ([]*LocalPkg, error) {
 	goModData, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
 		return nil, fmt.Errorf("reading go.mod: %w", err)
@@ -59,7 +62,7 @@ func ListLocalPackages(root string, tags string) ([]*LocalPkg, error) {
 		}
 	}
 
-	ctx := gofiles.BuildContext(tags)
+	ctx := gofiles.BuildContext(tags, goVersion)
 	pkgs := map[string]*LocalPkg{}
 	localDeps := map[string][]string{}
 

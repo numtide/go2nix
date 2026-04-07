@@ -95,7 +95,10 @@ func CompileGoPackage(opts Options) error {
 		files.EmbedCfg = opts.EmbedCfg
 	} else {
 		var err error
-		files, err = gofiles.ListFiles(opts.SrcDir, opts.Tags)
+		// Pass the toolchain version (not opts.GoVersion, which is the
+		// -lang language version from go.mod) so //go:build go1.N
+		// constraints are evaluated against the actual compiler.
+		files, err = gofiles.ListFiles(opts.SrcDir, opts.Tags, toolchainVersion())
 		if err != nil {
 			return fmt.Errorf("listing files: %w", err)
 		}

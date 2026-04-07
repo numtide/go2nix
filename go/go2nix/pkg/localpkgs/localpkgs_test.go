@@ -177,7 +177,7 @@ func TestListLocalPackages_Basic(t *testing.T) {
 	writeFile(t, filepath.Join(root, "main.go"), "package main\n\nimport \"example.com/test/lib\"\n\nvar _ = lib.X\n\nfunc main() {}\n")
 	writeFile(t, filepath.Join(root, "lib", "lib.go"), "package lib\n\nvar X = 1\n")
 
-	pkgs, err := ListLocalPackages(root, "")
+	pkgs, err := ListLocalPackages(root, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestListLocalPackages_SkipsVendorAndTestdata(t *testing.T) {
 	writeFile(t, filepath.Join(root, "testdata", "t.go"), "package testdata\n")
 	writeFile(t, filepath.Join(root, "_hidden", "h.go"), "package hidden\n")
 
-	pkgs, err := ListLocalPackages(root, "")
+	pkgs, err := ListLocalPackages(root, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestListLocalPackages_SkipsVendorAndTestdata(t *testing.T) {
 
 func TestListLocalPackages_NoGoMod(t *testing.T) {
 	root := t.TempDir()
-	_, err := ListLocalPackages(root, "")
+	_, err := ListLocalPackages(root, "", "")
 	if err == nil {
 		t.Fatal("expected error for missing go.mod, got nil")
 	}
@@ -267,7 +267,7 @@ func TestAdd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pkgs, err := ListLocalPackages(dir, "")
+	pkgs, err := ListLocalPackages(dir, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

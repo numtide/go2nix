@@ -14,7 +14,7 @@ func TestListFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files, err := ListFiles(dir, "")
+	files, err := ListFiles(dir, "", "")
 	if err != nil {
 		t.Fatalf("ListFiles: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestListFiles(t *testing.T) {
 }
 
 func TestBuildContextTags(t *testing.T) {
-	ctx := BuildContext("integration,debug")
+	ctx := BuildContext("integration,debug", "")
 	if len(ctx.BuildTags) != 2 {
 		t.Errorf("BuildTags = %v, want [integration debug]", ctx.BuildTags)
 	}
@@ -195,7 +195,7 @@ func TestListFiles_LibraryPackage(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "lib.go"), "package lib\n\nvar X = 1\n")
 
-	files, err := ListFiles(dir, "")
+	files, err := ListFiles(dir, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestListFiles_LibraryPackage(t *testing.T) {
 
 func TestListFiles_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	_, err := ListFiles(dir, "")
+	_, err := ListFiles(dir, "", "")
 	if err == nil {
 		t.Fatal("expected error for directory with no Go files, got nil")
 	}
