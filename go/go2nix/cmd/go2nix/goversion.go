@@ -14,9 +14,5 @@ func resolveGoVersion(flagValue string) string {
 	if flagValue != "" {
 		return compile.LangVersion(strings.TrimPrefix(flagValue, "go"))
 	}
-	v := compile.GoEnvVar("GOVERSION")
-	if v == "" {
-		return ""
-	}
-	return compile.LangVersion(strings.TrimPrefix(v, "go"))
+	return compile.ToolchainVersion()
 }

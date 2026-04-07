@@ -158,12 +158,12 @@ func findGoVersion(dir string) string {
 	return ""
 }
 
-// toolchainVersion returns the major.minor version of the Go toolchain
+// ToolchainVersion returns the major.minor version of the Go toolchain
 // that will be invoked for compilation, queried from `go env GOVERSION`
 // (cached for the lifetime of the process). Used to override
 // build.Context.ReleaseTags so file selection matches the target toolchain
 // rather than the Go version that built this binary.
-func toolchainVersion() string {
+func ToolchainVersion() string {
 	v := GoEnvVar("GOVERSION")
 	if v == "" {
 		return ""
