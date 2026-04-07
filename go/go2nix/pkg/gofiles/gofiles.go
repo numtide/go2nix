@@ -5,6 +5,7 @@ package gofiles
 import (
 	"fmt"
 	"go/build"
+	"go/version"
 	"io/fs"
 	"os"
 	pathpkg "path"
@@ -65,18 +66,23 @@ func BuildContext(tags string, goVersion string) build.Context {
 
 // ReleaseTagsForVersion returns the build.Context.ReleaseTags slice for a
 // given Go version: ["go1.1", "go1.2", ..., "go1.N"]. Accepts "1.25",
-// "1.25.3", "go1.25", or "go1.25.3". Returns nil for an empty or
-// unparseable input so callers can fall back to build.Default.ReleaseTags.
+// "1.25.3", "go1.25", "go1.25.3", or prerelease forms like "go1.26rc1" /
+// "go1.26beta2". Returns nil for an empty or unparseable input so callers
+// can fall back to build.Default.ReleaseTags.
 func ReleaseTagsForVersion(goVersion string) []string {
-	v := strings.TrimPrefix(goVersion, "go")
-	if v == "" {
+	if goVersion == "" {
 		return nil
 	}
-	major, rest, ok := strings.Cut(v, ".")
+	// go/version.Lang canonicalizes "go1.26rc1", "go1.25.3", etc. to
+	// "go1.N". It requires the "go" prefix.
+	if !strings.HasPrefix(goVersion, "go") {
+		goVersion = "go" + goVersion
+	}
+	lang := strings.TrimPrefix(version.Lang(goVersion), "go")
+	major, minorStr, ok := strings.Cut(lang, ".")
 	if !ok || major != "1" {
 		return nil
 	}
-	minorStr, _, _ := strings.Cut(rest, ".")
 	minor, err := strconv.Atoi(minorStr)
 	if err != nil || minor < 1 {
 		return nil

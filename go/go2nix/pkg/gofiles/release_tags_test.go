@@ -67,6 +67,11 @@ func TestReleaseTagsForVersion(t *testing.T) {
 		{"go1.25", 25, "go1.25"},
 		{"go1.25.3", 25, "go1.25"},
 		{"1.1", 1, "go1.1"},
+		// Prerelease toolchains: `go env GOVERSION` returns e.g.
+		// "go1.26rc1" with no dot before the suffix.
+		{"go1.26rc1", 26, "go1.26"},
+		{"go1.26beta2", 26, "go1.26"},
+		{"1.26rc1", 26, "go1.26"},
 	}
 	for _, tc := range cases {
 		got := ReleaseTagsForVersion(tc.in)
