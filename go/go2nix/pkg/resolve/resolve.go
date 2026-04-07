@@ -340,8 +340,10 @@ func newStore(cfg Config) nixdrv.Store {
 			slog.Info("using nix-daemon socket", "path", cfg.DaemonSocket)
 			return ds
 		}
+
 		slog.Warn("daemon connect failed, falling back to nix CLI", "path", cfg.DaemonSocket, "err", err)
 	}
+
 	return &nixdrv.NixTool{
 		NixBin: cfg.NixBin,
 		ExtraArgs: []string{

@@ -165,11 +165,13 @@ func (d *Derivation) ATerm() ([]byte, []string, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("converting derivation %q: %w", d.name, err)
 	}
+
 	if isFOD(gnd) {
 		outputPaths, err := gnd.CalculateOutputPaths(nil)
 		if err != nil {
 			return nil, nil, fmt.Errorf("computing FOD output paths for %q: %w", d.name, err)
 		}
+
 		for name, path := range outputPaths {
 			gnd.Outputs[name].Path = path
 			gnd.Env[name] = path
@@ -177,15 +179,17 @@ func (d *Derivation) ATerm() ([]byte, []string, error) {
 	}
 
 	var buf bytes.Buffer
-	if err := gnd.WriteDerivation(&buf); err != nil {
+	if err = gnd.WriteDerivation(&buf); err != nil {
 		return nil, nil, fmt.Errorf("writing ATerm for %q: %w", d.name, err)
 	}
 
 	refs := make([]string, 0, len(gnd.InputSources)+len(gnd.InputDerivations))
 	refs = append(refs, gnd.InputSources...)
+
 	for drvPath := range gnd.InputDerivations {
 		refs = append(refs, drvPath)
 	}
+
 	sort.Strings(refs)
 
 	return buf.Bytes(), refs, nil
@@ -198,19 +202,23 @@ func (d *Derivation) DebugATerm() string {
 	if err != nil {
 		return fmt.Sprintf("(conversion error: %v)", err)
 	}
+
 	if isFOD(gnd) {
 		outputPaths, err := gnd.CalculateOutputPaths(nil)
 		if err != nil {
 			return fmt.Sprintf("(output path error: %v)", err)
 		}
+
 		for name, path := range outputPaths {
 			gnd.Outputs[name].Path = path
 			gnd.Env[name] = path
 		}
 	}
+
 	var buf bytes.Buffer
-	if err := gnd.WriteDerivation(&buf); err != nil {
+	if err = gnd.WriteDerivation(&buf); err != nil {
 		return fmt.Sprintf("(write error: %v)", err)
 	}
+
 	return buf.String()
 }

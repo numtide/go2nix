@@ -91,6 +91,7 @@ func (s *DaemonStore) Build(installables ...string) ([]*storepath.StorePath, err
 		if r.Status > daemon.BuildStatusAlreadyValid {
 			return nil, fmt.Errorf("build %s: %s: %s", installables[i], r.Status, r.ErrorMsg)
 		}
+
 		for _, real := range r.BuiltOutputs {
 			sp, err := storepath.FromAbsolutePath(real.OutPath)
 			if err != nil {
@@ -99,6 +100,7 @@ func (s *DaemonStore) Build(installables ...string) ([]*storepath.StorePath, err
 			paths = append(paths, sp)
 		}
 	}
+
 	return paths, nil
 }
 
@@ -109,6 +111,7 @@ func (s *DaemonStore) StoreAdd(name, path string) (*storepath.StorePath, error) 
 	go func() {
 		pw.CloseWithError(nar.DumpPath(pw, path))
 	}()
+
 	// If AddToStore errors before draining pr, closing it makes the goroutine's
 	// next pw.Write return io.ErrClosedPipe and exit instead of blocking forever.
 	defer func() { _ = pr.Close() }()
@@ -119,10 +122,12 @@ func (s *DaemonStore) StoreAdd(name, path string) (*storepath.StorePath, error) 
 	info, err := s.client.AddToStore(s.ctx, &daemon.AddToStoreRequest{
 		Name:             name,
 		CAMethodWithAlgo: "fixed:r:sha256",
-		Source:           pr,
+
+		Source: pr,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("daemon AddToStore %q: %w", name, err)
 	}
+
 	return storepath.FromAbsolutePath(info.StorePath)
 }
