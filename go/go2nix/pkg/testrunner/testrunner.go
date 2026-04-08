@@ -298,6 +298,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 				TrimPath:    opts.TrimPath,
 				Tags:        opts.Tags,
 				GCFlagsList: opts.GCFlagsList,
+				Files:       &depPkg.PkgFiles,
 			}); err != nil {
 				return fmt.Errorf("recompiling %s for test: %w", depIP, err)
 			}
