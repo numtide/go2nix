@@ -133,13 +133,12 @@ let
     export NIX_BUILD_TOP="$TMPDIR"
     export HOME="$TMPDIR/home"; mkdir -p "$HOME"
     export GOPROXY=off GOSUMDB=off GONOSUMCHECK='*'
-    echo "$compileManifestJSON" > "$TMPDIR/m.json"
     mkdir -p "$out/$(dirname "$goPackagePath")"
     if [ -n "''${iface:-}" ]; then
       mkdir -p "$iface/$(dirname "$goPackagePath")"
       exec "$go2nixBin" \
         compile-package \
-        --manifest "$TMPDIR/m.json" \
+        --manifest "$compileManifestJSONPath" \
         --import-path "$goPackagePath" \
         --src-dir "$goPackageSrcDir" \
         --output "$out/$goPackagePath.a" \
@@ -149,7 +148,7 @@ let
     else
       exec "$go2nixBin" \
         compile-package \
-        --manifest "$TMPDIR/m.json" \
+        --manifest "$compileManifestJSONPath" \
         --import-path "$goPackagePath" \
         --src-dir "$goPackageSrcDir" \
         --output "$out/$goPackagePath.a" \
@@ -184,6 +183,11 @@ let
         inherit (stdenv.hostPlatform) system;
         builder = "${bash}/bin/bash";
         args = [ rawGoCompileScript ];
+        # compileManifestJSON now carries per-file lists; pass it via a
+        # temp file so packages with thousands of source files don't risk
+        # MAX_ARG_STRLEN. (The stdenv/cgo path already avoids this via
+        # __structuredAttrs.)
+        passAsFile = [ "compileManifestJSON" ];
         goPath = "${coreutils}/bin:${go}/bin";
         go2nixBin = "${go2nix}/bin/go2nix";
       }
@@ -200,19 +204,25 @@ let
   # references store paths of other derivations. The shell hook writes
   # it to a file before invoking go2nix.
   mkCompileManifestJSON =
-    deps:
-    builtins.toJSON {
-      version = 1;
-      kind = "compile";
-      importcfgParts = [ "${stdlib}/importcfg" ] ++ map depCompileCfg deps;
-      inherit tags;
-      gcflags =
-        let
-          base = gcflags;
-        in
-        if buildMode == "pie" then [ "-shared" ] ++ base else base;
-      pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
-    };
+    {
+      deps,
+      files,
+    }:
+    builtins.toJSON (
+      {
+        version = 1;
+        kind = "compile";
+        importcfgParts = [ "${stdlib}/importcfg" ] ++ map depCompileCfg deps;
+        inherit tags;
+        gcflags =
+          let
+            base = gcflags;
+          in
+          if buildMode == "pie" then [ "-shared" ] ++ base else base;
+        pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
+      }
+      // (if files != null then { inherit files; } else { })
+    );
 
   # Env attrset for per-package compile derivations. goEnv is the scope-level
   # base; the hook-required keys overlay it; packageOverrides.<pkg>.env wins.
@@ -222,12 +232,13 @@ let
       srcDir,
       deps,
       extraEnv,
+      files ? null,
     }:
     goEnv
     // {
       goPackagePath = importPath;
       goPackageSrcDir = srcDir;
-      compileManifestJSON = mkCompileManifestJSON deps;
+      compileManifestJSON = mkCompileManifestJSON { inherit deps files; };
     }
     // extraEnv;
 
@@ -294,8 +305,14 @@ let
         ;
       subPackages = normalizedSubPackages;
       resolveHashes = !hasLockfile;
+      # File lists in the manifest are computed at eval time by `go list`;
+      # pass the same target platform here that the build derivations will
+      # use so constraint evaluation matches.
+      goos = stdenv.hostPlatform.go.GOOS or null;
+      goarch = stdenv.hostPlatform.go.GOARCH or null;
     }
     // (if goProxy != null then { inherit goProxy; } else { })
+    // (if CGO_ENABLED != null then { cgoEnabled = toString CGO_ENABLED; } else { })
   );
 
   # Module hashes from plugin (lockfile-free path).
@@ -384,6 +401,7 @@ let
           deps
           extraEnv
           ;
+        files = pkg.files or null;
       };
     }
   ) goPackagesResult.packages;
@@ -493,6 +511,7 @@ let
           deps
           extraEnv
           ;
+        files = pkg.files or null;
       };
     }
   ) goPackagesResult.localPackages;
@@ -602,6 +621,7 @@ let
             deps
             extraEnv
             ;
+          files = pkg.files or null;
         };
       }
     ) goPackagesResult.testPackages

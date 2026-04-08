@@ -41,8 +41,24 @@ struct GoPackage {
     module: Option<GoModule>,
     #[serde(rename = "Imports")]
     imports: Vec<String>,
+    #[serde(rename = "GoFiles")]
+    go_files: Vec<String>,
     #[serde(rename = "CgoFiles")]
     cgo_files: Vec<String>,
+    #[serde(rename = "SFiles")]
+    s_files: Vec<String>,
+    #[serde(rename = "CFiles")]
+    c_files: Vec<String>,
+    #[serde(rename = "CXXFiles")]
+    cxx_files: Vec<String>,
+    #[serde(rename = "FFiles")]
+    f_files: Vec<String>,
+    #[serde(rename = "HFiles")]
+    h_files: Vec<String>,
+    #[serde(rename = "SysoFiles")]
+    syso_files: Vec<String>,
+    #[serde(rename = "EmbedPatterns")]
+    embed_patterns: Vec<String>,
     #[serde(rename = "CgoPkgConfig")]
     cgo_pkg_config: Vec<String>,
     #[serde(rename = "CgoCFLAGS")]
@@ -74,6 +90,7 @@ pub(crate) struct PkgData {
     cgo_cflags: Vec<String>,
     cgo_ldflags: Vec<String>,
     is_cgo: bool,
+    files: PkgFiles,
 }
 
 struct LocalPkgData {
@@ -85,6 +102,60 @@ struct LocalPkgData {
     cgo_cflags: Vec<String>,
     cgo_ldflags: Vec<String>,
     is_cgo: bool,
+    files: PkgFiles,
+}
+
+/// Per-package source file lists as reported by `go list`, threaded through
+/// to the compile manifest so build-time can skip its own discovery pass.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PkgFiles {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    go_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    cgo_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    s_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    c_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    cxx_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    f_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    h_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    syso_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    embed_patterns: Vec<String>,
+}
+
+impl PkgFiles {
+    fn is_empty(&self) -> bool {
+        self.go_files.is_empty()
+            && self.cgo_files.is_empty()
+            && self.s_files.is_empty()
+            && self.c_files.is_empty()
+            && self.cxx_files.is_empty()
+            && self.f_files.is_empty()
+            && self.h_files.is_empty()
+            && self.syso_files.is_empty()
+            && self.embed_patterns.is_empty()
+    }
+}
+
+fn pkg_files_from(p: &GoPackage) -> PkgFiles {
+    PkgFiles {
+        go_files: p.go_files.clone(),
+        cgo_files: p.cgo_files.clone(),
+        s_files: p.s_files.clone(),
+        c_files: p.c_files.clone(),
+        cxx_files: p.cxx_files.clone(),
+        f_files: p.f_files.clone(),
+        h_files: p.h_files.clone(),
+        syso_files: p.syso_files.clone(),
+        embed_patterns: p.embed_patterns.clone(),
+    }
 }
 
 fn sanitize_name(s: &str) -> String {
@@ -191,7 +262,7 @@ fn run_go_list(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,CgoFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,FFiles,HFiles,SysoFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
     cmd.arg("-deps");
     cmd.arg("-e");
     cmd.arg("-buildvcs=false");
@@ -230,7 +301,7 @@ fn run_go_list_test(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Module,Imports,CgoFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,FFiles,HFiles,SysoFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
     cmd.arg("-deps");
     cmd.arg("-test");
     cmd.arg("-e");
@@ -282,16 +353,18 @@ pub(crate) fn parse_test_packages(
             }
         }
 
-        // Skip stdlib (no module).
-        let Some(module) = jpkg.module else {
-            continue;
-        };
-
         // Skip synthetic test packages: test mains (foo.test) and
         // recompiled variants (foo [foo.test]).
         if jpkg.import_path.contains('[') || jpkg.import_path.ends_with(".test") {
             continue;
         }
+
+        let files = pkg_files_from(&jpkg);
+
+        // Skip stdlib (no module).
+        let Some(module) = jpkg.module else {
+            continue;
+        };
 
         let (replace_path, replace_version) = extract_replace(&module);
 
@@ -334,6 +407,7 @@ pub(crate) fn parse_test_packages(
             cgo_cflags: jpkg.cgo_cflags,
             cgo_ldflags: jpkg.cgo_ldflags,
             is_cgo: !jpkg.cgo_files.is_empty(),
+            files,
         });
     }
 
@@ -384,6 +458,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         cgo_cflags: Vec<String>,
         cgo_ldflags: Vec<String>,
         is_cgo: bool,
+        files: PkgFiles,
     }
     let mut raw_local_pkgs: Vec<RawLocalPkg> = Vec::new();
 
@@ -396,6 +471,8 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
                 continue;
             }
         }
+
+        let files = pkg_files_from(&jpkg);
 
         // stdlib packages have no module
         let Some(module) = jpkg.module else {
@@ -423,6 +500,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
                 cgo_cflags: jpkg.cgo_cflags,
                 cgo_ldflags: jpkg.cgo_ldflags,
                 is_cgo: !jpkg.cgo_files.is_empty(),
+                files,
             });
 
             continue;
@@ -452,6 +530,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
             cgo_cflags: jpkg.cgo_cflags,
             cgo_ldflags: jpkg.cgo_ldflags,
             is_cgo: !jpkg.cgo_files.is_empty(),
+            files,
         });
     }
 
@@ -489,6 +568,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
                 cgo_cflags: raw.cgo_cflags,
                 cgo_ldflags: raw.cgo_ldflags,
                 is_cgo: raw.is_cgo,
+                files: raw.files,
             }
         })
         .collect();
@@ -543,7 +623,6 @@ fn default_sub_packages() -> Vec<String> {
 fn default_dot() -> String {
     ".".to_owned()
 }
-
 
 /// Query `go env GOMODCACHE` to find the module cache directory.
 pub(crate) fn find_gomodcache(go_bin: &str) -> Result<std::path::PathBuf> {
@@ -609,8 +688,7 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
             .map(|p| p.import_path.clone())
             .collect();
 
-        let test_stdout =
-            run_go_list_test(go_bin, &input.src, &local_ips, &opts)?;
+        let test_stdout = run_go_list_test(go_bin, &input.src, &local_ips, &opts)?;
 
         let test_pkgs = parse_test_packages(
             &test_stdout,
@@ -642,6 +720,8 @@ struct JsonLocalPkg {
     cgo_cflags: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     cgo_ldflags: Vec<String>,
+    #[serde(skip_serializing_if = "PkgFiles::is_empty")]
+    files: PkgFiles,
 }
 
 #[derive(Serialize)]
@@ -673,6 +753,8 @@ struct JsonPkg {
     cgo_cflags: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     cgo_ldflags: Vec<String>,
+    #[serde(skip_serializing_if = "PkgFiles::is_empty")]
+    files: PkgFiles,
 }
 
 #[derive(Serialize)]
@@ -713,6 +795,7 @@ fn pkg_data_to_json_pkg(p: &PkgData, allowed_imports: &dyn Fn(&str) -> bool) -> 
         cgo_pkg_config: p.cgo_pkg_config.clone(),
         cgo_cflags: p.cgo_cflags.clone(),
         cgo_ldflags: p.cgo_ldflags.clone(),
+        files: p.files.clone(),
     }
 }
 
@@ -763,6 +846,7 @@ pub(crate) fn package_graph_to_json(
                 cgo_pkg_config: lp.cgo_pkg_config.clone(),
                 cgo_cflags: lp.cgo_cflags.clone(),
                 cgo_ldflags: lp.cgo_ldflags.clone(),
+                files: lp.files.clone(),
             },
         );
     }
@@ -970,6 +1054,68 @@ mod tests {
         assert_eq!(graph.packages[0].cgo_pkg_config, vec!["libfoo"]);
         assert_eq!(graph.packages[0].cgo_cflags, vec!["-I/usr/include"]);
         assert_eq!(graph.packages[0].cgo_ldflags, vec!["-lfoo"]);
+        assert_eq!(graph.packages[0].files.cgo_files, vec!["bridge.go"]);
+    }
+
+    #[test]
+    fn parse_file_lists_round_trip_to_json() {
+        let input = r#"{"ImportPath":"github.com/f/p","Module":{"Path":"github.com/f/p","Version":"v1.0.0"},"Imports":[],"GoFiles":["a.go","b.go"],"CgoFiles":["c.go"],"SFiles":["asm.s"],"CFiles":["x.c"],"CXXFiles":["x.cc"],"FFiles":["x.f90"],"HFiles":["x.h"],"SysoFiles":["x.syso"],"EmbedPatterns":["data/*"]}"#;
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        let f = &graph.packages[0].files;
+        assert_eq!(f.go_files, vec!["a.go", "b.go"]);
+        assert_eq!(f.cgo_files, vec!["c.go"]);
+        assert_eq!(f.s_files, vec!["asm.s"]);
+        assert_eq!(f.c_files, vec!["x.c"]);
+        assert_eq!(f.cxx_files, vec!["x.cc"]);
+        assert_eq!(f.f_files, vec!["x.f90"]);
+        assert_eq!(f.h_files, vec!["x.h"]);
+        assert_eq!(f.syso_files, vec!["x.syso"]);
+        assert_eq!(f.embed_patterns, vec!["data/*"]);
+
+        let jp = pkg_data_to_json_pkg(&graph.packages[0], &|_| true);
+        let json = serde_json::to_value(&jp).unwrap();
+        let files = &json["files"];
+        assert_eq!(files["goFiles"], serde_json::json!(["a.go", "b.go"]));
+        assert_eq!(files["cgoFiles"], serde_json::json!(["c.go"]));
+        assert_eq!(files["sFiles"], serde_json::json!(["asm.s"]));
+        assert_eq!(files["cFiles"], serde_json::json!(["x.c"]));
+        assert_eq!(files["cxxFiles"], serde_json::json!(["x.cc"]));
+        assert_eq!(files["fFiles"], serde_json::json!(["x.f90"]));
+        assert_eq!(files["hFiles"], serde_json::json!(["x.h"]));
+        assert_eq!(files["sysoFiles"], serde_json::json!(["x.syso"]));
+        assert_eq!(files["embedPatterns"], serde_json::json!(["data/*"]));
+    }
+
+    #[test]
+    fn json_pkg_omits_empty_files() {
+        let p = PkgData {
+            import_path: "github.com/foo/bar".into(),
+            mod_path: "github.com/foo/bar".into(),
+            mod_version: "v1.0.0".into(),
+            replace_version: String::new(),
+            imports: vec![],
+            cgo_pkg_config: vec![],
+            cgo_cflags: vec![],
+            cgo_ldflags: vec![],
+            is_cgo: false,
+            files: PkgFiles::default(),
+        };
+        let jp = pkg_data_to_json_pkg(&p, &|_| true);
+        let json = serde_json::to_value(&jp).unwrap();
+        assert!(
+            json.get("files").is_none(),
+            "empty files should be omitted, got {json}"
+        );
+    }
+
+    #[test]
+    fn parse_local_file_lists() {
+        let input = r#"{"ImportPath":"example.com/m","Dir":"/src","Module":{"Path":"example.com/m","Main":true},"Imports":[],"GoFiles":["main.go"],"SFiles":["asm_amd64.s"]}"#;
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert_eq!(graph.local_packages.len(), 1);
+        let f = &graph.local_packages[0].files;
+        assert_eq!(f.go_files, vec!["main.go"]);
+        assert_eq!(f.s_files, vec!["asm_amd64.s"]);
     }
 
     // --- parse_test_packages ---
@@ -979,9 +1125,14 @@ mod tests {
         let mut third_party = BTreeSet::new();
         third_party.insert("github.com/already/known".to_owned());
 
-        let input = third_party_json("github.com/already/known", "github.com/already/known", "v1.0.0");
+        let input = third_party_json(
+            "github.com/already/known",
+            "github.com/already/known",
+            "v1.0.0",
+        );
         let mut replacements = BTreeMap::new();
-        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        let result =
+            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
         assert!(result.is_empty());
     }
 
@@ -991,7 +1142,8 @@ mod tests {
 
         let input = third_party_json("github.com/testify", "github.com/testify", "v1.9.0");
         let mut replacements = BTreeMap::new();
-        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        let result =
+            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].import_path, "github.com/testify");
     }
@@ -1011,7 +1163,8 @@ mod tests {
         .join("\n");
 
         let mut replacements = BTreeMap::new();
-        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        let result =
+            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].import_path, "github.com/testify");
     }
@@ -1021,7 +1174,8 @@ mod tests {
         let third_party = BTreeSet::new();
         let input = local_pkg_json("example.com/m/internal/x", "example.com/m", "/src/x", &[]);
         let mut replacements = BTreeMap::new();
-        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        let result =
+            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
         assert!(result.is_empty());
     }
 
@@ -1034,7 +1188,8 @@ mod tests {
         ]
         .join("\n");
         let mut replacements = BTreeMap::new();
-        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        let result =
+            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
         assert_eq!(result.len(), 1);
     }
 
@@ -1049,7 +1204,8 @@ mod tests {
             "v1.1.0",
         );
         let mut replacements = BTreeMap::new();
-        let result = parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
+        let result =
+            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
         assert_eq!(result.len(), 1);
         let (path, _) = &replacements["github.com/test/dep@v1.1.0"];
         assert_eq!(path, "github.com/fork/dep");
@@ -1092,9 +1248,18 @@ mod tests {
 
     #[test]
     fn sanitize_name_whitelist() {
-        assert_eq!(sanitize_name("github.com/foo/bar+baz"), "github.com-foo-bar+baz");
-        assert_eq!(sanitize_name("git.sr.ht/~geb/dotool"), "git.sr.ht-_geb-dotool");
-        assert_eq!(sanitize_name("example.com/@scope/pkg"), "example.com-_at_scope-pkg");
+        assert_eq!(
+            sanitize_name("github.com/foo/bar+baz"),
+            "github.com-foo-bar+baz"
+        );
+        assert_eq!(
+            sanitize_name("git.sr.ht/~geb/dotool"),
+            "git.sr.ht-_geb-dotool"
+        );
+        assert_eq!(
+            sanitize_name("example.com/@scope/pkg"),
+            "example.com-_at_scope-pkg"
+        );
     }
 
     // --- pkg_data_to_json_pkg ---
@@ -1111,6 +1276,7 @@ mod tests {
             cgo_cflags: vec![],
             cgo_ldflags: vec![],
             is_cgo: false,
+            files: PkgFiles::default(),
         };
         let jp = pkg_data_to_json_pkg(&p, &|_| true);
         assert_eq!(jp.subdir, "sub/pkg");
@@ -1130,6 +1296,7 @@ mod tests {
             cgo_cflags: vec![],
             cgo_ldflags: vec![],
             is_cgo: false,
+            files: PkgFiles::default(),
         };
         let jp = pkg_data_to_json_pkg(&p, &|_| true);
         assert_eq!(jp.mod_key, "github.com/foo/bar@v2.0.0");
@@ -1186,6 +1353,7 @@ mod tests {
             cgo_cflags: vec![],
             cgo_ldflags: vec![],
             is_cgo: false,
+            files: PkgFiles::default(),
         };
         let jp = pkg_data_to_json_pkg(&p, &|imp| imp == "github.com/keep");
         assert_eq!(jp.imports, vec!["github.com/keep"]);
@@ -1218,13 +1386,23 @@ mod tests {
         // No explicit goProxy: inherit from env.
         let mut cmd = std::process::Command::new("true");
         configure_go_env(&mut cmd, "/tmp", &test_opts(None));
-        assert_eq!(cmd_env(&cmd, "GOPROXY").as_deref(), Some("https://proxy.example/"));
+        assert_eq!(
+            cmd_env(&cmd, "GOPROXY").as_deref(),
+            Some("https://proxy.example/")
+        );
         assert_eq!(cmd_env(&cmd, "NETRC").as_deref(), Some("/tmp/netrc-test"));
 
         // Explicit goProxy: overrides inherited value.
         let mut cmd = std::process::Command::new("true");
-        configure_go_env(&mut cmd, "/tmp", &test_opts(Some("https://explicit.example/")));
-        assert_eq!(cmd_env(&cmd, "GOPROXY").as_deref(), Some("https://explicit.example/"));
+        configure_go_env(
+            &mut cmd,
+            "/tmp",
+            &test_opts(Some("https://explicit.example/")),
+        );
+        assert_eq!(
+            cmd_env(&cmd, "GOPROXY").as_deref(),
+            Some("https://explicit.example/")
+        );
 
         std::env::remove_var("GOPROXY");
         std::env::remove_var("NETRC");
