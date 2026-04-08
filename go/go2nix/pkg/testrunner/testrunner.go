@@ -245,8 +245,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			TrimPath:    opts.TrimPath,
 			Tags:        opts.Tags,
 			GCFlagsList: opts.GCFlagsList,
-			GoFiles:     goFiles,
-			EmbedCfg:    mergedEmbedCfg,
+			Files:       &gofiles.PkgFiles{GoFiles: goFiles, EmbedCfg: mergedEmbedCfg},
 		}); err != nil {
 			return fmt.Errorf("compiling internal test: %w", err)
 		}
@@ -344,8 +343,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			TrimPath:    opts.TrimPath,
 			Tags:        opts.Tags,
 			GCFlagsList: opts.GCFlagsList,
-			GoFiles:     pkg.XTestGoFiles,
-			EmbedCfg:    pkg.XTestEmbedCfg,
+			Files:       &gofiles.PkgFiles{GoFiles: pkg.XTestGoFiles, EmbedCfg: pkg.XTestEmbedCfg},
 		}); err != nil {
 			return fmt.Errorf("compiling external test: %w", err)
 		}
@@ -390,7 +388,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		TrimPath:    opts.TrimPath,
 		Tags:        opts.Tags,
 		GCFlagsList: opts.GCFlagsList,
-		GoFiles:     []string{"_testmain.go"},
+		Files:       &gofiles.PkgFiles{GoFiles: []string{"_testmain.go"}},
 	}); err != nil {
 		return fmt.Errorf("compiling test main: %w", err)
 	}
