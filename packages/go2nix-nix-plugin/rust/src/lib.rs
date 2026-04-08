@@ -56,7 +56,8 @@ pub unsafe extern "C" fn resolve_go_packages_json(
                 .and_then(|probe| resolve::compute_cache_key(&opts, &probe))
             {
                 Ok(key) => {
-                    if let Some(hit) = resolve_cache::read(&key) {
+                    if let Some(hit) = resolve_cache::read(opts.resolve_cache_dir.as_deref(), &key)
+                    {
                         return Ok(hit);
                     }
                     Some(key)

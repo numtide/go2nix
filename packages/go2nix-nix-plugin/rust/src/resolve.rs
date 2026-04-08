@@ -367,8 +367,9 @@ pub(crate) fn run_local_import_probe(input: &JsonInput) -> Result<Vec<u8>> {
     cmd.arg("list");
     cmd.arg("-e");
     cmd.arg("-mod=mod");
+    cmd.arg("-buildvcs=false");
     cmd.arg(
-        "-json=ImportPath,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,FFiles,HFiles,SysoFiles,EmbedPatterns",
+        "-json=ImportPath,Imports,TestImports,XTestImports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,FFiles,HFiles,SysoFiles,TestGoFiles,XTestGoFiles,EmbedPatterns",
     );
     if !input.tags.is_empty() {
         cmd.arg("-tags");
@@ -382,6 +383,7 @@ pub(crate) fn run_local_import_probe(input: &JsonInput) -> Result<Vec<u8>> {
         cmd.env(&k, &v);
     }
     cmd.env("GOMODCACHE", modcache.path());
+    cmd.env("GOCACHE", modcache.path().join("gocache"));
     cmd.env("GOPROXY", "off");
     cmd.env("GOFLAGS", "");
     cmd.env("GONOSUMCHECK", "*");
@@ -465,11 +467,32 @@ pub(crate) fn compute_cache_key(input: &JsonInput, probe: &[u8]) -> Result<Strin
     let work_dir = mod_root_dir(&input.src, &input.mod_root);
     let go_sum = std::fs::read(work_dir.join("go.sum")).unwrap_or_default();
     let go_mod = std::fs::read(work_dir.join("go.mod")).unwrap_or_default();
+    // Toolchain identity: `go version` alone is insufficient — two toolchains
+    // with the same release but different baked-in GOEXPERIMENT or sub-arch
+    // defaults can select different files. `go env` of this small set captures
+    // the difference; an exec failure here disables the cache rather than
+    // hashing an empty string.
     let go_version = Command::new(go_bin)
-        .arg("version")
+        .args([
+            "env",
+            "GOVERSION",
+            "GOEXPERIMENT",
+            "GOAMD64",
+            "GOARM",
+            "GOARM64",
+            "GOFIPS140",
+        ])
+        .env("GOENV", "off")
+        .env("GOFLAGS", "")
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .unwrap_or_default();
+        .with_context(|| format!("running '{go_bin} env' for cache key"))
+        .and_then(|o| {
+            if o.status.success() {
+                Ok(String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            } else {
+                bail!("'{go_bin} env' exited {}", o.status.code().unwrap_or(-1))
+            }
+        })?;
 
     Ok(hash_cache_key(&CacheKeyParts {
         go_sum: &go_sum,
@@ -768,6 +791,11 @@ pub(crate) struct JsonInput {
     /// Enables lockfile-free builds.
     #[serde(default)]
     pub(crate) resolve_hashes: bool,
+    /// Read-only directory of pre-built resolve-cache entries (`<key>.json`).
+    /// Passed as a JsonInput field (rather than only an env var) so Nix can
+    /// track the dependency via string context when it's a store path.
+    #[serde(default)]
+    pub(crate) resolve_cache_dir: Option<String>,
 }
 
 fn default_sub_packages() -> Vec<String> {

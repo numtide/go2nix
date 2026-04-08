@@ -33,16 +33,33 @@ fn cache_dir() -> Option<PathBuf> {
     Some(PathBuf::from(cache_home).join("go2nix/resolve"))
 }
 
-/// Look up a cached JSON result by key. Returns `None` on miss or any error.
-/// Checks `GO2NIX_RESOLVE_CACHE_DIR` (read-only, for pre-built caches in
-/// sandboxed environments) before the writable XDG location.
-pub fn read(key: &str) -> Option<String> {
-    if let Ok(ro) = std::env::var("GO2NIX_RESOLVE_CACHE_DIR") {
-        if let Some(hit) = read_from(Path::new(&ro), key) {
-            return Some(hit);
+/// Look up a cached JSON result by key. Returns `None` on miss, any I/O error,
+/// or if the file does not parse as JSON (catches truncation; the C++ side
+/// would otherwise fail with an opaque parseJSON error). Lookup order:
+/// `resolve_cache_dir` arg (Nix-tracked, read-only) → `$GO2NIX_RESOLVE_CACHE_DIR`
+/// (read-only, non-Nix fallback) → writable XDG location.
+pub fn read(resolve_cache_dir: Option<&str>, key: &str) -> Option<String> {
+    let dirs = resolve_cache_dir
+        .map(PathBuf::from)
+        .into_iter()
+        .chain(
+            std::env::var("GO2NIX_RESOLVE_CACHE_DIR")
+                .ok()
+                .map(PathBuf::from),
+        )
+        .chain(cache_dir());
+    for d in dirs {
+        if let Some(hit) = read_from(&d, key) {
+            if serde_json::from_str::<serde_json::Value>(&hit).is_ok() {
+                return Some(hit);
+            }
+            eprintln!(
+                "go2nix: resolve-cache: ignoring unparseable {}/{key}.json",
+                d.display()
+            );
         }
     }
-    read_from(&cache_dir()?, key)
+    None
 }
 
 /// Best-effort store of a JSON result. Errors are reported to stderr and
