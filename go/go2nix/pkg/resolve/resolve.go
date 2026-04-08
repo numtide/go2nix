@@ -561,6 +561,17 @@ func buildPackageDrv(
 		Tags:           tagList,
 		GCFlags:        gcflagList,
 		PGOProfile:     pgoProfile,
+		Files: &compile.ManifestFiles{
+			GoFiles:       pkg.GoFiles,
+			CgoFiles:      pkg.CgoFiles,
+			SFiles:        pkg.SFiles,
+			CFiles:        pkg.CFiles,
+			CXXFiles:      pkg.CXXFiles,
+			FFiles:        pkg.FFiles,
+			HFiles:        pkg.HFiles,
+			SysoFiles:     pkg.SysoFiles,
+			EmbedPatterns: pkg.EmbedPatterns,
+		},
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {

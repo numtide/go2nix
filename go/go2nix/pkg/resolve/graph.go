@@ -23,6 +23,7 @@ type ResolvedPkg struct {
 	SFiles         []string
 	HFiles         []string
 	SysoFiles      []string // .syso system object files
+	EmbedPatterns  []string // //go:embed patterns
 	EmbedFiles     []string // resolved files matching //go:embed patterns (may include subdirectory paths)
 	Imports        []string // all import paths (including stdlib)
 	IsLocal        bool
@@ -59,6 +60,7 @@ func buildPackageGraph(
 			SFiles:         pkg.SFiles,
 			HFiles:         pkg.HFiles,
 			SysoFiles:      pkg.SysoFiles,
+			EmbedPatterns:  pkg.EmbedPatterns,
 			EmbedFiles:     pkg.EmbedFiles,
 			Name:           pkg.Name,
 			DefaultGODEBUG: pkg.DefaultGODEBUG,
