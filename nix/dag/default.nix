@@ -200,19 +200,25 @@ let
   # references store paths of other derivations. The shell hook writes
   # it to a file before invoking go2nix.
   mkCompileManifestJSON =
-    deps:
-    builtins.toJSON {
-      version = 1;
-      kind = "compile";
-      importcfgParts = [ "${stdlib}/importcfg" ] ++ map depCompileCfg deps;
-      inherit tags;
-      gcflags =
-        let
-          base = gcflags;
-        in
-        if buildMode == "pie" then [ "-shared" ] ++ base else base;
-      pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
-    };
+    {
+      deps,
+      files,
+    }:
+    builtins.toJSON (
+      {
+        version = 1;
+        kind = "compile";
+        importcfgParts = [ "${stdlib}/importcfg" ] ++ map depCompileCfg deps;
+        inherit tags;
+        gcflags =
+          let
+            base = gcflags;
+          in
+          if buildMode == "pie" then [ "-shared" ] ++ base else base;
+        pgoProfile = if pgoProfile != null then "${pgoProfile}" else null;
+      }
+      // (if files != null then { inherit files; } else { })
+    );
 
   # Env attrset for per-package compile derivations. goEnv is the scope-level
   # base; the hook-required keys overlay it; packageOverrides.<pkg>.env wins.
@@ -222,12 +228,13 @@ let
       srcDir,
       deps,
       extraEnv,
+      files ? null,
     }:
     goEnv
     // {
       goPackagePath = importPath;
       goPackageSrcDir = srcDir;
-      compileManifestJSON = mkCompileManifestJSON deps;
+      compileManifestJSON = mkCompileManifestJSON { inherit deps files; };
     }
     // extraEnv;
 
@@ -294,8 +301,14 @@ let
         ;
       subPackages = normalizedSubPackages;
       resolveHashes = !hasLockfile;
+      # File lists in the manifest are computed at eval time by `go list`;
+      # pass the same target platform here that the build derivations will
+      # use so constraint evaluation matches.
+      goos = stdenv.hostPlatform.go.GOOS;
+      goarch = stdenv.hostPlatform.go.GOARCH;
     }
     // (if goProxy != null then { inherit goProxy; } else { })
+    // (if CGO_ENABLED != null then { cgoEnabled = toString CGO_ENABLED; } else { })
   );
 
   # Module hashes from plugin (lockfile-free path).
@@ -384,6 +397,7 @@ let
           deps
           extraEnv
           ;
+        files = pkg.files or null;
       };
     }
   ) goPackagesResult.packages;
@@ -493,6 +507,7 @@ let
           deps
           extraEnv
           ;
+        files = pkg.files or null;
       };
     }
   ) goPackagesResult.localPackages;
@@ -602,6 +617,7 @@ let
             deps
             extraEnv
             ;
+          files = pkg.files or null;
         };
       }
     ) goPackagesResult.testPackages
