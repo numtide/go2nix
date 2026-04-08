@@ -40,7 +40,7 @@ func (o Options) checkFlagsArgs() []string {
 
 // Run discovers testable packages and runs their tests.
 func Run(opts Options) error {
-	pkgs, err := localpkgs.ListLocalPackages(opts.ModuleRoot, opts.Tags)
+	pkgs, err := localpkgs.ListLocalPackages(opts.ModuleRoot, opts.Tags, compile.ToolchainVersion())
 	if err != nil {
 		return fmt.Errorf("listing local packages: %w", err)
 	}

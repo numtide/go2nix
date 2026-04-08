@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"golang.org/x/mod/modfile"
 )
@@ -157,6 +158,19 @@ func findGoVersion(dir string) string {
 	}
 	return ""
 }
+
+// ToolchainVersion returns the major.minor version of the Go toolchain
+// that will be invoked for compilation, queried from `go env GOVERSION`
+// (cached for the lifetime of the process). Used to override
+// build.Context.ReleaseTags so file selection matches the target toolchain
+// rather than the Go version that built this binary.
+var ToolchainVersion = sync.OnceValue(func() string {
+	v := GoEnvVar("GOVERSION")
+	if v == "" {
+		return ""
+	}
+	return LangVersion(strings.TrimPrefix(v, "go"))
+})
 
 // LangVersion strips the patch version from a Go version string,
 // matching internal/gover.Lang: "1.21.3" → "1.21", "1.21" → "1.21".

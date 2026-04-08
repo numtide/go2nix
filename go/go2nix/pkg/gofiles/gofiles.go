@@ -5,11 +5,13 @@ package gofiles
 import (
 	"fmt"
 	"go/build"
+	"go/version"
 	"io/fs"
 	"os"
 	pathpkg "path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"golang.org/x/mod/module"
@@ -37,8 +39,15 @@ type EmbedCfg struct {
 	Files    map[string]string   `json:"Files"`
 }
 
-// BuildContext returns a build.Context configured from tags and environment.
-func BuildContext(tags string) build.Context {
+// BuildContext returns a build.Context configured from tags, environment,
+// and the target Go toolchain version.
+//
+// goVersion overrides ctx.ReleaseTags so that //go:build go1.N constraints
+// are evaluated against the target toolchain — not against the Go version
+// that built this binary (build.Default.ReleaseTags). Pass "" to leave
+// ReleaseTags at its default; pass "1.25", "1.25.3", or "go1.25" to target
+// Go 1.25.
+func BuildContext(tags string, goVersion string) build.Context {
 	ctx := build.Default
 	if tags != "" {
 		ctx.BuildTags = strings.Split(tags, ",")
@@ -49,7 +58,40 @@ func BuildContext(tags string) build.Context {
 	if v := os.Getenv("GOARCH"); v != "" {
 		ctx.GOARCH = v
 	}
+	if rt := ReleaseTagsForVersion(goVersion); rt != nil {
+		ctx.ReleaseTags = rt
+	}
 	return ctx
+}
+
+// ReleaseTagsForVersion returns the build.Context.ReleaseTags slice for a
+// given Go version: ["go1.1", "go1.2", ..., "go1.N"]. Accepts "1.25",
+// "1.25.3", "go1.25", "go1.25.3", or prerelease forms like "go1.26rc1" /
+// "go1.26beta2". Returns nil for an empty or unparseable input so callers
+// can fall back to build.Default.ReleaseTags.
+func ReleaseTagsForVersion(goVersion string) []string {
+	if goVersion == "" {
+		return nil
+	}
+	// go/version.Lang canonicalizes "go1.26rc1", "go1.25.3", etc. to
+	// "go1.N". It requires the "go" prefix.
+	if !strings.HasPrefix(goVersion, "go") {
+		goVersion = "go" + goVersion
+	}
+	lang := strings.TrimPrefix(version.Lang(goVersion), "go")
+	major, minorStr, ok := strings.Cut(lang, ".")
+	if !ok || major != "1" {
+		return nil
+	}
+	minor, err := strconv.Atoi(minorStr)
+	if err != nil || minor < 1 {
+		return nil
+	}
+	tags := make([]string, 0, minor)
+	for i := 1; i <= minor; i++ {
+		tags = append(tags, "go1."+strconv.Itoa(i))
+	}
+	return tags
 }
 
 // BuildPkgFiles constructs a PkgFiles from a go/build.Package, resolving
@@ -89,9 +131,10 @@ func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 	return result, nil
 }
 
-// ListFiles discovers source files in dir using the given build tags.
-func ListFiles(dir string, tags string) (PkgFiles, error) {
-	ctx := BuildContext(tags)
+// ListFiles discovers source files in dir using the given build tags and
+// target Go version. See BuildContext for the meaning of goVersion.
+func ListFiles(dir string, tags string, goVersion string) (PkgFiles, error) {
+	ctx := BuildContext(tags, goVersion)
 	pkg, err := ctx.ImportDir(dir, build.IgnoreVendor)
 	if err != nil {
 		return PkgFiles{}, fmt.Errorf("analysing %s: %w", dir, err)
