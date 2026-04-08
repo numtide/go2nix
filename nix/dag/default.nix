@@ -133,13 +133,12 @@ let
     export NIX_BUILD_TOP="$TMPDIR"
     export HOME="$TMPDIR/home"; mkdir -p "$HOME"
     export GOPROXY=off GOSUMDB=off GONOSUMCHECK='*'
-    echo "$compileManifestJSON" > "$TMPDIR/m.json"
     mkdir -p "$out/$(dirname "$goPackagePath")"
     if [ -n "''${iface:-}" ]; then
       mkdir -p "$iface/$(dirname "$goPackagePath")"
       exec "$go2nixBin" \
         compile-package \
-        --manifest "$TMPDIR/m.json" \
+        --manifest "$compileManifestJSONPath" \
         --import-path "$goPackagePath" \
         --src-dir "$goPackageSrcDir" \
         --output "$out/$goPackagePath.a" \
@@ -149,7 +148,7 @@ let
     else
       exec "$go2nixBin" \
         compile-package \
-        --manifest "$TMPDIR/m.json" \
+        --manifest "$compileManifestJSONPath" \
         --import-path "$goPackagePath" \
         --src-dir "$goPackageSrcDir" \
         --output "$out/$goPackagePath.a" \
@@ -184,6 +183,11 @@ let
         inherit (stdenv.hostPlatform) system;
         builder = "${bash}/bin/bash";
         args = [ rawGoCompileScript ];
+        # compileManifestJSON now carries per-file lists; pass it via a
+        # temp file so packages with thousands of source files don't risk
+        # MAX_ARG_STRLEN. (The stdenv/cgo path already avoids this via
+        # __structuredAttrs.)
+        passAsFile = [ "compileManifestJSON" ];
         goPath = "${coreutils}/bin:${go}/bin";
         go2nixBin = "${go2nix}/bin/go2nix";
       }
@@ -304,8 +308,8 @@ let
       # File lists in the manifest are computed at eval time by `go list`;
       # pass the same target platform here that the build derivations will
       # use so constraint evaluation matches.
-      goos = stdenv.hostPlatform.go.GOOS;
-      goarch = stdenv.hostPlatform.go.GOARCH;
+      goos = stdenv.hostPlatform.go.GOOS or null;
+      goarch = stdenv.hostPlatform.go.GOARCH or null;
     }
     // (if goProxy != null then { inherit goProxy; } else { })
     // (if CGO_ENABLED != null then { cgoEnabled = toString CGO_ENABLED; } else { })
