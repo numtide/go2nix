@@ -64,6 +64,15 @@ func runCompilePackageCmd(args []string) {
 		PGOProfile:  pgo,
 	}
 
+	if m.Files != nil {
+		pf, err := m.Files.ToPkgFiles(*srcDir)
+		if err != nil {
+			slog.Error("compile-package: failed to resolve manifest files", "err", err)
+			os.Exit(1)
+		}
+		opts.Files = pf
+	}
+
 	if err := compile.CompileGoPackage(opts); err != nil {
 		slog.Error("compile-package failed", "err", err, "pkg", *importPath)
 		os.Exit(1)

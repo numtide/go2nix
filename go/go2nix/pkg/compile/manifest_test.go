@@ -3,6 +3,7 @@ package compile
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -90,6 +91,106 @@ func TestLoadCompileManifest_fields(t *testing.T) {
 	}
 	if m.PGOProfile == nil || *m.PGOProfile != "/pgo" {
 		t.Errorf("pgoProfile = %v", m.PGOProfile)
+	}
+}
+
+func TestLoadCompileManifest_filesOmitted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	json := `{"version":1,"kind":"compile","importcfgParts":[],"tags":[],"gcflags":[],"pgoProfile":null}`
+	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadCompileManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Files != nil {
+		t.Errorf("files should be nil when absent, got %+v", m.Files)
+	}
+}
+
+func TestLoadCompileManifest_files(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	json := `{"version":1,"kind":"compile","importcfgParts":[],"tags":[],"gcflags":[],"pgoProfile":null,` +
+		`"files":{"goFiles":["a.go","b.go"],"cgoFiles":["c.go"],"sFiles":["asm_amd64.s"],` +
+		`"hFiles":["x.h"],"embedPatterns":["data/*.txt"]}}`
+	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadCompileManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Files == nil {
+		t.Fatal("files = nil, want non-nil")
+	}
+	if !slices.Equal(m.Files.GoFiles, []string{"a.go", "b.go"}) {
+		t.Errorf("goFiles = %v", m.Files.GoFiles)
+	}
+	if !slices.Equal(m.Files.CgoFiles, []string{"c.go"}) {
+		t.Errorf("cgoFiles = %v", m.Files.CgoFiles)
+	}
+	if !slices.Equal(m.Files.SFiles, []string{"asm_amd64.s"}) {
+		t.Errorf("sFiles = %v", m.Files.SFiles)
+	}
+	if !slices.Equal(m.Files.HFiles, []string{"x.h"}) {
+		t.Errorf("hFiles = %v", m.Files.HFiles)
+	}
+	if !slices.Equal(m.Files.EmbedPatterns, []string{"data/*.txt"}) {
+		t.Errorf("embedPatterns = %v", m.Files.EmbedPatterns)
+	}
+}
+
+func TestManifestFilesToPkgFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"data/a.txt", "data/b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mf := &ManifestFiles{
+		GoFiles:       []string{"main.go"},
+		CgoFiles:      []string{"c.go"},
+		SFiles:        []string{"asm.s"},
+		EmbedPatterns: []string{"data/*.txt"},
+	}
+	pf, err := mf.ToPkgFiles(dir)
+	if err != nil {
+		t.Fatalf("ToPkgFiles: %v", err)
+	}
+
+	if !slices.Equal(pf.GoFiles, []string{"main.go"}) {
+		t.Errorf("GoFiles = %v", pf.GoFiles)
+	}
+	if !slices.Equal(pf.CgoFiles, []string{"c.go"}) {
+		t.Errorf("CgoFiles = %v", pf.CgoFiles)
+	}
+	if !slices.Equal(pf.SFiles, []string{"asm.s"}) {
+		t.Errorf("SFiles = %v", pf.SFiles)
+	}
+	if pf.EmbedCfg == nil {
+		t.Fatal("EmbedCfg = nil, want resolved config")
+	}
+	if !slices.Equal(pf.EmbedFiles, []string{"data/a.txt", "data/b.txt"}) {
+		t.Errorf("EmbedFiles = %v", pf.EmbedFiles)
+	}
+	got := pf.EmbedCfg.Patterns["data/*.txt"]
+	if !slices.Equal(got, []string{"data/a.txt", "data/b.txt"}) {
+		t.Errorf("EmbedCfg.Patterns[data/*.txt] = %v", got)
+	}
+
+	// No embed patterns → no resolution, EmbedCfg stays nil.
+	mf2 := &ManifestFiles{GoFiles: []string{"x.go"}}
+	pf2, err := mf2.ToPkgFiles(dir)
+	if err != nil {
+		t.Fatalf("ToPkgFiles (no embed): %v", err)
+	}
+	if pf2.EmbedCfg != nil || len(pf2.EmbedFiles) != 0 {
+		t.Errorf("expected no embed data, got cfg=%v files=%v", pf2.EmbedCfg, pf2.EmbedFiles)
 	}
 }
 

@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/numtide/go2nix/pkg/gofiles"
 )
 
 const (
@@ -25,12 +28,60 @@ const (
 // CompileManifest is the JSON contract between Nix and go2nix compile-package.
 // Written by Nix at eval time via builtins.toFile, read by Go at build time.
 type CompileManifest struct {
-	Version        int      `json:"version"`
-	Kind           string   `json:"kind"`
-	ImportcfgParts []string `json:"importcfgParts"`
-	Tags           []string `json:"tags"`
-	GCFlags        []string `json:"gcflags"`
-	PGOProfile     *string  `json:"pgoProfile"`
+	Version        int            `json:"version"`
+	Kind           string         `json:"kind"`
+	ImportcfgParts []string       `json:"importcfgParts"`
+	Tags           []string       `json:"tags"`
+	GCFlags        []string       `json:"gcflags"`
+	PGOProfile     *string        `json:"pgoProfile"`
+	Files          *ManifestFiles `json:"files,omitempty"`
+}
+
+// ManifestFiles is the per-package file list discovered at eval time by
+// `go list` (via the resolveGoPackages plugin). When present,
+// compile-package uses it directly instead of re-running file discovery
+// with go/build.ImportDir at build time.
+type ManifestFiles struct {
+	GoFiles       []string `json:"goFiles,omitempty"`
+	CgoFiles      []string `json:"cgoFiles,omitempty"`
+	SFiles        []string `json:"sFiles,omitempty"`
+	CFiles        []string `json:"cFiles,omitempty"`
+	CXXFiles      []string `json:"cxxFiles,omitempty"`
+	FFiles        []string `json:"fFiles,omitempty"`
+	HFiles        []string `json:"hFiles,omitempty"`
+	SysoFiles     []string `json:"sysoFiles,omitempty"`
+	EmbedPatterns []string `json:"embedPatterns,omitempty"`
+}
+
+// ToPkgFiles converts a ManifestFiles into a gofiles.PkgFiles. Embed
+// patterns are resolved against srcDir at build time so the resulting
+// EmbedCfg paths point into the realised store path rather than eval-time
+// paths.
+func (mf *ManifestFiles) ToPkgFiles(srcDir string) (*gofiles.PkgFiles, error) {
+	pf := &gofiles.PkgFiles{
+		GoFiles:   mf.GoFiles,
+		CgoFiles:  mf.CgoFiles,
+		SFiles:    mf.SFiles,
+		CFiles:    mf.CFiles,
+		CXXFiles:  mf.CXXFiles,
+		FFiles:    mf.FFiles,
+		HFiles:    mf.HFiles,
+		SysoFiles: mf.SysoFiles,
+	}
+	if len(mf.EmbedPatterns) > 0 {
+		cfg, err := gofiles.ResolveEmbedCfg(srcDir, mf.EmbedPatterns)
+		if err != nil {
+			return nil, fmt.Errorf("resolving embed patterns: %w", err)
+		}
+		pf.EmbedCfg = cfg
+		embedFiles := make([]string, 0, len(cfg.Files))
+		for f := range cfg.Files {
+			embedFiles = append(embedFiles, f)
+		}
+		sort.Strings(embedFiles)
+		pf.EmbedFiles = embedFiles
+	}
+	return pf, nil
 }
 
 // LoadCompileManifest reads and validates a compile manifest from path.
