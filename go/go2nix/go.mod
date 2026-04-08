@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/nix-community/go-nix v0.0.0-20260401165014-ac2535ed3bd6
 	golang.org/x/mod v0.32.0
-	golang.org/x/sync v0.19.0
+	golang.org/x/sync v0.20.0
 )
 
-replace github.com/nix-community/go-nix => github.com/numtide/go-nix v0.0.0-20260401165014-ac2535ed3bd6
+replace github.com/nix-community/go-nix => github.com/numtide/go-nix v0.0.0-20260402102727-059dd95db1bb

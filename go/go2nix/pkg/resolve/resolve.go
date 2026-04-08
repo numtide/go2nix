@@ -4,8 +4,10 @@
 package resolve
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -50,6 +52,7 @@ type Config struct {
 	NetrcFile    string // path to .netrc file for private module authentication
 	Output       string // $out path
 	NixJobs      int    // max concurrent nix derivation add calls; 0 = auto (NumCPU*2, min 16)
+	DaemonSocket string // nix-daemon Unix socket; if reachable, used instead of NixBin subprocess
 
 	// coreutilsDir is the store path of coreutils, derived from CoreutilsBin.
 	coreutilsDir string
@@ -97,11 +100,9 @@ func (cfg *Config) prepare() {
 
 // Resolve orchestrates the full dynamic derivation resolve flow.
 func Resolve(cfg Config) error {
-	nix := &nixdrv.NixTool{
-		NixBin: cfg.NixBin,
-		ExtraArgs: []string{
-			"--extra-experimental-features", "nix-command ca-derivations dynamic-derivations",
-		},
+	nix := newStore(cfg)
+	if c, ok := nix.(io.Closer); ok {
+		defer func() { _ = c.Close() }()
 	}
 
 	cfg.prepare()
@@ -330,7 +331,28 @@ func buildModuleFODs(cfg Config, lock *lockfile.Lockfile) (map[string]*storepath
 
 // buildFODs materializes all FODs in a single batched nix build call.
 // Returns modKey → output StorePath.
-func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]*storepath.StorePath) (map[string]*storepath.StorePath, error) {
+// newStore returns a daemon-backed Store when cfg.DaemonSocket is reachable,
+// otherwise the CLI-subprocess NixTool.
+func newStore(cfg Config) nixdrv.Store {
+	if cfg.DaemonSocket != "" {
+		ds, err := nixdrv.ConnectDaemon(context.Background(), cfg.DaemonSocket)
+		if err == nil {
+			slog.Info("using nix-daemon socket", "path", cfg.DaemonSocket)
+			return ds
+		}
+
+		slog.Warn("daemon connect failed, falling back to nix CLI", "path", cfg.DaemonSocket, "err", err)
+	}
+
+	return &nixdrv.NixTool{
+		NixBin: cfg.NixBin,
+		ExtraArgs: []string{
+			"--extra-experimental-features", "nix-command ca-derivations dynamic-derivations",
+		},
+	}
+}
+
+func buildFODs(nix nixdrv.Store, fodDrvPaths map[string]*storepath.StorePath) (map[string]*storepath.StorePath, error) {
 	if len(fodDrvPaths) == 0 {
 		return map[string]*storepath.StorePath{}, nil
 	}
@@ -366,7 +388,7 @@ func buildFODs(nix *nixdrv.NixTool, fodDrvPaths map[string]*storepath.StorePath)
 // registerDerivations registers all derivations with the Nix store in parallel
 // via `nix derivation add`. The .drv paths have already been computed in-process;
 // this step writes the .drv files into the store so they can be built.
-func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation, concurrency int) error {
+func registerDerivations(nix nixdrv.Store, drvs []*nixdrv.Derivation, concurrency int) error {
 	g := new(errgroup.Group)
 	g.SetLimit(concurrency)
 	for _, drv := range drvs {
@@ -385,7 +407,7 @@ func registerDerivations(nix *nixdrv.NixTool, drvs []*nixdrv.Derivation, concurr
 // sandbox bind mount) before dependents try to read them during hashDerivationModulo.
 // Validates that in-process .drv paths match what Nix returns.
 func registerDerivationsParallel(
-	nix *nixdrv.NixTool,
+	nix nixdrv.Store,
 	sorted []*ResolvedPkg,
 	drvs []*nixdrv.Derivation,
 	_ map[string]*ResolvedPkg,
@@ -508,7 +530,7 @@ func symlinkTree(src, dst string) error {
 // For local packages, nix.StoreAdd is called to add filtered source to the store.
 func buildPackageDrv(
 	cfg Config,
-	nix *nixdrv.NixTool,
+	nix nixdrv.Store,
 	graph map[string]*ResolvedPkg,
 	pkg *ResolvedPkg,
 	overrides map[string]PackageOverride,
@@ -642,7 +664,7 @@ func setupPkgOverrides(
 // For third-party packages, references the FOD output path.
 func setupPkgSource(
 	cfg Config,
-	nix *nixdrv.NixTool,
+	nix nixdrv.Store,
 	drv *nixdrv.Derivation,
 	pkg *ResolvedPkg,
 ) error {

@@ -31,6 +31,7 @@ func runResolveCmd(args []string) {
 	cacert := fs.String("cacert", "", "path to CA certificate bundle")
 	netrcFile := fs.String("netrc-file", "", "path to .netrc file for private module authentication")
 	nixJobs := fs.Int("nix-jobs", 0, "max concurrent nix derivation add calls (0 = auto)")
+	daemonSocket := fs.String("daemon-socket", os.Getenv("NIX_DAEMON_SOCKET_PATH"), "nix-daemon Unix socket; if reachable, used instead of nix CLI subprocess")
 	output := fs.String("output", "", "$out path")
 	_ = fs.Parse(args)
 
@@ -79,6 +80,7 @@ func runResolveCmd(args []string) {
 		CACert:       *cacert,
 		NetrcFile:    *netrcFile,
 		NixJobs:      *nixJobs,
+		DaemonSocket: *daemonSocket,
 		Output:       *output,
 	}
 
