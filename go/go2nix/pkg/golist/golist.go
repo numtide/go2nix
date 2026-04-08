@@ -122,7 +122,7 @@ func ListDeps(opts ListDepsOptions) ([]Pkg, error) {
 		patterns = []string{"./..."}
 	}
 
-	args := []string{"list", "-json", "-deps"}
+	args := []string{"list", "-json", "-deps", "-pgo=off", "-mod=readonly"}
 	if opts.Tags != "" {
 		args = append(args, "-tags", opts.Tags)
 	}

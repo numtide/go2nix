@@ -266,6 +266,11 @@ fn run_go_list(
     cmd.arg("-deps");
     cmd.arg("-e");
     cmd.arg("-buildvcs=false");
+    // -pgo=off short-circuits cmd/go's per-main-package default.pgo walk
+    // (load/pkg.go setPGOProfilePath); -mod=readonly is the module-mode
+    // default but pinning it makes the env-independence explicit.
+    cmd.arg("-pgo=off");
+    cmd.arg("-mod=readonly");
 
     if !opts.tags.is_empty() {
         cmd.arg("-tags");
@@ -306,6 +311,8 @@ fn run_go_list_test(
     cmd.arg("-test");
     cmd.arg("-e");
     cmd.arg("-buildvcs=false");
+    cmd.arg("-pgo=off");
+    cmd.arg("-mod=readonly");
 
     if !opts.tags.is_empty() {
         cmd.arg("-tags");
