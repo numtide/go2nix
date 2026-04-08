@@ -15,20 +15,20 @@ func TestLoadCompileManifest(t *testing.T) {
 	}{
 		{
 			name: "valid manifest",
-			json: `{"version":1,"kind":"compile","importcfgParts":["/a/importcfg","/b/importcfg"],"tags":["nethttpomithttp2"],"gcflags":["-shared"],"pgoProfile":null}`,
+			json: `{"version":2,"kind":"compile","importcfgParts":["/a/importcfg","/b/importcfg"],"gcflags":["-shared"],"pgoProfile":null}`,
 		},
 		{
 			name: "valid with pgo",
-			json: `{"version":1,"kind":"compile","importcfgParts":[],"tags":[],"gcflags":[],"pgoProfile":"/nix/store/xxx-profile.pprof"}`,
+			json: `{"version":2,"kind":"compile","importcfgParts":[],"gcflags":[],"pgoProfile":"/nix/store/xxx-profile.pprof"}`,
 		},
 		{
 			name:    "wrong version",
-			json:    `{"version":2,"kind":"compile","importcfgParts":[],"tags":[],"gcflags":[],"pgoProfile":null}`,
-			wantErr: "unsupported version 2",
+			json:    `{"version":1,"kind":"compile","importcfgParts":[],"gcflags":[],"pgoProfile":null}`,
+			wantErr: "unsupported version 1",
 		},
 		{
 			name:    "wrong kind",
-			json:    `{"version":1,"kind":"link","importcfgParts":[],"tags":[],"gcflags":[],"pgoProfile":null}`,
+			json:    `{"version":2,"kind":"link","importcfgParts":[],"gcflags":[],"pgoProfile":null}`,
 			wantErr: `wrong kind "link"`,
 		},
 		{
@@ -58,8 +58,8 @@ func TestLoadCompileManifest(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if m.Version != 1 {
-				t.Errorf("version = %d, want 1", m.Version)
+			if m.Version != ManifestVersion {
+				t.Errorf("version = %d, want %d", m.Version, ManifestVersion)
 			}
 			if m.Kind != "compile" {
 				t.Errorf("kind = %q, want compile", m.Kind)
@@ -70,7 +70,7 @@ func TestLoadCompileManifest(t *testing.T) {
 
 func TestLoadCompileManifest_fields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.json")
-	json := `{"version":1,"kind":"compile","importcfgParts":["/a","/b"],"tags":["foo","bar"],"gcflags":["-shared","-N"],"pgoProfile":"/pgo"}`
+	json := `{"version":2,"kind":"compile","importcfgParts":["/a","/b"],"gcflags":["-shared","-N"],"pgoProfile":"/pgo"}`
 	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -83,9 +83,6 @@ func TestLoadCompileManifest_fields(t *testing.T) {
 	if len(m.ImportcfgParts) != 2 || m.ImportcfgParts[0] != "/a" || m.ImportcfgParts[1] != "/b" {
 		t.Errorf("importcfgParts = %v", m.ImportcfgParts)
 	}
-	if len(m.Tags) != 2 || m.Tags[0] != "foo" || m.Tags[1] != "bar" {
-		t.Errorf("tags = %v", m.Tags)
-	}
 	if len(m.GCFlags) != 2 || m.GCFlags[0] != "-shared" || m.GCFlags[1] != "-N" {
 		t.Errorf("gcflags = %v", m.GCFlags)
 	}
@@ -96,7 +93,7 @@ func TestLoadCompileManifest_fields(t *testing.T) {
 
 func TestLoadCompileManifest_filesOmitted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.json")
-	json := `{"version":1,"kind":"compile","importcfgParts":[],"tags":[],"gcflags":[],"pgoProfile":null}`
+	json := `{"version":2,"kind":"compile","importcfgParts":[],"gcflags":[],"pgoProfile":null}`
 	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +108,7 @@ func TestLoadCompileManifest_filesOmitted(t *testing.T) {
 
 func TestLoadCompileManifest_files(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.json")
-	json := `{"version":1,"kind":"compile","importcfgParts":[],"tags":[],"gcflags":[],"pgoProfile":null,` +
+	json := `{"version":2,"kind":"compile","importcfgParts":[],"gcflags":[],"pgoProfile":null,` +
 		`"files":{"goFiles":["a.go","b.go"],"cgoFiles":["c.go"],"sFiles":["asm_amd64.s"],` +
 		`"hFiles":["x.h"],"embedPatterns":["data/*.txt"]}}`
 	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
@@ -250,11 +247,11 @@ func TestLoadTestManifest(t *testing.T) {
 	}{
 		{
 			name: "valid manifest",
-			json: `{"version":1,"kind":"test","importcfgParts":["/a/importcfg"],"localArchives":{"example.com/foo":"/nix/store/foo.a"},"moduleRoot":"/nix/store/src","tags":[],"gcflags":[],"checkFlags":["-v"]}`,
+			json: `{"version":2,"kind":"test","importcfgParts":["/a/importcfg"],"localArchives":{"example.com/foo":"/nix/store/foo.a"},"moduleRoot":"/nix/store/src","tags":[],"gcflags":[],"checkFlags":["-v"]}`,
 		},
 		{
 			name:    "wrong kind",
-			json:    `{"version":1,"kind":"compile","importcfgParts":[],"localArchives":{},"moduleRoot":"/src","tags":[],"gcflags":[],"checkFlags":[]}`,
+			json:    `{"version":2,"kind":"compile","importcfgParts":[],"localArchives":{},"moduleRoot":"/src","tags":[],"gcflags":[],"checkFlags":[]}`,
 			wantErr: `wrong kind "compile"`,
 		},
 		{
@@ -305,16 +302,16 @@ func TestLoadLinkManifest(t *testing.T) {
 	}{
 		{
 			name: "valid manifest",
-			json: `{"version":1,"kind":"link","importcfgParts":["/a/importcfg"],"localArchives":{"example.com/foo":"/nix/store/foo.a"},"subPackages":["./cmd/server"],"moduleRoot":"/nix/store/src","lockfile":"/nix/store/lockfile","pname":"myapp","goos":"linux","goarch":"amd64","ldflags":["-s","-w"],"gcflags":[],"tags":[],"pgoProfile":null}`,
+			json: `{"version":2,"kind":"link","importcfgParts":["/a/importcfg"],"localArchives":{"example.com/foo":"/nix/store/foo.a"},"subPackages":[{"path":"./cmd/server","files":{"goFiles":["main.go"]}}],"moduleRoot":"/nix/store/src","lockfile":"/nix/store/lockfile","pname":"myapp","goos":"linux","goarch":"amd64","ldflags":["-s","-w"],"gcflags":[],"tags":[],"pgoProfile":null}`,
 		},
 		{
 			name:    "wrong kind",
-			json:    `{"version":1,"kind":"compile","importcfgParts":[],"localArchives":{},"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`,
+			json:    `{"version":2,"kind":"compile","importcfgParts":[],"localArchives":{},"subPackages":[{"path":"."}],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`,
 			wantErr: `wrong kind "compile"`,
 		},
 		{
 			name:    "wrong version",
-			json:    `{"version":99,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`,
+			json:    `{"version":99,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":[{"path":"."}],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`,
 			wantErr: "unsupported version 99",
 		},
 		{
@@ -350,8 +347,11 @@ func TestLoadLinkManifest(t *testing.T) {
 			if m.ModuleRoot != "/nix/store/src" {
 				t.Errorf("moduleRoot = %q", m.ModuleRoot)
 			}
-			if len(m.SubPackages) != 1 || m.SubPackages[0] != "./cmd/server" {
+			if len(m.SubPackages) != 1 || m.SubPackages[0].Path != "./cmd/server" {
 				t.Errorf("subPackages = %v", m.SubPackages)
+			}
+			if m.SubPackages[0].Files == nil || len(m.SubPackages[0].Files.GoFiles) != 1 || m.SubPackages[0].Files.GoFiles[0] != "main.go" {
+				t.Errorf("subPackages[0].files = %+v", m.SubPackages[0].Files)
 			}
 			if len(m.LDFlags) != 2 || m.LDFlags[0] != "-s" || m.LDFlags[1] != "-w" {
 				t.Errorf("ldflags = %v", m.LDFlags)
@@ -371,7 +371,7 @@ func TestLoadLinkManifest(t *testing.T) {
 
 func TestLoadLinkManifest_nullOptionals(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.json")
-	json := `{"version":1,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`
+	json := `{"version":2,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":[{"path":"."}],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`
 	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -397,12 +397,12 @@ func TestLoadLinkManifest_iface(t *testing.T) {
 	// (export data) files instead of the .a (link object) files used
 	// by the link step.
 	path := filepath.Join(t.TempDir(), "manifest.json")
-	json := `{"version":1,"kind":"link",` +
+	json := `{"version":2,"kind":"link",` +
 		`"importcfgParts":["/a/importcfg"],` +
 		`"localArchives":{"example.com/foo":"/nix/store/foo.a"},` +
 		`"compileImportcfgParts":["/i/importcfg"],` +
 		`"localIfaces":{"example.com/foo":"/nix/store/foo.x"},` +
-		`"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x",` +
+		`"subPackages":[{"path":"."}],"moduleRoot":"/src","lockfile":"/lock","pname":"x",` +
 		`"goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`
 	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
 		t.Fatal(err)
@@ -430,7 +430,7 @@ func TestLoadLinkManifest_omitIface(t *testing.T) {
 	// When iface fields are omitted (default mode), they parse to
 	// zero values — link-binary will fall through to compileCfg = mergedCfg.
 	path := filepath.Join(t.TempDir(), "manifest.json")
-	json := `{"version":1,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":["."],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`
+	json := `{"version":2,"kind":"link","importcfgParts":[],"localArchives":{},"subPackages":[{"path":"."}],"moduleRoot":"/src","lockfile":"/lock","pname":"x","goos":null,"goarch":null,"ldflags":[],"gcflags":[],"tags":[],"pgoProfile":null}`
 	if err := os.WriteFile(path, []byte(json), 0o644); err != nil {
 		t.Fatal(err)
 	}

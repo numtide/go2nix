@@ -210,10 +210,9 @@ let
     }:
     builtins.toJSON (
       {
-        version = 1;
+        version = 2;
         kind = "compile";
         importcfgParts = [ "${stdlib}/importcfg" ] ++ map depCompileCfg deps;
-        inherit tags;
         gcflags =
           let
             base = gcflags;
@@ -734,7 +733,7 @@ let
 
   linkManifestJSON = builtins.toJSON (
     {
-      version = 1;
+      version = 2;
       kind = "link";
       importcfgParts = [ "${depsImportcfg}/importcfg" ];
       localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
@@ -744,7 +743,20 @@ let
       localIfaces = builtins.mapAttrs (importPath: pkg: "${pkg.iface}/${importPath}.x") localPackages;
     }
     // {
-      subPackages = normalizedSubPackages;
+      subPackages =
+        let
+          inherit (goPackagesResult) modulePath;
+          spImportPath =
+            sp:
+            let
+              clean = lib.removePrefix "./" sp;
+            in
+            if sp == "." || clean == "" then modulePath else "${modulePath}/${clean}";
+        in
+        map (sp: {
+          path = sp;
+          files = goPackagesResult.localPackages.${spImportPath sp}.files or null;
+        }) normalizedSubPackages;
       inherit moduleRoot;
       lockfile =
         if goLock != null then
@@ -767,7 +779,7 @@ let
   testManifestJSON = lib.optionalString doCheck (
     builtins.toJSON (
       {
-        version = 1;
+        version = 2;
         kind = "test";
         importcfgParts =
           if hasTestDeps then [ "${testDepsImportcfg}/importcfg" ] else [ "${depsImportcfg}/importcfg" ];

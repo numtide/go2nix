@@ -14,7 +14,7 @@ import (
 
 const (
 	// ManifestVersion is the current schema version for all manifest types.
-	ManifestVersion = 1
+	ManifestVersion = 2
 
 	// ManifestKindCompile is the kind value for compile manifests.
 	ManifestKindCompile = "compile"
@@ -31,7 +31,6 @@ type CompileManifest struct {
 	Version        int            `json:"version"`
 	Kind           string         `json:"kind"`
 	ImportcfgParts []string       `json:"importcfgParts"`
-	Tags           []string       `json:"tags"`
 	GCFlags        []string       `json:"gcflags"`
 	PGOProfile     *string        `json:"pgoProfile"`
 	Files          *ManifestFiles `json:"files,omitempty"`
@@ -119,7 +118,7 @@ type LinkManifest struct {
 	// ImportcfgParts/LocalArchives (.a link objects).
 	CompileImportcfgParts []string          `json:"compileImportcfgParts,omitempty"`
 	LocalIfaces           map[string]string `json:"localIfaces,omitempty"`
-	SubPackages           []string          `json:"subPackages"`
+	SubPackages           []LinkSubPackage  `json:"subPackages"`
 	ModuleRoot            string            `json:"moduleRoot"`
 	Lockfile              *string           `json:"lockfile"`
 	Pname                 string            `json:"pname"`
@@ -129,6 +128,12 @@ type LinkManifest struct {
 	GCFlags               []string          `json:"gcflags"`
 	Tags                  []string          `json:"tags"`
 	PGOProfile            *string           `json:"pgoProfile"`
+}
+
+// LinkSubPackage is one main-package entry in a LinkManifest.
+type LinkSubPackage struct {
+	Path  string         `json:"path"`
+	Files *ManifestFiles `json:"files,omitempty"`
 }
 
 // LoadLinkManifest reads and validates a link manifest from path.

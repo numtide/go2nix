@@ -545,10 +545,6 @@ func buildPackageDrv(
 	// Build compile manifest JSON (same contract as default mode).
 	// The bash script writes this to a file and passes --manifest.
 	gcflagList := buildCompileGCFlags(cfg.buildMode, cfg.GCFlags)
-	var tagList []string
-	if cfg.Tags != "" {
-		tagList = strings.Split(cfg.Tags, ",")
-	}
 	var pgoProfile *string
 	if cfg.PGOProfile != "" {
 		pgoProfile = &cfg.PGOProfile
@@ -558,7 +554,6 @@ func buildPackageDrv(
 		Version:        compile.ManifestVersion,
 		Kind:           compile.ManifestKindCompile,
 		ImportcfgParts: []string{compile.ImportcfgPlaceholder},
-		Tags:           tagList,
 		GCFlags:        gcflagList,
 		PGOProfile:     pgoProfile,
 		Files: &compile.ManifestFiles{
