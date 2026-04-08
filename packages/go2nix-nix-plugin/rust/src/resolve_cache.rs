@@ -3,6 +3,13 @@
 //! Cache layout:
 //!   $XDG_CACHE_HOME/go2nix/resolve/<sha256-hex-key>.json
 //!
+//! Read-only override (checked first, never written to):
+//!   $GO2NIX_RESOLVE_CACHE_DIR/<sha256-hex-key>.json
+//!
+//! The override lets sandboxed/hermetic environments supply a pre-built
+//! cache (e.g. a Nix store path produced by running one eval with
+//! `XDG_CACHE_HOME=$out`) without granting write access at eval time.
+//!
 //! The key is computed by `resolve::compute_cache_key` from go.sum/go.mod,
 //! a cheap local-only `go list` probe, and platform inputs. On a hit the
 //! caller returns the cached JSON without running `go list -deps`, which
@@ -27,7 +34,14 @@ fn cache_dir() -> Option<PathBuf> {
 }
 
 /// Look up a cached JSON result by key. Returns `None` on miss or any error.
+/// Checks `GO2NIX_RESOLVE_CACHE_DIR` (read-only, for pre-built caches in
+/// sandboxed environments) before the writable XDG location.
 pub fn read(key: &str) -> Option<String> {
+    if let Ok(ro) = std::env::var("GO2NIX_RESOLVE_CACHE_DIR") {
+        if let Some(hit) = read_from(Path::new(&ro), key) {
+            return Some(hit);
+        }
+    }
     read_from(&cache_dir()?, key)
 }
 
