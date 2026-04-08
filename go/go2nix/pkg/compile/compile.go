@@ -22,7 +22,6 @@ type Options struct {
 	IfaceOutput string            // optional export-data-only interface output (compile-time deps key on this; rules_go .x model)
 	ImportCfg   string            // path to importcfg file
 	TrimPath    string            // path prefix to trim (defaults to $NIX_BUILD_TOP)
-	Tags        string            // comma-separated build tags
 	GCFlagsList []string          // extra flags for go tool compile
 	GoVersion   string            // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
 	PGOProfile  string            // path to pprof CPU profile for PGO; empty disables PGO
@@ -86,19 +85,10 @@ func CompileGoPackage(opts Options) error {
 
 	slog.Debug("compile-package", "import-path", opts.ImportPath, "src", opts.SrcDir)
 
-	var files gofiles.PkgFiles
-	if opts.Files != nil {
-		files = *opts.Files
-	} else {
-		var err error
-		// Pass the toolchain version (not opts.GoVersion, which is the
-		// -lang language version from go.mod) so //go:build go1.N
-		// constraints are evaluated against the actual compiler.
-		files, err = gofiles.ListFiles(opts.SrcDir, opts.Tags, ToolchainVersion())
-		if err != nil {
-			return fmt.Errorf("listing files: %w", err)
-		}
+	if opts.Files == nil {
+		return fmt.Errorf("compile.Options.Files is required (package %s)", opts.ImportPath)
 	}
+	files := *opts.Files
 
 	if len(files.GoFiles) == 0 && len(files.CgoFiles) == 0 {
 		return fmt.Errorf("no Go files found in %s (package %s)", opts.SrcDir, opts.ImportPath)

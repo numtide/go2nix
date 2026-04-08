@@ -243,7 +243,6 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			Output:      internalArchive,
 			ImportCfg:   testCompileImportCfg,
 			TrimPath:    opts.TrimPath,
-			Tags:        opts.Tags,
 			GCFlagsList: opts.GCFlagsList,
 			Files:       &gofiles.PkgFiles{GoFiles: goFiles, EmbedCfg: mergedEmbedCfg},
 		}); err != nil {
@@ -296,7 +295,6 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 				Output:      recompArchive,
 				ImportCfg:   testCompileImportCfg,
 				TrimPath:    opts.TrimPath,
-				Tags:        opts.Tags,
 				GCFlagsList: opts.GCFlagsList,
 				Files:       &depPkg.PkgFiles,
 			}); err != nil {
@@ -342,7 +340,6 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			Output:      externalArchive,
 			ImportCfg:   testCompileImportCfg,
 			TrimPath:    opts.TrimPath,
-			Tags:        opts.Tags,
 			GCFlagsList: opts.GCFlagsList,
 			Files:       &gofiles.PkgFiles{GoFiles: pkg.XTestGoFiles, EmbedCfg: pkg.XTestEmbedCfg},
 		}); err != nil {
@@ -387,7 +384,6 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		Output:      testMainArchive,
 		ImportCfg:   testCompileImportCfg,
 		TrimPath:    opts.TrimPath,
-		Tags:        opts.Tags,
 		GCFlagsList: opts.GCFlagsList,
 		Files:       &gofiles.PkgFiles{GoFiles: []string{"_testmain.go"}},
 	}); err != nil {

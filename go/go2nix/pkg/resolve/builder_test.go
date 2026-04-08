@@ -152,7 +152,6 @@ func TestImportcfgPlaceholderRoundTrip(t *testing.T) {
 		Version:        compile.ManifestVersion,
 		Kind:           compile.ManifestKindCompile,
 		ImportcfgParts: []string{compile.ImportcfgPlaceholder},
-		Tags:           []string{"netgo", "osusergo"},
 		GCFlags:        []string{"-shared"},
 		PGOProfile:     &pgo,
 	}
@@ -185,9 +184,6 @@ func TestImportcfgPlaceholderRoundTrip(t *testing.T) {
 	}
 	if got.Version != compile.ManifestVersion {
 		t.Errorf("version = %d, want %d", got.Version, compile.ManifestVersion)
-	}
-	if len(got.Tags) != 2 || got.Tags[0] != "netgo" {
-		t.Errorf("tags = %v, want [netgo osusergo]", got.Tags)
 	}
 	if got.PGOProfile == nil || *got.PGOProfile != pgo {
 		t.Errorf("pgoProfile = %v, want %q", got.PGOProfile, pgo)

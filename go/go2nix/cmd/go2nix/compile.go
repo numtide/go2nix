@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/numtide/go2nix/pkg/compile"
 )
@@ -58,7 +57,6 @@ func runCompilePackageCmd(args []string) {
 		IfaceOutput: *ifaceOutput,
 		ImportCfg:   mergedCfg,
 		TrimPath:    *trimPath,
-		Tags:        strings.Join(m.Tags, ","),
 		GCFlagsList: m.GCFlags,
 		GoVersion:   *goVersion,
 		PGOProfile:  pgo,
@@ -71,6 +69,10 @@ func runCompilePackageCmd(args []string) {
 			os.Exit(1)
 		}
 		opts.Files = pf
+	}
+	if opts.Files == nil {
+		slog.Error("compile-package: manifest is missing files; rebuild the nix-plugin", "version", m.Version)
+		os.Exit(1)
 	}
 
 	if err := compile.CompileGoPackage(opts); err != nil {

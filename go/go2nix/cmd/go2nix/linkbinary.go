@@ -170,8 +170,6 @@ func linkBinary(manifestPath, output string) error {
 	}
 	gcflagsList = append(gcflagsList, m.GCFlags...)
 
-	tagsStr := strings.Join(m.Tags, ",")
-
 	var pgoProfile string
 	if m.PGOProfile != nil {
 		pgoProfile = *m.PGOProfile
@@ -199,8 +197,8 @@ func linkBinary(manifestPath, output string) error {
 	for _, sp := range m.SubPackages {
 		var importpath, srcdir, binname string
 
-		clean := strings.TrimPrefix(sp, "./")
-		if sp == "." || clean == "" {
+		clean := strings.TrimPrefix(sp.Path, "./")
+		if sp.Path == "." || clean == "" {
 			importpath = modulePath
 			srcdir = m.ModuleRoot
 			binname = m.Pname
@@ -220,15 +218,23 @@ func linkBinary(manifestPath, output string) error {
 			return err
 		}
 
+		if sp.Files == nil {
+			return fmt.Errorf("link manifest: subPackage %q is missing files; rebuild the nix-plugin", sp.Path)
+		}
+		pf, err := sp.Files.ToPkgFiles(srcdir)
+		if err != nil {
+			return fmt.Errorf("resolving files for %s: %w", importpath, err)
+		}
+
 		if err := compile.CompileGoPackage(compile.Options{
 			ImportPath:  "main",
 			SrcDir:      srcdir,
 			Output:      mainArchive,
 			ImportCfg:   compileCfg,
 			TrimPath:    tmpDir,
-			Tags:        tagsStr,
 			GCFlagsList: gcflagsList,
 			PGOProfile:  pgoProfile,
+			Files:       pf,
 		}); err != nil {
 			return fmt.Errorf("compiling main %s: %w", importpath, err)
 		}
