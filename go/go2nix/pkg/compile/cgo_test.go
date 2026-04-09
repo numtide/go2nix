@@ -41,26 +41,47 @@ func TestMatchesCgoConstraint(t *testing.T) {
 		constraint string
 		goos       string
 		goarch     string
+		tags       []string
 		want       bool
 	}{
-		{"os match", "linux", "linux", "amd64", true},
-		{"os mismatch", "darwin", "linux", "amd64", false},
-		{"arch match", "amd64", "linux", "amd64", true},
-		{"arch mismatch", "arm64", "linux", "amd64", false},
-		{"os,arch match", "linux,amd64", "linux", "amd64", true},
-		{"os,arch partial", "linux,arm64", "linux", "amd64", false},
-		{"negated os match", "!windows", "linux", "amd64", true},
-		{"negated os mismatch", "!linux", "linux", "amd64", false},
-		{"negated arch", "!arm64", "linux", "amd64", true},
-		{"combined negated", "!windows,amd64", "linux", "amd64", true},
-		{"empty constraint", "", "linux", "amd64", true},
+		{"os match", "linux", "linux", "amd64", nil, true},
+		{"os mismatch", "darwin", "linux", "amd64", nil, false},
+		{"arch match", "amd64", "linux", "amd64", nil, true},
+		{"arch mismatch", "arm64", "linux", "amd64", nil, false},
+		{"os,arch match", "linux,amd64", "linux", "amd64", nil, true},
+		{"os,arch partial", "linux,arm64", "linux", "amd64", nil, false},
+		{"negated os match", "!windows", "linux", "amd64", nil, true},
+		{"negated os mismatch", "!linux", "linux", "amd64", nil, false},
+		{"negated arch", "!arm64", "linux", "amd64", nil, true},
+		{"combined negated", "!windows,amd64", "linux", "amd64", nil, true},
+		{"empty constraint", "", "linux", "amd64", nil, true},
+		// Space = OR of comma-AND groups (regression for finding #20).
+		{"space OR first matches", "linux darwin", "linux", "amd64", nil, true},
+		{"space OR second matches", "linux darwin", "darwin", "arm64", nil, true},
+		{"space OR none match", "linux darwin", "windows", "amd64", nil, false},
+		{"AND-OR mix linux", "linux,amd64 darwin", "linux", "amd64", nil, true},
+		{"AND-OR mix darwin", "linux,amd64 darwin", "darwin", "arm64", nil, true},
+		{"AND-OR mix linux/arm fails AND", "linux,amd64 darwin", "linux", "arm64", nil, false},
+		// Well-known tags.
+		{"unix on linux", "unix", "linux", "amd64", nil, true},
+		{"unix on windows", "unix", "windows", "amd64", nil, false},
+		{"cgo always true", "cgo", "linux", "amd64", nil, true},
+		{"gc always true", "gc", "linux", "amd64", nil, true},
+		// Custom build tags.
+		{"custom tag set", "mytag", "linux", "amd64", []string{"mytag"}, true},
+		{"custom tag unset", "mytag", "linux", "amd64", nil, false},
+		{"custom tag in AND", "linux,mytag", "linux", "amd64", []string{"mytag"}, true},
+		{"custom tag negated", "!mytag", "linux", "amd64", []string{"mytag"}, false},
+		// Edge cases.
+		{"bare bang fails", "!", "linux", "amd64", nil, false},
+		{"trailing comma fails group", "linux,", "linux", "amd64", nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesCgoConstraint(tt.constraint, tt.goos, tt.goarch)
+			got := matchesCgoConstraint(tt.constraint, tt.goos, tt.goarch, tt.tags)
 			if got != tt.want {
-				t.Errorf("matchesCgoConstraint(%q, %q, %q) = %v, want %v",
-					tt.constraint, tt.goos, tt.goarch, got, tt.want)
+				t.Errorf("matchesCgoConstraint(%q, %q, %q, %v) = %v, want %v",
+					tt.constraint, tt.goos, tt.goarch, tt.tags, got, tt.want)
 			}
 		})
 	}

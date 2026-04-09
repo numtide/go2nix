@@ -119,6 +119,63 @@ func TestDefaultGODEBUG_DefaultDirective(t *testing.T) {
 	}
 }
 
+func TestDefaultGODEBUG_ExplicitSurvivesLaterDefault(t *testing.T) {
+	// Regression for finding #9: explicit `godebug k=v` directives must
+	// persist even when a `godebug default=goX.Y` directive appears later
+	// in go.mod, matching cmd/go's defaultGODEBUG.
+	tests := []struct {
+		name  string
+		gomod string
+		want  map[string]string // substrings that must appear as "k=v"
+		not   []string          // substrings that must NOT appear
+	}{
+		{
+			name: "explicit before default",
+			gomod: "module example.com/test\n\ngo 1.21\n\n" +
+				"godebug panicnil=1\n" +
+				"godebug default=go1.24\n",
+			want: map[string]string{"panicnil": "1", "containermaxprocs": "0"},
+			not:  []string{"asynctimerchan="},
+		},
+		{
+			name: "explicit after default",
+			gomod: "module example.com/test\n\ngo 1.21\n\n" +
+				"godebug default=go1.24\n" +
+				"godebug panicnil=1\n",
+			want: map[string]string{"panicnil": "1", "containermaxprocs": "0"},
+			not:  []string{"asynctimerchan="},
+		},
+		{
+			name: "explicit overrides table default regardless of position",
+			gomod: "module example.com/test\n\ngo 1.24\n\n" +
+				"godebug asynctimerchan=0\n" +
+				"godebug default=go1.21\n",
+			// default=go1.21 would set asynctimerchan=1 from the table,
+			// but the explicit directive must win.
+			want: map[string]string{"asynctimerchan": "0"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(tt.gomod), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			result := DefaultGODEBUG(dir)
+			for k, v := range tt.want {
+				if !contains(result, k+"="+v) {
+					t.Errorf("expected %s=%s in %q", k, v, result)
+				}
+			}
+			for _, s := range tt.not {
+				if contains(result, s) {
+					t.Errorf("did not expect %q in %q", s, result)
+				}
+			}
+		})
+	}
+}
+
 func TestParseGoMinor(t *testing.T) {
 	tests := []struct {
 		v    string
