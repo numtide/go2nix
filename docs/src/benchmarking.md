@@ -49,7 +49,7 @@ Two synthetic projects under `tests/fixtures/`:
 
 `leaf` touches the entrypoint (no reverse dependents — only the link
 rebuilds). `deep` touches a package near the bottom of the graph that
-fan-outs to most of the app. `no_change` measures the eval + no-op-build
+fans out to most of the app. `no_change` measures the eval + no-op-build
 floor.
 
 ## Using `-assert-cascade` in CI

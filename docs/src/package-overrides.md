@@ -21,6 +21,11 @@ Only the first match is used; entries are **not** merged. Module-path keys
 are convenient when one module ships many cgo packages that all need the
 same system libraries.
 
+> The module-path fallback applies to **third-party** (and test) packages
+> only. Local packages from your own main module are matched by exact
+> import path; a key equal to your main module's path will not be applied
+> to every local package.
+
 ## Supported keys
 
 | Key | Type | Default mode | Experimental mode | Notes |
@@ -28,7 +33,8 @@ same system libraries.
 | `nativeBuildInputs` | list of derivations | cgo packages only | yes | Added to the per-package derivation's `nativeBuildInputs` |
 | `env` | attrset | yes | no | Extra environment variables on the per-package derivation |
 
-In default mode, `nativeBuildInputs` from every matched override are also
+In default mode, `nativeBuildInputs` from every entry in `packageOverrides`
+(regardless of whether the key matched a package in the graph) are also
 collected and added to the **final** application derivation, so headers and
 libraries are available at link time as well.
 

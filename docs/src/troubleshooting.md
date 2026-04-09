@@ -86,7 +86,7 @@ nix eval .#my-app.passthru.packages --apply builtins.attrNames
 nix eval .#my-app.passthru.localPackages --apply builtins.attrNames
 
 # Build a single package in isolation
-nix build .#my-app.passthru.packages."github.com/foo/bar"
+nix build '.#my-app.passthru.packages."github.com/foo/bar"'
 
 # The bundled importcfg used at link time
 nix build .#my-app.passthru.depsImportcfg

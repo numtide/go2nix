@@ -31,16 +31,16 @@ derivation; any `go.sum` change re-downloads the entire vendor tree.
 │ pkg drv    │  │ pkg drv    │   ...   │ pkg drv    │   one per Go package
 │ (.a/.x)    │  │ (.a/.x)    │         │ (.a/.x)    │   (third-party + local)
 └─────┬──────┘  └─────┬──────┘         └─────┬──────┘
-      └───────┬───────┴──────────┬───────────┘
-        ┌─────▼─────┐      ┌─────▼─────┐
-        │ importcfg │      │ stdlib    │              bundle drvs
-        │ bundle    │      │ drv       │
-        └─────┬─────┘      └─────┬─────┘
-              └────────┬─────────┘
-                 ┌─────▼─────┐
-                 │ app drv   │                        link only
-                 │ (link)    │
-                 └───────────┘
+      └───────────────┴──┬───────────────────┘
+                   ┌─────▼─────┐    ┌───────────┐
+                   │ importcfg │    │ stdlib    │     stdlib is independent
+                   │ bundle    │    │ drv       │     (Go toolchain only)
+                   └─────┬─────┘    └─────┬─────┘
+                         └────────┬───────┘
+                            ┌─────▼─────┐
+                            │ app drv   │             link only
+                            │ (link)    │
+                            └───────────┘
 ```
 
 For a non-trivial application this is hundreds to thousands of derivations

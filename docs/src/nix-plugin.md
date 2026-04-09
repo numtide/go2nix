@@ -70,13 +70,13 @@ nix build github:numtide/go2nix#go2nix-nix-plugin
 Then make the evaluator load it. Either set it globally in `nix.conf`:
 
 ```
-plugin-files = /nix/store/.../lib/libgo2nix_nix_plugin.so
+plugin-files = /nix/store/.../lib/nix/plugins/libgo2nix_plugin.so
 ```
 
 or pass it per-invocation:
 
 ```bash
-nix build --option plugin-files /nix/store/.../lib/libgo2nix_nix_plugin.so .#my-app
+nix build --option plugin-files /nix/store/.../lib/nix/plugins/libgo2nix_plugin.so .#my-app
 ```
 
 The latter is what the [bench-incremental](benchmarking.md) harness does
