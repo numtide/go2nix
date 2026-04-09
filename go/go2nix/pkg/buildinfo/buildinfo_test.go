@@ -28,7 +28,14 @@ golang.org/x/crypto v0.17.0/go.mod h1:gCAAfMLgwOJRpTjQ2zCCt2OcSfYMTeZVSRtQlPC7Nq
 		{Path: "golang.org/x/crypto", Version: "v0.17.0"},
 	}
 
-	line, err := GenerateModinfo(dir, "go1.21.5", deps)
+	line, err := GenerateModinfo(dir, "go1.21.5", deps, BuildSettings{
+		BuildMode:   "exe",
+		Tags:        "netgo,osusergo",
+		CGOEnabled:  "0",
+		GOARCH:      "amd64",
+		GOARCHLevel: "v1",
+		GOOS:        "linux",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +55,26 @@ golang.org/x/crypto v0.17.0/go.mod h1:gCAAfMLgwOJRpTjQ2zCCt2OcSfYMTeZVSRtQlPC7Nq
 	if !strings.Contains(line, "h1:") {
 		t.Error("missing go.sum hash in modinfo")
 	}
+	// Regression for finding #23: build settings must be embedded so
+	// `go version -m` shows -compiler/CGO_ENABLED/GOOS/GOARCH/-tags lines.
+	for _, want := range []string{
+		"build\\t-buildmode=exe",
+		"build\\t-compiler=gc",
+		"build\\t-tags=netgo,osusergo",
+		"build\\t-trimpath=true",
+		"build\\tCGO_ENABLED=0",
+		"build\\tGOARCH=amd64",
+		"build\\tGOAMD64=v1",
+		"build\\tGOOS=linux",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("missing build setting %q in modinfo:\n%s", want, line)
+		}
+	}
+	// LDFlags/DefaultGODEBUG were empty — must be omitted.
+	if strings.Contains(line, "-ldflags") || strings.Contains(line, "DefaultGODEBUG") {
+		t.Errorf("empty optional settings should be omitted:\n%s", line)
+	}
 }
 
 func TestGenerateModinfoNoGoSum(t *testing.T) {
@@ -63,7 +90,7 @@ go 1.21
 		{Path: "golang.org/x/net", Version: "v0.19.0"},
 	}
 
-	line, err := GenerateModinfo(dir, "go1.21.5", deps)
+	line, err := GenerateModinfo(dir, "go1.21.5", deps, BuildSettings{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +121,7 @@ go 1.21
 		},
 	}
 
-	line, err := GenerateModinfo(dir, "go1.21.5", deps)
+	line, err := GenerateModinfo(dir, "go1.21.5", deps, BuildSettings{})
 	if err != nil {
 		t.Fatal(err)
 	}

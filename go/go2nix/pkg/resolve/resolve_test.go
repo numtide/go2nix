@@ -337,8 +337,9 @@ func TestBuildLinkDrvClosureOnly(t *testing.T) {
 		ccDir:        "/nix/store/00000000000000000000000000000000-cc",
 	}
 	cfg.coreutilsDir = storeDirOf(cfg.CoreutilsBin)
+	cfg.goEnv = map[string]string{}
 
-	_, drv, err := buildLinkDrv(cfg, graph, graph["m/cmd/a"], 1, nil, "", "")
+	_, drv, err := buildLinkDrv(cfg, graph, nil, graph["m/cmd/a"], 1, nil, "")
 	if err != nil {
 		t.Fatalf("buildLinkDrv: %v", err)
 	}

@@ -97,7 +97,25 @@ func linkBinary(manifestPath, output string) error {
 		}
 	}
 
-	// Step 4: Compute modinfo.
+	// Step 4: Determine target platform and build mode (needed for modinfo
+	// build settings as well as the link step).
+	goos := ""
+	goarch := ""
+	if m.GOOS != nil {
+		goos = *m.GOOS
+	}
+	if m.GOARCH != nil {
+		goarch = *m.GOARCH
+	}
+	if goos == "" {
+		goos = compile.GoEnvVar("GOOS")
+	}
+	if goarch == "" {
+		goarch = compile.GoEnvVar("GOARCH")
+	}
+	buildMode := compile.DefaultBuildMode(goos, goarch)
+
+	// Step 5: Compute modinfo.
 	goVersion, err := goToolchainVersion()
 	if err != nil {
 		return fmt.Errorf("getting Go version: %w", err)
@@ -123,14 +141,27 @@ func linkBinary(manifestPath, output string) error {
 		}
 	}
 
-	modinfo, err := buildinfo.GenerateModinfo(m.ModuleRoot, goVersion, deps)
+	godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot)
+
+	settings := buildinfo.BuildSettings{
+		BuildMode:      buildMode,
+		LDFlags:        strings.Join(m.LDFlags, " "),
+		Tags:           strings.Join(m.Tags, ","),
+		DefaultGODEBUG: godebugDefault,
+		CGOEnabled:     compile.GoEnvVar("CGO_ENABLED"),
+		GOARCH:         goarch,
+		GOOS:           goos,
+	}
+	if key := buildinfo.ArchLevelVar(goarch); key != "" {
+		settings.GOARCHLevel = compile.GoEnvVar(key)
+	}
+
+	modinfo, err := buildinfo.GenerateModinfo(m.ModuleRoot, goVersion, deps, settings)
 	if err != nil {
 		return fmt.Errorf("generating modinfo: %w", err)
 	}
 
-	godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot)
-
-	// Step 5: Build link importcfg (compile importcfg + modinfo).
+	// Step 6: Build link importcfg (compile importcfg + modinfo).
 	linkCfg := filepath.Join(tmpDir, "importcfg.link")
 	{
 		data, err := os.ReadFile(mergedCfg)
@@ -145,23 +176,6 @@ func linkBinary(manifestPath, output string) error {
 			return err
 		}
 	}
-
-	// Step 6: Determine build mode.
-	goos := ""
-	goarch := ""
-	if m.GOOS != nil {
-		goos = *m.GOOS
-	}
-	if m.GOARCH != nil {
-		goarch = *m.GOARCH
-	}
-	if goos == "" {
-		goos = compile.GoEnvVar("GOOS")
-	}
-	if goarch == "" {
-		goarch = compile.GoEnvVar("GOARCH")
-	}
-	buildMode := compile.DefaultBuildMode(goos, goarch)
 
 	// Build gcflags: PIE requires -shared, then append manifest gcflags.
 	var gcflagsList []string

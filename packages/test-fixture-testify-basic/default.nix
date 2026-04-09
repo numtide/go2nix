@@ -45,7 +45,10 @@ else
   in
   pkgs.runCommand "test-dag-fixture-testify-basic"
     {
-      nativeBuildInputs = [ nix ];
+      nativeBuildInputs = [
+        nix
+        go
+      ];
       requiredSystemFeatures = [ "recursive-nix" ];
     }
     ''
@@ -60,5 +63,15 @@ else
         --no-out-link)
 
       $result/bin/testify-basic
+
+      echo "=== Checking embedded build info ==="
+      # Regression for finding #23: go2nix binaries must embed build settings
+      # so debug.ReadBuildInfo() consumers (govulncheck, SBOM tools) work.
+      go version -m "$result/bin/testify-basic" | tee buildinfo.txt
+      for key in "-compiler=gc" "CGO_ENABLED=" "GOARCH=" "GOOS="; do
+        grep -P "^\tbuild\t''${key}" buildinfo.txt \
+          || { echo "FAIL: missing 'build $key' in go version -m output"; exit 1; }
+      done
+
       echo "PASS: testify-basic" > $out
     ''
