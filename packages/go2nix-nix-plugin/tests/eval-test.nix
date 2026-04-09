@@ -77,20 +77,45 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
       [ "$val" = "true" ] || { echo "FAIL: $f = $val"; exit 1; }
     done
 
-    echo "=== No-IFD: derivation-backed input is rejected ==="
-    err=$(nix-instantiate --eval --read-write-mode \
+    echo "=== Case 2: derivation-backed input warns then realises (IFD allowed) ==="
+    # Use a trivially-buildable derivation as src so realiseContext succeeds.
+    # The Rust side will then fail (not a Go module), but the warning is what
+    # we assert on — it must surface before realisation.
+    out2=$(nix-instantiate --eval --read-write-mode \
+      --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+      --option allow-import-from-derivation true \
+      --expr '
+        builtins.resolveGoPackages {
+          src = "''${derivation {
+            name = "drv-src"; system = builtins.currentSystem;
+            builder = "/bin/sh"; args = [ "-c" "mkdir $out" ];
+          }}";
+        }
+      ' 2>&1 || true)
+    echo "$out2"
+    case "$out2" in
+      *"realising derivation"*"at eval time (IFD)"*)
+        echo "OK: warning surfaced for derivation-backed src" ;;
+      *) echo "FAIL: expected IFD warning, got: $out2"; exit 1 ;;
+    esac
+
+    echo "=== Case 3: derivation-backed input under IFD=false → IFDError (Nix gate) ==="
+    out3=$(nix-instantiate --eval --read-write-mode \
       --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
       --option allow-import-from-derivation false \
       --expr '
         builtins.resolveGoPackages {
-          go = "''${derivation { name = "bogus-go"; system = builtins.currentSystem; builder = "/no"; }}/bin/go";
-          src = ./.;
+          src = "''${derivation {
+            name = "drv-src"; system = builtins.currentSystem;
+            builder = "/bin/sh"; args = [ "-c" "mkdir $out" ];
+          }}";
         }
       ' 2>&1 || true)
-    echo "$err"
-    case "$err" in
-      *"derivation output"*) echo "OK: derivation-output context rejected with clear error" ;;
-      *) echo "FAIL: expected 'derivation output' rejection, got: $err"; exit 1 ;;
+    echo "$out3"
+    case "$out3" in
+      *"allow-import-from-derivation"*)
+        echo "OK: Nix's IFD gate still applies" ;;
+      *) echo "FAIL: expected allow-import-from-derivation error, got: $out3"; exit 1 ;;
     esac
 
     echo "PASS: $pkgCount packages, $localPkgCount local packages, modulePath=$modulePath" > $out
