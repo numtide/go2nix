@@ -94,6 +94,17 @@ func CompileGoPackage(opts Options) error {
 		return fmt.Errorf("no Go files found in %s (package %s)", opts.SrcDir, opts.ImportPath)
 	}
 
+	// Objective-C and SWIG sources are surfaced so we can fail fast with a
+	// clear message rather than producing an archive that is missing object
+	// code (which would only blow up at final link with cryptic
+	// undefined-symbol errors). Full support is tracked separately.
+	if len(files.MFiles) > 0 {
+		return fmt.Errorf("package %s contains Objective-C sources (%v): not yet supported by go2nix", opts.ImportPath, files.MFiles)
+	}
+	if len(files.SwigFiles) > 0 || len(files.SwigCXXFiles) > 0 {
+		return fmt.Errorf("package %s contains SWIG sources (%v %v): not yet supported by go2nix", opts.ImportPath, files.SwigFiles, files.SwigCXXFiles)
+	}
+
 	// Create output directories.
 	if err := os.MkdirAll(filepath.Dir(opts.Output), 0o755); err != nil {
 		return err

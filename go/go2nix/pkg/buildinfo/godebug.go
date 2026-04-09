@@ -86,7 +86,22 @@ func DefaultGODEBUG(moduleRoot string) string {
 		return ""
 	}
 
-	// Build defaults map: for each godebug entry where the module's
+	// cmd/go resolves the base version first (go directive, optionally
+	// overridden by any `godebug default=goX.Y` directive), then layers
+	// every explicit `godebug key=value` directive on top regardless of
+	// its position relative to `default=`. Do the same: first scan for
+	// `default=` to fix the base minor, then apply non-default directives.
+	for _, gd := range mf.Godebug {
+		if gd.Key != "default" {
+			continue
+		}
+		v := strings.TrimPrefix(gd.Value, "go")
+		if newMinor := parseGoMinor(v); newMinor >= 0 {
+			minor = newMinor
+		}
+	}
+
+	// Build defaults map: for each godebug entry where the effective
 	// go version < Changed, use the old value.
 	m := make(map[string]string)
 	for _, entry := range godebugTable {
@@ -98,17 +113,6 @@ func DefaultGODEBUG(moduleRoot string) string {
 	// Apply explicit godebug directives from go.mod on top.
 	for _, gd := range mf.Godebug {
 		if gd.Key == "default" {
-			// "default goX.Y" overrides the go version used for defaults.
-			v := strings.TrimPrefix(gd.Value, "go")
-			if newMinor := parseGoMinor(v); newMinor >= 0 {
-				// Recompute with the new version.
-				m = make(map[string]string)
-				for _, entry := range godebugTable {
-					if newMinor < entry.Changed {
-						m[entry.Name] = entry.Old
-					}
-				}
-			}
 			continue
 		}
 		m[gd.Key] = gd.Value

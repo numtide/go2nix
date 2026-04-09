@@ -20,17 +20,20 @@ import (
 // PkgFiles describes the files in a Go package, resolved for the current
 // platform's build constraints.
 type PkgFiles struct {
-	GoFiles    []string  `json:"go_files"`
-	CgoFiles   []string  `json:"cgo_files"`
-	SFiles     []string  `json:"s_files"`
-	CFiles     []string  `json:"c_files"`
-	CXXFiles   []string  `json:"cxx_files"`
-	FFiles     []string  `json:"f_files"` // .f, .F, .for, .f90 Fortran source files
-	HFiles     []string  `json:"h_files"`
-	SysoFiles  []string  `json:"syso_files"` // .syso system object files to pack into archive
-	EmbedFiles []string  `json:"embed_files"`
-	EmbedCfg   *EmbedCfg `json:"embed_cfg,omitempty"`
-	IsCommand  bool      `json:"is_command"`
+	GoFiles      []string  `json:"go_files"`
+	CgoFiles     []string  `json:"cgo_files"`
+	SFiles       []string  `json:"s_files"`
+	CFiles       []string  `json:"c_files"`
+	CXXFiles     []string  `json:"cxx_files"`
+	MFiles       []string  `json:"m_files"` // .m Objective-C source files
+	FFiles       []string  `json:"f_files"` // .f, .F, .for, .f90 Fortran source files
+	HFiles       []string  `json:"h_files"`
+	SysoFiles    []string  `json:"syso_files"`     // .syso system object files to pack into archive
+	SwigFiles    []string  `json:"swig_files"`     // .swig files
+	SwigCXXFiles []string  `json:"swig_cxx_files"` // .swigcxx files
+	EmbedFiles   []string  `json:"embed_files"`
+	EmbedCfg     *EmbedCfg `json:"embed_cfg,omitempty"`
+	IsCommand    bool      `json:"is_command"`
 }
 
 // EmbedCfg is the format expected by go tool compile -embedcfg.
@@ -98,15 +101,18 @@ func ReleaseTagsForVersion(goVersion string) []string {
 // embed patterns if present.
 func BuildPkgFiles(pkg *build.Package, dir string) (PkgFiles, error) {
 	result := PkgFiles{
-		GoFiles:   nonNil(pkg.GoFiles),
-		CgoFiles:  nonNil(pkg.CgoFiles),
-		SFiles:    nonNil(pkg.SFiles),
-		CFiles:    nonNil(pkg.CFiles),
-		CXXFiles:  nonNil(pkg.CXXFiles),
-		FFiles:    nonNil(pkg.FFiles),
-		HFiles:    nonNil(pkg.HFiles),
-		SysoFiles: nonNil(pkg.SysoFiles),
-		IsCommand: pkg.IsCommand(),
+		GoFiles:      nonNil(pkg.GoFiles),
+		CgoFiles:     nonNil(pkg.CgoFiles),
+		SFiles:       nonNil(pkg.SFiles),
+		CFiles:       nonNil(pkg.CFiles),
+		CXXFiles:     nonNil(pkg.CXXFiles),
+		MFiles:       nonNil(pkg.MFiles),
+		FFiles:       nonNil(pkg.FFiles),
+		HFiles:       nonNil(pkg.HFiles),
+		SysoFiles:    nonNil(pkg.SysoFiles),
+		SwigFiles:    nonNil(pkg.SwigFiles),
+		SwigCXXFiles: nonNil(pkg.SwigCXXFiles),
+		IsCommand:    pkg.IsCommand(),
 	}
 
 	if len(pkg.EmbedPatterns) > 0 {
