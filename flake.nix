@@ -84,6 +84,9 @@
           test-fixture-modroot-nested = callPkgWith ./packages/test-fixture-modroot-nested/default.nix {
             inherit flake system;
           };
+          test-fixture-lang-loopvar = callPkgWith ./packages/test-fixture-lang-loopvar/default.nix {
+            inherit flake system;
+          };
           test-fixture-torture-app-full = callPkgWith ./packages/test-fixture-torture-app-full/default.nix {
             inherit flake system;
           };

@@ -7,6 +7,7 @@
 # Expected environment variables (set via derivation `env`):
 #   goPackagePath        — import path of the package to compile
 #   goPackageSrcDir      — absolute path to the source directory
+#   goLangVersion        — module's go directive (major.minor) for -lang; may be empty
 #   compileManifestJSON  — compile manifest content (JSON string)
 
 # Variables set by Nix stdenv / derivation env, not by this script.
@@ -29,6 +30,7 @@ compileGoPkgBuildPhase() {
       --manifest "$NIX_BUILD_TOP/compile-manifest.json" \
       --import-path "$goPackagePath" \
       --src-dir "$goPackageSrcDir" \
+      --go-version "$goLangVersion" \
       --output "$out/$goPackagePath.a" \
       --iface-output "$iface/$goPackagePath.x" \
       --importcfg-output "$iface/importcfg" \
@@ -38,6 +40,7 @@ compileGoPkgBuildPhase() {
       --manifest "$NIX_BUILD_TOP/compile-manifest.json" \
       --import-path "$goPackagePath" \
       --src-dir "$goPackageSrcDir" \
+      --go-version "$goLangVersion" \
       --output "$out/$goPackagePath.a" \
       --importcfg-output "$out/importcfg" \
       --trim-path "$NIX_BUILD_TOP"

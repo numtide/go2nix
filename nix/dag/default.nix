@@ -141,6 +141,7 @@ let
         --manifest "$compileManifestJSONPath" \
         --import-path "$goPackagePath" \
         --src-dir "$goPackageSrcDir" \
+        --go-version "$goLangVersion" \
         --output "$out/$goPackagePath.a" \
         --iface-output "$iface/$goPackagePath.x" \
         --trim-path "$TMPDIR" \
@@ -151,6 +152,7 @@ let
         --manifest "$compileManifestJSONPath" \
         --import-path "$goPackagePath" \
         --src-dir "$goPackageSrcDir" \
+        --go-version "$goLangVersion" \
         --output "$out/$goPackagePath.a" \
         --trim-path "$TMPDIR" \
         --importcfg-output "$out/importcfg"
@@ -232,11 +234,17 @@ let
       deps,
       extraEnv,
       files ? null,
+      # Module's go-directive (major.minor) for `-lang`. Required for local
+      # non-root packages whose filtered srcDir lacks go.mod (so the build-time
+      # findGoVersion fallback returns ""). Empty string falls through to
+      # findGoVersion in compile-package, which works for third-party modules.
+      goVersion ? "",
     }:
     goEnv
     // {
       goPackagePath = importPath;
       goPackageSrcDir = srcDir;
+      goLangVersion = goVersion;
       compileManifestJSON = mkCompileManifestJSON { inherit deps files; };
     }
     // extraEnv;
@@ -427,6 +435,12 @@ let
     }) goPackagesResult.localPackages
   );
 
+  # Main module's go directive (major.minor). Threaded explicitly to every
+  # local-package compile because non-root pkgSrc filters exclude go.mod,
+  # so the build-time go.mod walk would otherwise miss it and compile
+  # without -lang (silently flipping loopvar semantics for pre-1.22 modules).
+  localGoVersion = goPackagesResult.goVersion or "";
+
   localPackages = builtins.mapAttrs (
     importPath: pkg:
     let
@@ -507,6 +521,7 @@ let
           extraEnv
           ;
         files = pkg.files or null;
+        goVersion = localGoVersion;
       };
     }
   ) goPackagesResult.localPackages;

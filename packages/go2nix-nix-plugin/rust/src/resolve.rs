@@ -26,6 +26,8 @@ struct GoModule {
     version: String,
     #[serde(rename = "Main")]
     main: bool,
+    #[serde(rename = "GoVersion")]
+    go_version: String,
     #[serde(rename = "Replace")]
     replace: Option<Box<GoModule>>,
 }
@@ -171,6 +173,17 @@ fn sanitize_name(s: &str) -> String {
         }
     }
     out
+}
+
+/// Strip the patch component from a Go version string to match the
+/// `-lang` flag format expected by `go tool compile` (e.g. "1.21.3" → "1.21").
+/// Mirrors `internal/gover.Lang` in cmd/go.
+fn lang_version(v: &str) -> String {
+    let mut it = v.splitn(3, '.');
+    match (it.next(), it.next()) {
+        (Some(major), Some(minor)) => format!("{major}.{minor}"),
+        _ => v.to_owned(),
+    }
 }
 
 fn inherit_env(keys: &[&str]) -> Vec<(String, String)> {
@@ -443,6 +456,10 @@ pub(crate) struct PackageGraph {
     third_party_paths: BTreeSet<String>,
     replacements: BTreeMap<String, (String, String)>,
     module_path: String,
+    /// Main module's `go` directive (major.minor), threaded to local
+    /// per-package compiles as `-lang` so non-root subpackages — whose
+    /// filtered srcDir lacks `go.mod` — match `go build` semantics.
+    go_version: String,
     test_packages: Vec<PkgData>,
     test_only_paths: BTreeSet<String>,
 }
@@ -480,6 +497,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
     let mut local_paths = BTreeSet::new();
     let mut replacements: BTreeMap<String, (String, String)> = BTreeMap::new();
     let mut module_path = String::new();
+    let mut go_version = String::new();
 
     // Raw local package data collected during first pass; imports are
     // classified into local vs third-party after the loop.
@@ -521,6 +539,10 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
             // Capture main module path from first main-module package.
             if module.main && module_path.is_empty() {
                 module_path = module.path.clone();
+            }
+            // Capture the main module's go directive (major.minor) for -lang.
+            if module.main && go_version.is_empty() && !module.go_version.is_empty() {
+                go_version = lang_version(&module.go_version);
             }
 
             local_paths.insert(jpkg.import_path.clone());
@@ -612,6 +634,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         third_party_paths,
         replacements,
         module_path,
+        go_version,
         test_packages: Vec::new(),
         test_only_paths: BTreeSet::new(),
     })
@@ -763,6 +786,7 @@ struct JsonOutput {
     packages: BTreeMap<String, JsonPkg>,
     local_packages: BTreeMap<String, JsonLocalPkg>,
     module_path: String,
+    go_version: String,
     replacements: BTreeMap<String, JsonReplacement>,
     test_packages: BTreeMap<String, JsonPkg>,
     /// NAR hashes for modules, keyed by "path@version".
@@ -914,6 +938,7 @@ pub(crate) fn package_graph_to_json(
         packages,
         local_packages,
         module_path: graph.module_path.clone(),
+        go_version: graph.go_version.clone(),
         replacements,
         test_packages,
         module_hashes,
@@ -1251,8 +1276,7 @@ mod tests {
         let m = GoModule {
             path: "foo".into(),
             version: "v1".into(),
-            main: false,
-            replace: None,
+            ..Default::default()
         };
         let (p, v) = extract_replace(&m);
         assert!(p.is_empty());
@@ -1264,17 +1288,33 @@ mod tests {
         let m = GoModule {
             path: "foo".into(),
             version: "v1".into(),
-            main: false,
             replace: Some(Box::new(GoModule {
                 path: "bar".into(),
                 version: "v2".into(),
-                main: false,
-                replace: None,
+                ..Default::default()
             })),
+            ..Default::default()
         };
         let (p, v) = extract_replace(&m);
         assert_eq!(p, "bar");
         assert_eq!(v, "v2");
+    }
+
+    // --- lang_version / goVersion threading ---
+
+    #[test]
+    fn lang_version_strips_patch() {
+        assert_eq!(lang_version("1.21.3"), "1.21");
+        assert_eq!(lang_version("1.21"), "1.21");
+        assert_eq!(lang_version("1.22rc1"), "1.22rc1");
+        assert_eq!(lang_version(""), "");
+    }
+
+    #[test]
+    fn parse_captures_main_module_go_version() {
+        let input = r#"{"ImportPath":"example.com/m","Dir":"/src","Module":{"Path":"example.com/m","Main":true,"GoVersion":"1.21.3"},"Imports":[],"GoFiles":["main.go"]}"#;
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+        assert_eq!(graph.go_version, "1.21");
     }
 
     // --- sanitize_name ---
