@@ -147,7 +147,7 @@ pkgs.writeShellApplication {
     SRC_CHANGE_RUNS=''${BENCH_SRC_CHANGE_RUNS:-3}
 
     NIXPKGS_OPT="-I nixpkgs=${nixpkgsPath}"
-    IFD_OPT="--option allow-import-from-derivation true"
+    IFD_OPT=""
     GOMODCACHE="${goModules}"
     export GOMODCACHE IFD_OPT
 

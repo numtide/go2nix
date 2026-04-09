@@ -35,10 +35,10 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
 
     result=$(nix-instantiate --eval --strict --json --read-write-mode \
       --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+      --option allow-import-from-derivation false \
       --expr "
         let
           r = builtins.resolveGoPackages {
-            go = \"${pkgs.go}/bin/go\";
             src = (toString $TMPDIR/torture-project);
             doCheck = true;
           };
@@ -76,6 +76,22 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
       val=$(echo "$result" | jq -r ".$f")
       [ "$val" = "true" ] || { echo "FAIL: $f = $val"; exit 1; }
     done
+
+    echo "=== No-IFD: derivation-backed input is rejected ==="
+    err=$(nix-instantiate --eval --read-write-mode \
+      --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+      --option allow-import-from-derivation false \
+      --expr '
+        builtins.resolveGoPackages {
+          go = "''${derivation { name = "bogus-go"; system = builtins.currentSystem; builder = "/no"; }}/bin/go";
+          src = ./.;
+        }
+      ' 2>&1 || true)
+    echo "$err"
+    case "$err" in
+      *"derivation output"*) echo "OK: derivation-output context rejected with clear error" ;;
+      *) echo "FAIL: expected 'derivation output' rejection, got: $err"; exit 1 ;;
+    esac
 
     echo "PASS: $pkgCount packages, $localPkgCount local packages, modulePath=$modulePath" > $out
   ''

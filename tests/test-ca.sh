@@ -36,7 +36,6 @@ cat >"$ca_store/daemon.sh" <<SCRIPT
 exec nix daemon --stdio \
   --option experimental-features "nix-command ca-derivations" \
   --option sandbox true \
-  --option allow-import-from-derivation true \
   --store "local?root=$ca_store"
 SCRIPT
 chmod +x "$ca_store/daemon.sh"
@@ -55,7 +54,6 @@ result=$(
     -I "nixpkgs=$nixpkgs_path" \
     --option extra-experimental-features 'ca-derivations' \
     --option sandbox true \
-    --option allow-import-from-derivation true \
     --option plugin-files "$plugin/lib/nix/plugins/libgo2nix_plugin.so" \
     --option substituters 'https://cache.nixos.org https://cache.numtide.com https://nix-community.cachix.org' \
     --option trusted-public-keys 'cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= cache.numtide.com-1:bf/T+iRCVpNgNStXCXTiUMsdMfEfhaQzExC9NG28oIg= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=' \
@@ -72,7 +70,6 @@ top_drv=$(
     nix-instantiate "$repo_root/tests/fixtures/xtest-local-dep/dag-ca.nix" \
     -I "nixpkgs=$nixpkgs_path" \
     --option extra-experimental-features 'ca-derivations' \
-    --option allow-import-from-derivation true \
     --option plugin-files "$plugin/lib/nix/plugins/libgo2nix_plugin.so" \
     --add-root /dev/null --indirect 2>/dev/null
 )

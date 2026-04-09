@@ -10,6 +10,7 @@
 #include <nix/expr/json-to-value.hh>
 #include <nix/expr/value-to-json.hh>
 #include <nix/store/local-fs-store.hh>
+#include <nix/util/util.hh>
 #include <nlohmann/json.hpp>
 
 extern "C" {
@@ -52,15 +53,31 @@ static void prim_resolveGoPackages(EvalState &state, const PosIdx pos,
     NixStringContext context;
     auto inputJson = printValueAsJSON(state, true, *args[0], pos, context, false);
 
-    // Realise string context — ensures derivation-backed store paths (e.g.,
-    // go = "${go}/bin/go") actually exist before we invoke them.
-    try {
-        auto _ = state.realiseContext(context);
-    } catch (InvalidPathError &e) {
-        state.error<EvalError>(
-            "resolveGoPackages: cannot realise context for '%s': %s",
-            e.path.to_string(), e.what())
-            .atPos(pos).debugThrow();
+    // resolveGoPackages must be evaluable with allow-import-from-derivation
+    // = false. Reject any derivation-output context instead of building it;
+    // opaque (already-copied) source paths are validated but never built.
+    for (const auto &c : context) {
+        std::visit(overloaded {
+            [&](const NixStringContextElem::Opaque &o) {
+                state.store->ensurePath(o.path);
+            },
+            [&](const NixStringContextElem::Built &) {
+                state.error<EvalError>(
+                    "resolveGoPackages: input refers to derivation output '%s'; "
+                    "pass a source path. The Go toolchain path is baked into the "
+                    "plugin at build time, so 'go' should be omitted (or set to a "
+                    "context-free string).",
+                    c.display(*state.store))
+                    .atPos(pos).debugThrow();
+            },
+            [&](const NixStringContextElem::DrvDeep &) {
+                state.error<EvalError>(
+                    "resolveGoPackages: input refers to derivation closure '%s'; "
+                    "pass a source path.",
+                    c.display(*state.store))
+                    .atPos(pos).debugThrow();
+            },
+        }, c.raw);
     }
 
     for (const auto &key : {"src", "go"}) {
@@ -97,7 +114,8 @@ static RegisterPrimOp rp(PrimOp {
   Discover the Go package graph at eval time by running `go list`.
 
   Accepts an attrset with:
-  - `go`: Path to the Go binary
+  - `go` (optional): Path to the Go binary (context-free string only;
+    defaults to the Go toolchain baked into the plugin at build time)
   - `src`: Path to the Go source directory
   - `tags` (optional): List of build tags
   - `subPackages` (optional): List of package patterns (default: ["./..."])

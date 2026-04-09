@@ -231,7 +231,6 @@ func (t *nixTool) build(srcPath string) (buildResult, error) {
 	baseArgs := []string{
 		"-I", "nixpkgs=" + t.nixpkgsPath,
 		"--option", "plugin-files", t.pluginPath,
-		"--option", "allow-import-from-derivation", "true",
 	}
 	baseArgs = append(baseArgs, t.extraOpts...)
 
