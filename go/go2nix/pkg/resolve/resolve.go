@@ -692,7 +692,11 @@ func setupPkgSource(
 	if err != nil {
 		return fmt.Errorf("escaping module path %s: %w", pkg.FetchPath, err)
 	}
-	relDir := escapedPath + "@" + pkg.Version
+	escapedVersion, err := module.EscapeVersion(pkg.Version)
+	if err != nil {
+		return fmt.Errorf("escaping module version %s: %w", pkg.Version, err)
+	}
+	relDir := escapedPath + "@" + escapedVersion
 	if pkg.Subdir != "" {
 		relDir += "/" + pkg.Subdir
 	}

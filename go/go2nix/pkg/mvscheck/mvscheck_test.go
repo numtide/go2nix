@@ -73,6 +73,41 @@ replace github.com/local/mod => ../localdir
 		}
 	})
 
+	t.Run("version-qualified replace not matching is ignored", func(t *testing.T) {
+		writeFile("go.mod", `module example.com/test
+go 1.23
+require (
+	github.com/foo/bar v1.0.0
+	github.com/local/mod v0.5.0
+)
+replace github.com/local/mod v0.9.9 => ../localdir
+`)
+		// Replace targets v0.9.9 but require is v0.5.0 — must NOT apply,
+		// so local/mod@v0.5.0 is checked against the lockfile and missing.
+		err := CheckLockfile(dir, lockfilePath)
+		if err == nil {
+			t.Fatal("expected error: version-qualified replace should not match v0.5.0")
+		}
+		if !strings.Contains(err.Error(), "github.com/local/mod@v0.5.0") {
+			t.Errorf("error should mention github.com/local/mod@v0.5.0:\n%s", err)
+		}
+	})
+
+	t.Run("wildcard replace wins over no match", func(t *testing.T) {
+		writeFile("go.mod", `module example.com/test
+go 1.23
+require github.com/remote/replace v1.0.0
+replace (
+	github.com/remote/replace v0.9.9 => github.com/remote/replace v0.8.8
+	github.com/remote/replace => github.com/remote/replace v3.0.0
+)
+`)
+		// v0.9.9 directive does not match; wildcard does → v3.0.0, in lockfile.
+		if err := CheckLockfile(dir, lockfilePath); err != nil {
+			t.Fatalf("wildcard replace should apply: %v", err)
+		}
+	})
+
 	t.Run("versioned replace uses replacement version", func(t *testing.T) {
 		writeFile("go.mod", `module example.com/test
 go 1.23

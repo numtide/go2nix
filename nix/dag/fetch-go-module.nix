@@ -33,7 +33,8 @@ in
 }:
 let
   escapedPath = escapeModPath fetchPath;
-  dirSuffix = "${escapedPath}@${version}";
+  # Both path and version are case-escaped on disk (module.EscapeVersion).
+  dirSuffix = "${escapedPath}@${escapeModPath version}";
 in
 stdenvNoCC.mkDerivation {
   name = "gomod-${sanitizeName fetchPath}-${version}";

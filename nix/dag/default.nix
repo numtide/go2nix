@@ -345,7 +345,7 @@ let
     mod
     // {
       inherit fetchPath;
-      dirSuffix = "${helpers.escapeModPath fetchPath}@${version}";
+      dirSuffix = "${helpers.escapeModPath fetchPath}@${helpers.escapeModPath version}";
     }
   ) allModules;
 

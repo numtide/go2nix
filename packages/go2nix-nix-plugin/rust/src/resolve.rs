@@ -922,6 +922,26 @@ pub(crate) fn package_graph_to_json(
         })
         .collect();
 
+    // Re-key module_hashes by modKey (origPath@effectiveVersion). go.sum lists
+    // modules under their *fetch* path, so for a fork replace `foo => fork v2`
+    // it contains `fork@v2` while the per-package modKey is `foo@v2`. Insert an
+    // alias so nix/dag's `moduleInfo.${pkg.modKey}` lookup hits. The original
+    // entry is left in place — Nix evaluates lazily, and same-path replaces
+    // (modKey == fetch key) make this a no-op.
+    let mut module_hashes = module_hashes;
+    for (mod_key, (repl_path, repl_ver)) in &graph.replacements {
+        if repl_ver.is_empty() {
+            continue; // local replace — no fetch, no go.sum entry
+        }
+        let fetch_key = format!("{repl_path}@{repl_ver}");
+        if fetch_key == *mod_key {
+            continue;
+        }
+        if let Some(h) = module_hashes.get(&fetch_key).cloned() {
+            module_hashes.insert(mod_key.clone(), h);
+        }
+    }
+
     // Build test_packages map.
     let test_packages: BTreeMap<String, JsonPkg> = graph
         .test_packages
@@ -1087,6 +1107,42 @@ mod tests {
         let (path, version) = &graph.replacements["github.com/old/pkg@v2.0.0"];
         assert_eq!(path, "github.com/new/pkg");
         assert_eq!(version, "v2.0.0");
+    }
+
+    #[test]
+    fn module_hashes_rekeyed_by_mod_key_for_fork_replace() {
+        // Fork replace: old/pkg => new/pkg v2.0.0. go.sum (and thus the
+        // incoming module_hashes map) keys this as new/pkg@v2.0.0, but the
+        // per-package modKey is old/pkg@v2.0.0. The JSON output must alias
+        // the hash under the modKey so nix/dag's moduleInfo lookup hits.
+        let input = replaced_json(
+            "github.com/old/pkg",
+            "github.com/old/pkg",
+            "v1.0.0",
+            "github.com/new/pkg",
+            "v2.0.0",
+        );
+        let graph = parse_go_packages(input.as_bytes()).unwrap();
+
+        let mut hashes = BTreeMap::new();
+        hashes.insert("github.com/new/pkg@v2.0.0".to_owned(), "sha256-fork".to_owned());
+
+        let src = tempfile::tempdir().unwrap();
+        let json = package_graph_to_json(&graph, src.path().to_str().unwrap(), hashes).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        let mod_hashes = &v["moduleHashes"];
+        assert_eq!(
+            mod_hashes["github.com/old/pkg@v2.0.0"], "sha256-fork",
+            "hash must be aliased under origPath@effectiveVersion"
+        );
+        // Original go.sum key is still present (harmless under lazy eval).
+        assert_eq!(mod_hashes["github.com/new/pkg@v2.0.0"], "sha256-fork");
+        // And the package's modKey matches the alias.
+        assert_eq!(
+            v["packages"]["github.com/old/pkg"]["modKey"],
+            "github.com/old/pkg@v2.0.0"
+        );
     }
 
     #[test]

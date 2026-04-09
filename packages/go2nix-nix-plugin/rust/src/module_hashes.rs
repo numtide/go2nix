@@ -129,17 +129,19 @@ fn parse_go_sum(path: &Path) -> Result<Vec<GoSumEntry>> {
 
 /// Construct the path to a module's extracted source tree in GOMODCACHE.
 ///
-/// GOMODCACHE layout: `<escaped-path>@<version>/`
+/// GOMODCACHE layout: `<escaped-path>@<escaped-version>/`
 /// e.g. `$GOMODCACHE/github.com/foo/bar@v1.2.3/`
 ///
-/// Go escapes uppercase letters in module paths: `A` → `!a`.
+/// Go escapes uppercase letters in both segments: `A` → `!a`
+/// (module.EscapePath / module.EscapeVersion).
 fn module_source_dir(gomodcache: &Path, mod_path: &str, version: &str) -> PathBuf {
-    let escaped = escape_mod_path(mod_path);
-    gomodcache.join(format!("{escaped}@{version}"))
+    let escaped_path = escape_mod_path(mod_path);
+    let escaped_version = escape_mod_path(version);
+    gomodcache.join(format!("{escaped_path}@{escaped_version}"))
 }
 
-/// Go module path case-escaping: uppercase → `!` + lowercase.
-/// Matches golang.org/x/mod/module.EscapePath().
+/// Go module path/version case-escaping: uppercase → `!` + lowercase.
+/// Matches golang.org/x/mod/module.EscapePath() / EscapeVersion().
 fn escape_mod_path(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -224,6 +226,20 @@ mod tests {
     fn escape_mod_path_basic() {
         assert_eq!(escape_mod_path("github.com/BurntSushi/toml"), "github.com/!burnt!sushi/toml");
         assert_eq!(escape_mod_path("github.com/foo/bar"), "github.com/foo/bar");
+    }
+
+    #[test]
+    fn module_source_dir_escapes_version() {
+        let base = Path::new("/cache");
+        // Uppercase pre-release identifiers are case-escaped on disk.
+        assert_eq!(
+            module_source_dir(base, "github.com/Foo/bar", "v1.0.0-RC1"),
+            Path::new("/cache/github.com/!foo/bar@v1.0.0-!r!c1")
+        );
+        assert_eq!(
+            module_source_dir(base, "github.com/foo/bar", "v1.2.3"),
+            Path::new("/cache/github.com/foo/bar@v1.2.3")
+        );
     }
 }
 

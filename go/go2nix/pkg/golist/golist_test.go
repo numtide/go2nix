@@ -1,6 +1,10 @@
 package golist
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestModuleIsLocal(t *testing.T) {
 	tests := []struct {
@@ -98,6 +102,52 @@ func TestInjectCgoImports(t *testing.T) {
 	// SwigCXX: already has all 3, should not duplicate
 	if len(pkgs[3].Imports) != 3 {
 		t.Errorf("uses/swigcxx: expected 3 imports (no duplicates), got %v", pkgs[3].Imports)
+	}
+}
+
+func TestCollectGoModModulesVersionQualifiedReplace(t *testing.T) {
+	dir := t.TempDir()
+	goMod := `module example.com/test
+go 1.23
+require (
+	github.com/foo/bar v1.0.0
+	github.com/baz/qux v0.2.0
+	github.com/local/mod v0.5.0
+)
+replace (
+	// Matches: applies, fork path + version.
+	github.com/foo/bar v1.0.0 => github.com/fork/bar v1.5.0
+	// Does NOT match required v0.2.0: must NOT apply.
+	github.com/baz/qux v0.9.9 => github.com/baz/qux v0.3.0
+	// Does NOT match required v0.5.0: must NOT skip as local.
+	github.com/local/mod v0.9.9 => ../localdir
+)
+`
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mods, err := CollectGoModModules(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]ModInfo{}
+	for _, m := range mods {
+		got[m.Key] = m
+	}
+
+	if m, ok := got["github.com/foo/bar@v1.5.0"]; !ok || m.FetchPath != "github.com/fork/bar" {
+		t.Errorf("foo/bar: matching version-qualified replace not applied; got %+v", got)
+	}
+	if m, ok := got["github.com/baz/qux@v0.2.0"]; !ok || m.FetchPath != "github.com/baz/qux" {
+		t.Errorf("baz/qux: non-matching version-qualified replace was applied; got %+v", got)
+	}
+	if _, ok := got["github.com/local/mod@v0.5.0"]; !ok {
+		t.Errorf("local/mod: non-matching local replace caused skip; got %+v", got)
+	}
+	if len(mods) != 3 {
+		t.Errorf("expected 3 modules, got %d: %+v", len(mods), mods)
 	}
 }
 
