@@ -3,7 +3,11 @@ package testrunner
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/numtide/go2nix/pkg/gofiles"
+	"github.com/numtide/go2nix/pkg/localpkgs"
 )
 
 func TestOverrideImportCfgEntry(t *testing.T) {
@@ -61,6 +65,52 @@ func TestOverrideImportCfgEntry(t *testing.T) {
 				t.Errorf("got:\n%s\nwant:\n%s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInternalTestPkgFiles(t *testing.T) {
+	// Regression for finding #3: the internal-test compile must carry the
+	// package's CgoFiles/SFiles/SysoFiles/etc. through so CompileGoPackage
+	// routes to the cgo/asm paths instead of the pure-Go -complete path.
+	pkg := &localpkgs.LocalPkg{
+		TestGoFiles: []string{"a_test.go"},
+		PkgFiles: gofiles.PkgFiles{
+			GoFiles:   []string{"a.go", "b.go"},
+			CgoFiles:  []string{"cgo.go"},
+			SFiles:    []string{"asm_amd64.s"},
+			CFiles:    []string{"impl.c"},
+			CXXFiles:  []string{"impl.cc"},
+			HFiles:    []string{"impl.h"},
+			FFiles:    []string{"impl.f90"},
+			SysoFiles: []string{"blob.syso"},
+		},
+	}
+	got := internalTestPkgFiles(pkg, nil)
+
+	wantGo := []string{"a.go", "b.go", "a_test.go"}
+	if !reflect.DeepEqual(got.GoFiles, wantGo) {
+		t.Errorf("GoFiles = %v, want %v", got.GoFiles, wantGo)
+	}
+	if !reflect.DeepEqual(got.CgoFiles, []string{"cgo.go"}) {
+		t.Errorf("CgoFiles = %v, want [cgo.go]", got.CgoFiles)
+	}
+	if !reflect.DeepEqual(got.SFiles, []string{"asm_amd64.s"}) {
+		t.Errorf("SFiles = %v, want [asm_amd64.s]", got.SFiles)
+	}
+	if !reflect.DeepEqual(got.CFiles, []string{"impl.c"}) {
+		t.Errorf("CFiles = %v, want [impl.c]", got.CFiles)
+	}
+	if !reflect.DeepEqual(got.CXXFiles, []string{"impl.cc"}) {
+		t.Errorf("CXXFiles = %v, want [impl.cc]", got.CXXFiles)
+	}
+	if !reflect.DeepEqual(got.HFiles, []string{"impl.h"}) {
+		t.Errorf("HFiles = %v, want [impl.h]", got.HFiles)
+	}
+	if !reflect.DeepEqual(got.FFiles, []string{"impl.f90"}) {
+		t.Errorf("FFiles = %v, want [impl.f90]", got.FFiles)
+	}
+	if !reflect.DeepEqual(got.SysoFiles, []string{"blob.syso"}) {
+		t.Errorf("SysoFiles = %v, want [blob.syso]", got.SysoFiles)
 	}
 }
 
