@@ -35,14 +35,10 @@ entries applied to module fetch paths.
 
 ### 2. Package graph discovery (builtins.resolveGoPackages)
 
-The go2nix-nix-plugin runs `go list -json -deps` against the source tree at eval
-time and returns a package graph:
-
-- **packages**: Third-party package metadata (modKey, subdir, imports, drvName, isCgo)
-- **localPackages**: Local package metadata (dir, localImports, thirdPartyImports, isCgo)
-- **modulePath**: Main module import path
-- **replacements**: Module replacement mappings from `go.mod` `replace` directives
-- **testPackages**: Test-only third-party package metadata when `doCheck = true`
+The go2nix-nix-plugin runs `go list -json -deps` against the source tree at
+eval time and returns the package graph (third-party, local, test-only, and
+replacement metadata) — see [Nix Plugin](../nix-plugin.md#what-it-provides)
+for the full return shape.
 
 Replace directives are applied to module `fetchPath` and `dirSuffix` fields
 so that FODs download from the correct path.
@@ -62,23 +58,10 @@ The `netrcFile` option supports private module authentication.
 For each third-party package in `goPackagesResult.packages`, a derivation is
 created:
 
-```nix
-stdenv.mkDerivation {
-  name = pkg.drvName;                         # "gopkg-github.com-foo-bar"
-  nativeBuildInputs = [ hooks.goModuleHook ]  # compile-go-pkg.sh
-    ++ cgoBuildInputs;                        # stdenv.cc for CGO packages
-  buildInputs = deps;                         # dependency package derivations
-  env = {
-    goPackagePath = importPath;
-    goPackageSrcDir = srcDir;
-    compileManifestJSON = mkCompileManifestJSON deps;
-  };
-}
-```
-
-The compile manifest is a JSON string declaring importcfg parts, build tags,
-gcflags, and PGO profile. The shell hook writes it to a file and passes it
-to `go2nix compile-package --manifest`.
+Each becomes a stdenv derivation whose builder is the `compile-go-pkg.sh`
+setup hook (from `nix/dag/hooks/`). The hook writes a JSON compile manifest
+(importcfg parts, build tags, gcflags, PGO profile) and passes it to
+`go2nix compile-package --manifest`.
 
 CGO packages (where `pkg.isCgo` is true) automatically get `stdenv.cc` added
 to `nativeBuildInputs`.
@@ -118,25 +101,9 @@ and uses `goAppHook` (link-go-binary.sh) to invoke the Go CLI:
 
 ## Package overrides
 
-Per-package customization (e.g., for cgo libraries):
-
-```nix
-goEnv.buildGoApplication {
-  src = ./.;
-  goLock = ./go2nix.toml;
-  pname = "my-app";
-  version = "0.1.0";
-  tags = [ "netgo" ];
-  packageOverrides = {
-    "github.com/mattn/go-sqlite3" = {
-      nativeBuildInputs = [ pkg-config sqlite ];
-    };
-  };
-}
-```
-
-Overrides apply to both the per-package derivation and are collected for the
-final application derivation.
+Per-package customization (`nativeBuildInputs`, `env`) for cgo libraries is
+supported via `packageOverrides` — see
+[Package Overrides](../package-overrides.md) for lookup rules and recipes.
 
 ## Directory layout
 

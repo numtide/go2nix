@@ -2,13 +2,13 @@
 
 A Go application is made up of *modules* (downloaded units, each with a
 `go.mod`) and *packages* (individual directories of `.go` files within a
-module). A single module can contain dozens of packages. The two builder
-modes differ in what unit of work becomes a Nix derivation, which determines
-rebuild granularity when a dependency changes.
+module). A single module can contain dozens of packages. Both builder modes
+turn each *package* into its own Nix derivation; they differ in **when** the
+package graph is discovered and what that requires of your Nix setup.
 
-| Mode | How it works | Lockfile | Caching | Nix features |
-|------|-------------|----------|---------|--------------|
-| **[Default](default-mode.md)** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | go2nix-nix-plugin |
+| Mode | How it works | Lockfile | Caching | Requires |
+|------|-------------|----------|---------|----------|
+| **[Default](default-mode.md)** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | [go2nix-nix-plugin](../nix-plugin.md) |
 | **[Experimental](experimental-mode.md)** | Recursive-nix at build time | `[mod]` + optional `[replace]` | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
 - **Default** (`buildGoApplication`): every *package* (not just every module)

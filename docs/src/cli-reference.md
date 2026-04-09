@@ -3,7 +3,9 @@
 All commands are subcommands of `go2nix`. Set `GO2NIX_DEBUG=1` for verbose
 output.
 
-## generate
+## Commands you run
+
+### generate
 
 Generate a lockfile from one or more Go module directories.
 
@@ -25,12 +27,14 @@ The generated lockfile is shared by both builder modes. Use
 Examples:
 
 ```bash
-go2nix generate .          # Write go2nix.toml in the current module
-go2nix .                   # Same as generate: default command
-go2nix generate -o lock.toml ./a ./b
+go2nix generate .                       # write go2nix.toml in the current module
+go2nix .                                # same — generate is the default command
+go2nix generate -o lock.toml ./a ./b    # merged lockfile for two modules
 ```
 
-## check
+See [Lockfile Format](lockfile-format.md) for the output schema.
+
+### check
 
 Validate a lockfile against `go.mod`.
 
@@ -45,7 +49,12 @@ go2nix check [flags] [dir]
 Verifies that all `go.mod` requirements are present in the lockfile with
 correct versions.
 
-## compile-package
+## Internal commands (invoked by the Nix builders)
+
+You won't run these directly; they are documented for debugging build
+failures.
+
+### compile-package
 
 Compile a single Go package to an archive (`.a` file). Used internally by
 the default mode's setup hooks.
@@ -60,12 +69,13 @@ go2nix compile-package --manifest FILE --import-path PATH --src-dir DIR --output
 | `--import-path` | Yes | Go import path for the package |
 | `--src-dir` | Yes | Directory containing source files |
 | `--output` | Yes | Output `.a` archive path |
+| `--iface-output` | No | Write export-data-only interface (`.x`) to this path; `--output` then receives the link object via `-linkobj` |
 | `--importcfg-output` | No | Write importcfg entry for consumers to this path |
 | `--trim-path` | No | Path prefix to trim |
 | `--p` | No | Override `-p` flag (default: import-path) |
 | `--go-version` | No | Go language version for `-lang` |
 
-## list-files
+### list-files
 
 List Go source files for a package directory, respecting build tags and
 constraints.
@@ -79,7 +89,7 @@ Outputs JSON with categorized file lists (Go files, C files, assembly, etc.).
 `-go-version` sets the target Go toolchain version (e.g. `1.25`) used to
 evaluate `//go:build go1.N` constraints; defaults to `go env GOVERSION`.
 
-## list-packages
+### list-packages
 
 List all local packages in a Go module with their import dependencies.
 
@@ -89,11 +99,12 @@ go2nix list-packages [-tags=...] [-go-version=...] <module-root>
 
 Outputs JSON with each package's import path and dependencies.
 
-## resolve
+### resolve
 
-Build-time command for dynamic mode. Discovers the package graph, creates
-CA derivations via `nix derivation add`, and produces a `.drv` file as
-output.
+Build-time command for experimental mode (the `nix/dynamic/` builder).
+Discovers the package graph, creates CA derivations via
+`nix derivation add`, and produces a `.drv` file as output. See
+[Experimental Mode](modes/experimental-mode.md).
 
 ```
 go2nix resolve [flags]
@@ -124,10 +135,10 @@ go2nix resolve [flags]
 | `--netrc-file` | No | Path to .netrc for private modules |
 | `--nix-jobs` | No | Max concurrent `nix derivation add` calls |
 
-This command is not intended for direct use — it is invoked by the dynamic
-mode Nix builder inside a recursive-nix build.
+This command is not intended for direct use — it is invoked by the
+experimental-mode Nix builder inside a recursive-nix build.
 
-## build-modinfo
+### build-modinfo
 
 Generate a `modinfo` linker directive for embedding `debug/buildinfo`
 metadata into the final binary. This is a standalone utility; the default
@@ -147,7 +158,7 @@ Outputs a `modinfo` directive for the linker's importcfg (embedding
 default GODEBUG value parsed from the module's `go.mod` (used for
 `-X=runtime.godebugDefault=...`).
 
-## generate-test-main
+### generate-test-main
 
 Generate a `_testmain.go` file that registers test, benchmark, fuzz, and
 example functions. Used internally by the test runner.
@@ -163,7 +174,7 @@ go2nix generate-test-main [flags]
 | `--xtest-files` | No | Comma-separated absolute paths to external `_test.go` files |
 | `--output` | No | Output file path (default: stdout) |
 
-## test-packages
+### test-packages
 
 Compile and run tests for all testable local packages in a module. Used
 internally by the default mode's check phase.
@@ -181,7 +192,7 @@ external test archives, generates test mains, links test binaries, and
 runs them. See [test-support.md](test-support.md) for details on the
 test pipeline.
 
-## link-binary
+### link-binary
 
 Link Go application binaries. Reads a link manifest that declares all
 inputs (importcfg parts, local archives, ldflags, etc.), validates the
