@@ -90,7 +90,15 @@ role of the `[mod]` section. Module FODs are then keyed on those hashes.
 
 This trades a checked-in pin file for zero lockfile maintenance. The build
 is still reproducible as long as `go.sum` is unchanged, but you lose the
-explicit, reviewable hash list and the build-time `mvscheck` validation.
+explicit, reviewable hash list.
+
+> **Note:** the build-time staleness check (`mvscheck`, see below) is
+> **skipped** when `goLock = null` — there is no lockfile for `go.mod` to
+> drift from. Module versions are read live from `go.sum` via the plugin on
+> every evaluation, so a `go get` is reflected on the next `nix build` with
+> nothing to regenerate. The standalone `go2nix check` subcommand still
+> requires a lockfile path and is not applicable in this mode.
+
 Prefer a committed lockfile for anything you ship; lockfile-free is useful
 for ad-hoc builds and during early development.
 
@@ -100,7 +108,7 @@ for ad-hoc builds and during early development.
 |------|------|-----------|-----|
 | Generation | MVS ([Minimal Version Selection](https://go.dev/ref/mod#minimal-version-selection)) consistency | All modes | `go list -json -deps` resolves actual versions |
 | Nix eval | Package graph | Default only | `builtins.resolveGoPackages` runs `go list` at eval time |
-| Build time | Lockfile consistency | Default only | `link-binary` re-reads `go.mod` and checks every required module is present in the lockfile at the right version |
+| Build time | Lockfile consistency | Default, with lockfile | `link-binary` re-reads `go.mod` and checks every required module is present in the lockfile at the right version; skipped when `goLock = null` |
 
 In default mode, missing or mismatched modules are caught at build time when
 `link-binary` validates the lockfile. Stale package graph information is
