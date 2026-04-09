@@ -155,4 +155,4 @@ nix fmt                                     # format all files
 
 ## License
 
-TBD
+[MIT](./LICENSE)
