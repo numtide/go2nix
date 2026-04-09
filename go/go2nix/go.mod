@@ -9,4 +9,4 @@ require (
 	golang.org/x/sync v0.20.0
 )
 
-replace github.com/nix-community/go-nix => github.com/numtide/go-nix v0.0.0-20260402102727-059dd95db1bb
+replace github.com/nix-community/go-nix => github.com/numtide/go-nix v0.0.0-20260409092930-880e947598ce
