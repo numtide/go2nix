@@ -36,7 +36,8 @@ type ResolvedPkg struct {
 	DefaultGODEBUG string // default GODEBUG for main packages
 
 	// Set during derivation creation
-	DrvPath *storepath.StorePath // .drv path after nix derivation add
+	SrcStorePath *storepath.StorePath // filtered source store path (local packages only)
+	DrvPath      *storepath.StorePath // .drv path after nix derivation add
 }
 
 // buildPackageGraph converts go list packages into ResolvedPkgs.
