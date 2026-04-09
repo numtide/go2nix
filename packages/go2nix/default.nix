@@ -14,7 +14,7 @@ buildGoModule {
 
   subPackages = [ "cmd/go2nix" ];
 
-  vendorHash = "sha256-sfpnfQTSD/AW5kbVTCkovNp9XXGeMjVE4P9iBzXXgRU=";
+  vendorHash = "sha256-rFvMITSISMcCABjeYYGagTYgUcDFQm89btao4p22LmQ=";
 
   meta = {
     description = "Go Build — Nix-native Go package compiler";
