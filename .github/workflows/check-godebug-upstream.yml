@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Check godebug table against latest Go
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC — Go point releases typically land mid-week,
+    # so this gives a few days of lead time before the nixpkgs bump.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up latest stable Go
+        id: go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false
+
+      - name: Show Go version
+        run: go version
+
+      - name: Compare godebugTable against upstream
+        id: check
+        run: |
+          set -o pipefail
+          go run scripts/check-godebug-table.go 2>&1 | tee diff.txt
+
+      - name: Open issue on drift
+        if: failure() && steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GO_VERSION: ${{ steps.go.outputs.go-version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="godebugTable is stale (Go ${GO_VERSION})"
+
+          existing=$(gh issue list --state open --search "godebugTable is stale in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "Issue #$existing already tracks this drift; not opening a duplicate."
+            exit 0
+          fi
+
+          {
+            echo "The committed \`godebugTable\` in \`go/go2nix/pkg/buildinfo/godebug.go\` no longer matches \`internal/godebugs/table.go\` from the latest stable Go release (**${GO_VERSION}**)."
+            echo
+            echo '```'
+            cat diff.txt
+            echo '```'
+            echo
+            echo "Run \`go run scripts/check-godebug-table.go --update\` with Go ${GO_VERSION} to regenerate the table."
+            echo
+            echo "_Detected by [check-godebug-upstream](${RUN_URL})._"
+          } > body.md
+
+          gh issue create --title "$title" --body-file body.md
