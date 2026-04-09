@@ -221,6 +221,56 @@ func TestListLocalPackages_SkipsVendorAndTestdata(t *testing.T) {
 	}
 }
 
+func TestListLocalPackages_SkipsDotDirs(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\n")
+	writeFile(t, filepath.Join(root, ".vscode", "x.go"), "package vscode\n")
+	writeFile(t, filepath.Join(root, ".idea", "y.go"), "package idea\n")
+	writeFile(t, filepath.Join(root, ".direnv", "z.go"), "package direnv\n")
+
+	pkgs, err := ListLocalPackages(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paths := importPaths(pkgs)
+	if len(paths) != 1 || paths[0] != "example.com/test" {
+		t.Fatalf("expected only root package, got %v", paths)
+	}
+}
+
+func TestListLocalPackages_SkipsNestedModules(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/parent\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\n")
+	writeFile(t, filepath.Join(root, "lib", "lib.go"), "package lib\n")
+	// Nested module: has its own go.mod, must not be reported as part of parent.
+	writeFile(t, filepath.Join(root, "sub", "go.mod"), "module example.com/child\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(root, "sub", "child.go"), "package child\n")
+	writeFile(t, filepath.Join(root, "sub", "deeper", "d.go"), "package deeper\n")
+
+	pkgs, err := ListLocalPackages(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paths := importPaths(pkgs)
+	for _, p := range paths {
+		if strings.HasPrefix(p, "example.com/parent/sub") {
+			t.Errorf("nested module package %q should have been skipped; got %v", p, paths)
+		}
+	}
+	if indexOf(paths, "example.com/parent") == -1 {
+		t.Errorf("expected root package in %v", paths)
+	}
+	if indexOf(paths, "example.com/parent/lib") == -1 {
+		t.Errorf("expected sibling lib package in %v", paths)
+	}
+}
+
 func TestListLocalPackages_NoGoMod(t *testing.T) {
 	root := t.TempDir()
 	_, err := ListLocalPackages(root, "", "")
