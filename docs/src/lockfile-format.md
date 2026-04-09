@@ -58,6 +58,48 @@ When `go2nix generate` is given multiple directories, all modules are merged
 into a single lockfile. Modules from different `go.mod` files coexist without
 conflict since each is uniquely keyed by `"path@version"`.
 
+## When to regenerate
+
+Regenerate the lockfile when — and only when — the **module set** changes:
+
+- you add, remove, or bump a `require` line in `go.mod`
+- a `replace` directive changes which remote module a path resolves to
+- `go.sum` gains or loses entries
+
+You do **not** need to regenerate after changing which packages import
+which other packages, adding a new local package, or editing `.go` files.
+The lockfile pins module hashes; the package graph is rediscovered on every
+evaluation (see [Package graph resolution](#package-graph-resolution)).
+
+```bash
+go2nix generate .   # rewrite go2nix.toml
+go2nix check .      # verify go2nix.toml still matches go.mod, no rewrite
+```
+
+## Lockfile-free builds
+
+Default mode can build without a lockfile by setting `goLock = null`:
+
+```nix
+goEnv.buildGoApplication {
+  src = ./.;
+  goLock = null;
+  pname = "my-app";
+  version = "0.1.0";
+}
+```
+
+When no lockfile is present, the [Nix plugin](nix-plugin.md) is invoked
+with `resolveHashes = true` and computes a NAR hash for each module from
+`go.sum` + `GOMODCACHE`, returning a `moduleHashes` attrset that fills the
+role of the `[mod]` section. Module FODs are then keyed on those hashes.
+
+This trades a checked-in pin file for zero lockfile maintenance. The build
+is still reproducible as long as `go.sum` is unchanged, but you lose the
+explicit, reviewable hash list and the build-time `mvscheck` validation.
+Prefer a committed lockfile for anything you ship; lockfile-free is useful
+for ad-hoc builds and during early development.
+
 ## Staleness detection
 
 | When | What | Applies to | How |

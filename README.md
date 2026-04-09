@@ -33,8 +33,10 @@ If you just want the simplest way to package a Go program in nixpkgs,
 `buildGoModule` is still the default choice. go2nix is aimed at cases where
 per-package reuse and explicit graph handling are worth the extra machinery.
 
-See [Architecture](docs/src/go2nix-architecture.md) for how the builder works
-and [Builder API](docs/src/builder-api.md) for the full attribute reference.
+See [Architecture](docs/src/go2nix-architecture.md) for how the builder works,
+[Incremental Builds](docs/src/incremental-builds.md) for what gets cached,
+[Builder API](docs/src/builder-api.md) for the full attribute reference, and
+[Troubleshooting](docs/src/troubleshooting.md) when something doesn't work.
 
 ## Quick start
 
@@ -87,7 +89,7 @@ nix build
 
 | Mode | How it works | Requires |
 |------|-------------|----------|
-| **Default** | `go tool compile/link` per-package | [go2nix-nix-plugin](packages/go2nix-nix-plugin/) — Nix plugin providing `builtins.resolveGoPackages` |
+| **Default** | `go tool compile/link` per-package | [go2nix-nix-plugin](docs/src/nix-plugin.md) — Nix plugin providing `builtins.resolveGoPackages` |
 | **Experimental** | Recursive-nix at build time | Nix >= 2.34 with `recursive-nix`, `ca-derivations`, `dynamic-derivations` |
 
 ```nix
@@ -148,10 +150,14 @@ direnv allow   # or: nix develop
 ```
 
 ```bash
-cd go/go2nix && go test ./...               # Go unit tests
-nix build .#test-dag-fixture-testify-basic  # Nix integration test (one fixture)
-nix fmt                                     # format all files
+cd go/go2nix && go test ./...                  # Go unit tests
+nix build .#test-dag-fixture-testify-basic     # Nix integration test (one fixture)
+nix run .#bench-incremental -- -fixture light  # incremental rebuild benchmark
+nix fmt                                        # format all files
 ```
+
+See [Benchmarking](docs/src/benchmarking.md) for `bench-incremental` flags
+and fixtures.
 
 ## License
 

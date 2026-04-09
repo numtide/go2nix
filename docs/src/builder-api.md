@@ -127,6 +127,9 @@ The experimental builder rejects unknown attributes (including `env`) at eval
 time. Derivations are synthesized at build time by `go2nix resolve`, so only
 `nativeBuildInputs` (store paths) can be forwarded.
 
+See [Package Overrides](package-overrides.md) for cgo recipes and the full
+lookup rules.
+
 ## `mkGoEnv`
 
 Both builders are accessed through a scope created by `mkGoEnv`:
