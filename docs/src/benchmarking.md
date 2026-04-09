@@ -48,9 +48,10 @@ Two synthetic projects under `tests/fixtures/`:
 | `torture` | large app, hundreds of modules | `app-full/cmd/app-full/main.go` | `internal/aws/aws.go` | `internal/common/common.go` |
 
 `leaf` touches the entrypoint (no reverse dependents — only the link
-rebuilds). `deep` touches a package near the bottom of the graph that
-fans out to most of the app. `no_change` measures the eval + no-op-build
-floor.
+rebuilds). `mid` touches a package roughly halfway up the graph with a
+moderate reverse-dependency cone. `deep` touches a package near the bottom
+of the graph that fans out to most of the app. `no_change` measures the
+eval + no-op-build floor.
 
 ## Using `-assert-cascade` in CI
 
@@ -60,5 +61,16 @@ nix run .#bench-incremental -- \
   -tools nix-ca-nocgo -assert-cascade 5
 ```
 
-fails if a private-symbol edit to a mid-graph package causes more than five
-derivations to rebuild — a regression check for the early-cutoff machinery.
+This fails if a private-symbol edit to a mid-graph package causes more than
+five derivations to rebuild — a regression check for the early-cutoff
+machinery.
+
+## Other benchmarks
+
+The flake also exposes coarser-grained harnesses:
+
+- `benchmark-build` — wall-clock time for a full cold build of a fixture.
+- `benchmark-eval` — wall-clock time for a pure `nix eval` of the package
+  graph (plugin + instantiation cost).
+- `benchmark-build-cross-app-isolation` — verifies that two apps sharing
+  third-party packages reuse each other's per-package store paths.

@@ -42,16 +42,9 @@ libraries are available at link time as well.
 
 Non-cgo packages are compiled with a raw builder (`rawGoCompile`) that
 bypasses stdenv entirely and hardcodes `PATH` — `nativeBuildInputs` would
-silently do nothing. The builder rejects it instead:
-
-```
-error: packageOverrides.<path>: unknown attributes ["nativeBuildInputs"].
-Valid: env (nativeBuildInputs is cgo-only — rawGoCompile hardcodes PATH)
-```
-
-If you hit this for a package you expect to be cgo, check that
-`CGO_ENABLED` is not forced to `0` and that the package actually contains
-`import "C"` for the active build tags / target platform.
+silently do nothing, so the builder rejects it instead. For the error
+message and fix list, see
+[Troubleshooting](troubleshooting.md#packageoverridespath-unknown-attributes-nativebuildinputs).
 
 ## Example: single cgo package
 

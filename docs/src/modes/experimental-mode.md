@@ -80,28 +80,12 @@ build-time-generated derivation graph.
 
 ## Package overrides
 
-Per-package customization (e.g., for cgo libraries):
-
-```nix
-goEnv.buildGoApplicationExperimental {
-  src = ./.;
-  goLock = ./go2nix.toml;
-  pname = "my-app";
-  packageOverrides = {
-    "github.com/mattn/go-sqlite3" = {
-      nativeBuildInputs = [ pkg-config sqlite ];
-    };
-  };
-}
-```
-
-Overrides are serialized to JSON and passed to `go2nix resolve`, which adds
-the extra inputs to the appropriate CA derivations.
-
-**Note:** The experimental builder only supports `nativeBuildInputs` in
-`packageOverrides`. The `env` attribute supported by the default builder is
-not available here because derivations are synthesized at build time by
-`go2nix resolve`. Unknown attributes are rejected at eval time.
+`packageOverrides` is serialized to JSON and passed to `go2nix resolve`,
+which adds the extra inputs to the appropriate CA derivations. Only
+`nativeBuildInputs` is forwarded; `env` (and any other key) is rejected at
+eval time because derivations are synthesized at build time and only store
+paths can cross that boundary. See
+[Package Overrides](../package-overrides.md) for lookup rules and recipes.
 
 ## Usage
 
@@ -129,14 +113,14 @@ nix/dynamic/
 The build-time logic lives in the `go2nix resolve` command
 (see [cli-reference.md](../cli-reference.md)).
 
-## Trade-offs
+## Trade-offs (vs default mode)
 
 **Pros:**
 
-- Small lockfile — only `[mod]` hashes (same as default mode)
-- No lockfile regeneration when import graph changes (only when modules change)
-- Per-package caching via CA derivations
-- CA deduplication — comment-only edits don't trigger rebuilds
+- No Nix plugin required — package graph discovery happens in a hermetic
+  build, not via an impure eval-time `go list`
+- CA deduplication is always on — comment-only edits don't trigger rebuilds
+- Same small lockfile and per-package caching as default mode
 
 **Cons:**
 

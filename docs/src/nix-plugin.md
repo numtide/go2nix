@@ -53,11 +53,10 @@ halves:
 - a **C++ shim** (`plugin/resolveGoPackages.cc`) that registers the primop
   with the Nix evaluator and marshals the Rust output back into Nix values.
 
-The C++ shim links against `nixVersions.nix_2_34` (`libnixexpr` etc.). Nix
-plugins are not ABI-stable across Nix versions, so the plugin must be built
-against — and loaded into — a compatible Nix. If your evaluating Nix is a
-different version, build the plugin against that version (override
-`nixComponents` in `packages/go2nix-nix-plugin/default.nix`).
+Nix's plugin ABI is unstable across releases, so the plugin must be built
+against the **same Nix version** you evaluate with. The package defaults to
+`nixVersions.nix_2_34`; override `nixComponents` in
+`packages/go2nix-nix-plugin/default.nix` to match your Nix.
 
 ## Loading the plugin
 
@@ -82,6 +81,28 @@ nix build --option plugin-files /nix/store/.../lib/nix/plugins/libgo2nix_plugin.
 The latter is what the [bench-incremental](benchmarking.md) harness does
 internally.
 
+### Loading the plugin from a flake
+
+Rather than hand-pasting a store path, derive it from the flake input.
+
+On NixOS:
+
+```nix
+{ inputs, pkgs, ... }: {
+  nix.settings.plugin-files = [
+    "${inputs.go2nix.packages.${pkgs.system}.go2nix-nix-plugin}/lib/nix/plugins/libgo2nix_plugin.so"
+  ];
+}
+```
+
+Ad-hoc on the command line:
+
+```bash
+nix build .#my-app \
+  --option plugin-files \
+  "$(nix build --no-link --print-out-paths github:numtide/go2nix#go2nix-nix-plugin)/lib/nix/plugins/libgo2nix_plugin.so"
+```
+
 If the plugin is not loaded, evaluating `buildGoApplication` fails with:
 
 ```
@@ -91,10 +112,9 @@ error: attribute 'resolveGoPackages' missing
 ## Purity
 
 `builtins.resolveGoPackages` is impure: it shells out to `go list`, which
-reads `GOMODCACHE` (and may consult `GOPROXY` for module metadata). The Nix
-evaluator does **not** cache its result across invocations, so the plugin
-runs once per evaluation.
+reads `GOMODCACHE` for module sources (and may consult `GOPROXY` for module
+metadata). The Nix evaluator does **not** cache its result across
+invocations, so the plugin runs once per evaluation.
 
-For a large graph (~3,500 packages) the warm-`GOCACHE` `go list` call is on
-the order of a few hundred milliseconds. This is the dominant per-eval cost
-of default mode; see [Incremental Builds](incremental-builds.md#the-cost-eval-time).
+This is the dominant per-eval cost of default mode; see
+[Incremental Builds](incremental-builds.md#the-cost-eval-time) for timings.

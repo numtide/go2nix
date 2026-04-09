@@ -22,7 +22,9 @@ goEnv.buildGoApplication {
 When `modRoot` points to a subdirectory, the source tree filtered for the
 final derivation may not include local replace targets outside the module
 root, causing test discovery to fail. Override with `doCheck = true` if your
-layout doesn't use out-of-tree replaces.
+layout doesn't use out-of-tree replaces. See the
+[Builder API](builder-api.md) table for these and the other `buildGoApplication`
+defaults.
 
 ## What gets tested
 
@@ -36,7 +38,8 @@ Each testable package goes through these steps:
    replaces the library archive.
 1. **Dependent recompilation** — local packages that transitively depend on
    the package under test are recompiled against the test archive so the
-   dependency graph stays consistent (Go's "recompileForTest" logic).
+   dependency graph stays consistent (otherwise the xtest would link two
+   copies of the package — one with test helpers, one without).
 1. **External test compilation** — `_test.go` files in the `*_test` package
    (xtests) are compiled as a separate package that imports the internal
    test archive.
@@ -64,7 +67,8 @@ graph are recompiled to see the replacement.
 
 ## Test-only dependencies
 
-When `doCheck = true`, the plugin runs a second `go list -deps -test` pass
+When `doCheck = true`, the [Nix plugin](nix-plugin.md) runs a second
+`go list -deps -test` pass
 to discover third-party packages that are only reachable through test
 imports (e.g., `github.com/stretchr/testify`). These are built as separate
 `testPackages` derivations and included in a `testDepsImportcfg` bundle
@@ -107,7 +111,8 @@ These map to the standard `testing` package flags (`-v`, `-run`, `-count`,
 - **Default mode only.** The experimental builder does not run tests.
 - **`modRoot != "."`** disables tests by default. The source filter for the
   final derivation may exclude sibling modules needed by tests.
-- **No test caching.** Tests run fresh on every build (there is no
-  persistent test cache across derivations).
+- **No per-package test caching.** All local tests re-run whenever the final
+  app derivation rebuilds; go2nix does not skip individual test packages
+  whose inputs are unchanged (unlike `go test`'s cache).
 - **Third-party tests are not run.** Only local packages under the module
   root are tested.

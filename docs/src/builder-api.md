@@ -31,29 +31,29 @@ Requires `nixPackage` to be set in `mkGoEnv` and Nix >= 2.34 with
 | Attribute | Type | Modes | Description |
 |-----------|------|-------|-------------|
 | `src` | path | both | Source tree. For monorepos with `modRoot`, this should be the repository root. |
-| `goLock` | path | both | Path to `go2nix.toml` lockfile. |
 | `pname` | string | both | Package name for the output derivation. |
-| `version` | string | default only | Package version. The experimental builder does not accept this attribute. |
+| `version` | string | default only | Package version. The experimental builder does not accept this attribute (its wrapper produces a CA `.drv` whose name is derived from `pname` alone). |
 
 ## Optional attributes
 
 | Attribute | Type | Default | Modes | Description |
 |-----------|------|---------|-------|-------------|
+| `goLock` | path or `null` | `null` (default) / required (experimental) | both | Path to `go2nix.toml`. In default mode, `null` enables [lockfile-free builds](lockfile-format.md#lockfile-free-builds). The experimental builder requires a lockfile. |
 | `subPackages` | list of strings | `[ "." ]` | both | Packages to build, relative to `modRoot`. A `./` prefix is auto-added if missing. |
 | `modRoot` | string | `"."` | both | Subdirectory within `src` containing `go.mod`. |
 | `tags` | list of strings | `[]` | both | Go build tags. |
 | `ldflags` | list of strings | `[]` | both | Flags passed to `go tool link` (`-s`, `-w`, `-X`, etc.). |
 | `gcflags` | list of strings | `[]` | both | Extra flags passed to `go tool compile`. |
 | `CGO_ENABLED` | `0`, `1`, or `null` | `null` (auto) | both | Override CGO detection. When `null`, CGO is enabled per-package based on the presence of C/C++ files. |
-| `pgoProfile` | path or `null` | `null` | both | Path to a pprof CPU profile for profile-guided optimization. |
+| `pgoProfile` | path or `null` | `null` | both | Path to a pprof CPU profile for profile-guided optimization. The profile is passed to every `go tool compile` invocation, so changing it invalidates all package derivations. See [Go's PGO docs](https://go.dev/doc/pgo) for producing a profile. |
 | `nativeBuildInputs` | list | `[]` | both | Extra build inputs for the final derivation. |
 | `packageOverrides` | attrset | `{}` | both | Per-package customization (see below). |
-| `doCheck` | bool | `modRoot == "."` | default only | Run tests. Defaults to `false` when `modRoot` is set, because test discovery may not find local replace targets outside the module root. |
-| `checkFlags` | list of strings | `[]` | default only | Flags passed to the compiled test binary (e.g., `-v`, `-count=1`). |
+| `doCheck` | bool | `modRoot == "."` | default only | Run tests. Defaults to `false` when `modRoot` is set, because test discovery may not find local replace targets outside the module root. See [Test Support](test-support.md). |
+| `checkFlags` | list of strings | `[]` | default only | Flags passed to the compiled test binary (e.g., `-v`, `-count=1`). See [Test Support](test-support.md). |
 | `goProxy` | string or `null` | `null` | default only | Custom GOPROXY URL. |
 | `allowGoReference` | bool | `false` | default only | Allow the output to reference the Go toolchain. |
 | `meta` | attrset | `{}` | default only | Nix meta attributes. |
-| `contentAddressed` | bool | `false` | default only | Make per-package and importcfg derivations [floating-CA](https://nix.dev/manual/nix/development/development/experimental-features.html#xp-feature-ca-derivations) so byte-identical rebuilds short-circuit downstream recompiles (early cutoff). Each per-package derivation also gains an `iface` output containing only the export data (`.x` file via `go tool compile -linkobj`); downstream compiles depend on `iface`, so private-symbol changes that don't alter export data don't cascade (mirrors rules_go's `.x` model). Requires the `ca-derivations` experimental feature; the final binary stays input-addressed. Limitation on the iface cutoff: adding the *first* package-level initializer to a previously-init-free package still flips a bit in the `.x` (this is rare in practice). |
+| `contentAddressed` | bool | `false` | default only | Make per-package and importcfg derivations floating-CA and add an `iface` (export-data) output so private-symbol-only edits don't cascade. Requires the `ca-derivations` experimental feature; the final binary stays input-addressed. See [Incremental Builds → Early cutoff](incremental-builds.md#early-cutoff-with-contentaddressed--true) for details and limitations. |
 
 ## `modRoot`
 
@@ -76,9 +76,8 @@ This is necessary when the module uses `replace` directives pointing to sibling
 directories outside `modRoot`. The builder needs access to the full `src` tree,
 with `modRoot` telling it where `go.mod` lives.
 
-When `modRoot != "."`, `doCheck` defaults to `false` because the filtered
-source tree for tests may not include out-of-tree replace targets. Override
-with `doCheck = true` if your layout doesn't use out-of-tree replaces.
+When `modRoot != "."`, `doCheck` defaults to `false` — see
+[Test Support](test-support.md#enabling-tests) for why and when to override.
 
 ## `subPackages`
 
@@ -102,33 +101,8 @@ packageOverrides = {
 };
 ```
 
-Override lookup: exact import path first, then module path.
-
-### Supported override attributes
-
-| Attribute | Default mode | Experimental mode |
-|-----------|-------------|-------------------|
-| `nativeBuildInputs` | yes | yes |
-| `env` | yes | no |
-
-The `env` attribute sets environment variables on the per-package derivation:
-
-```nix
-packageOverrides = {
-  "github.com/example/pkg" = {
-    env = {
-      CGO_CFLAGS = "-I${libfoo.dev}/include";
-    };
-  };
-};
-```
-
-The experimental builder rejects unknown attributes (including `env`) at eval
-time. Derivations are synthesized at build time by `go2nix resolve`, so only
-`nativeBuildInputs` (store paths) can be forwarded.
-
-See [Package Overrides](package-overrides.md) for cgo recipes and the full
-lookup rules.
+See [Package Overrides](package-overrides.md) for the lookup rules,
+supported keys, cgo recipes, and mode differences.
 
 ## `mkGoEnv`
 
@@ -152,8 +126,18 @@ goEnv = go2nix.lib.mkGoEnv {
 | `go2nix` | derivation | required | go2nix CLI binary. |
 | `callPackage` | function | required | `pkgs.callPackage`. |
 | `tags` | list of strings | `[]` | Build tags applied to all builds in this scope. |
+| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and every `go tool` invocation in this scope (e.g. `GOEXPERIMENT`). Scope-level because the stdlib derivation is shared by every build in the scope. |
 | `netrcFile` | path or `null` | `null` | `.netrc` file for private module authentication (see below). |
 | `nixPackage` | derivation or `null` | `null` | Nix binary. Required for `buildGoApplicationExperimental`. |
+
+## Cross-compilation
+
+`GOOS` / `GOARCH` are read from `stdenv.hostPlatform.go`, so cross builds are
+driven the standard nixpkgs way — pass a cross `pkgs` (e.g.
+`pkgsCross.aarch64-multiplatform`) into `mkGoEnv` via `callPackage`, and the
+resulting scope produces binaries for that target. The
+[Nix plugin](nix-plugin.md) is told the target `goos`/`goarch` so build-tag
+evaluation matches the host platform.
 
 ## Private modules (`netrcFile`)
 
@@ -189,7 +173,8 @@ In experimental mode, the file is passed as `--netrc-file` to
 `go2nix resolve`, which forwards it to the module FODs built inside
 the recursive-nix sandbox.
 
-**Note:** The netrc file becomes a Nix store path, so its contents are
-world-readable in `/nix/store`. For sensitive credentials, consider using
-a secrets manager or a file reference outside the store (e.g., via
-`builtins.readFile` from a non-tracked path).
+**Note:** Any value passed to `netrcFile` reaches a fixed-output derivation
+and is therefore world-readable in `/nix/store`. There is currently no
+mechanism to keep the credential out of the store entirely; use a
+low-privilege, repository-scoped token (and rotate it) rather than a
+personal credential.

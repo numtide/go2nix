@@ -9,13 +9,16 @@ Nix-native Go builder with per-package derivations and fine-grained caching.
 go2nix is for projects that want more visibility and reuse than the usual
 "fetch all modules, then build everything in one derivation" model.
 
-In practice that means:
+In Go, a *module* is the versioned unit you depend on (one `go.mod`, one
+entry in `go.sum`); a *package* is a single importable directory of `.go`
+files. One module typically contains many packages. go2nix locks modules but
+builds packages:
 
 - the lockfile pins **modules**, not the package graph
 - the builder discovers the **package graph** and compiles it at package granularity
 - Nix can cache and rebuild **individual Go packages**, not just the whole app
 - local packages, third-party packages, and test-only packages can be modeled
-  separately in default mode
+  separately
 
 This tends to work especially well for monorepos and multi-package repositories
 that want to maximize Nix store reuse. When only part of the Go package graph
@@ -40,13 +43,25 @@ See [Architecture](docs/src/go2nix-architecture.md) for how the builder works,
 
 ## Quick start
 
+> **Heads up:** the default builder requires the go2nix [Nix plugin](docs/src/nix-plugin.md)
+> to be loaded into your evaluator. Without it, `nix build` fails with
+> `error: attribute 'resolveGoPackages' missing`. See step 3.
+
 ### 1. Generate a lockfile
 
 ```bash
 go2nix generate .
 ```
 
-`generate` is also the default command, so `go2nix .` works as well.
+`generate` is also the default command, so `go2nix .` works as well. This
+writes a `go2nix.toml` next to your `go.mod` — one NAR hash per module:
+
+```toml
+[mod]
+"golang.org/x/sys@v0.20.0" = "sha256-abc..."
+```
+
+See [Lockfile Format](docs/src/lockfile-format.md) for the full schema.
 
 ### 2. Add go2nix to your flake
 
@@ -81,9 +96,18 @@ go2nix generate .
 
 ### 3. Build
 
+Default mode needs the [go2nix Nix plugin](docs/src/nix-plugin.md) loaded in
+the evaluator. For a one-off invocation:
+
 ```bash
-nix build
+nix build \
+  --option plugin-files \
+  "$(nix build --no-link --print-out-paths github:numtide/go2nix#go2nix-nix-plugin)/lib/nix/plugins/libgo2nix_plugin.so"
 ```
+
+For permanent setup, add the plugin path to `plugin-files` in `nix.conf` (or
+`nix.settings.plugin-files` on NixOS) — see [Nix Plugin → Loading the
+plugin](docs/src/nix-plugin.md#loading-the-plugin).
 
 ## Builder modes
 
@@ -122,7 +146,7 @@ See [CLI Reference](docs/src/cli-reference.md) for all commands and flags.
 | `nix-gocacheprog` | Reuse Go's own cache through a host daemon and sandbox hole | Fast local development on one machine | Intentionally impure; optimization layer, not a pure package-graph builder |
 | `go2nix` | Discover package graph and compile with `go tool compile/link` per package | Fine-grained Nix caching and explicit package-level rebuilds | More moving parts; default mode needs the plugin |
 
-### In one sentence
+### In one sentence each
 
 - Choose `buildGoModule` when you want the standard nixpkgs path.
 - Choose `gomod2nix` when you want an offline lockfile-driven app build.

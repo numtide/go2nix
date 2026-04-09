@@ -24,8 +24,8 @@ derivation; any `go.sum` change re-downloads the entire vendor tree.
 
 ```
 ┌────────────┐  ┌────────────┐         ┌────────────┐
-│ module FOD │  │ module FOD │   ...   │ module FOD │   one per go.sum entry
-└─────┬──────┘  └─────┬──────┘         └─────┬──────┘
+│ module FOD │  │ module FOD │   ...   │ module FOD │   one fixed-output derivation
+└─────┬──────┘  └─────┬──────┘         └─────┬──────┘   (FOD) per go.sum entry
       │               │                      │
 ┌─────▼──────┐  ┌─────▼──────┐         ┌─────▼──────┐
 │ pkg drv    │  │ pkg drv    │   ...   │ pkg drv    │   one per Go package
@@ -42,6 +42,12 @@ derivation; any `go.sum` change re-downloads the entire vendor tree.
                             │ (link)    │
                             └───────────┘
 ```
+
+`.a` = compiled package archive; `.x` = export-data interface (see
+[Early cutoff](#early-cutoff-with-contentaddressed--true) below). The
+*importcfg* is a file that maps each import path to its compiled `.a`
+archive in the store — `go tool compile` and `go tool link` read it instead
+of searching `GOPATH`.
 
 For a non-trivial application this is hundreds to thousands of derivations
 instead of two — but almost all of them are reusable across rebuilds.
@@ -63,9 +69,11 @@ cache). Bumping a single module re-fetches one FOD and recompiles only the
 packages that transitively import it.
 
 Local package derivations use a `builtins.path`-filtered source: only the
-package's own directory (plus its parent `go.mod`/`go.sum`) is hashed, so
-editing `pkg/a/a.go` does not change the input hash of the `pkg/b`
-derivation unless `b` imports `a`.
+package's own directory (plus its parent `go.mod`/`go.sum`, and any files
+matched by `//go:embed` patterns in that package) is hashed, so editing
+`pkg/a/a.go` does not change the input hash of the `pkg/b` derivation unless
+`b` imports `a`. Embedded assets therefore participate in the per-package
+cache key.
 
 ## Rebuild propagation
 
@@ -111,9 +119,6 @@ the input-addressed `.x` path still changes whenever `src` changes.
 > previously init-free package still flips a bit in the `.x` file, so that
 > particular edit cascades even though the API didn't change. This is rare
 > in practice.
-
-See the `contentAddressed` row of the [Builder API](builder-api.md) table
-for the canonical description.
 
 ## The cost: eval time
 
