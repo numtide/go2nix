@@ -10,6 +10,7 @@
   go,
   go2nix,
   lib,
+  stdenv,
   newScope,
   tags ? [ ],
   netrcFile ? null,
@@ -22,6 +23,16 @@ let
   # Feature detection: dynamic derivations require builtins.outputOf
   # (available when Nix has the dynamic-derivations experimental feature).
   hasDynamicDerivations = builtins ? outputOf;
+
+  # Cross-compilation: Go selects the target via GOOS/GOARCH env, not via
+  # drv `system`. stdlib (`go install std`) and per-package compiles
+  # (`go tool compile`) both read these from goEnv, so default them from
+  # the Nix host platform when cross-compiling. User-supplied goEnv wins.
+  # Native builds keep goEnv untouched so derivation hashes don't change.
+  crossGoEnv = lib.optionalAttrs (stdenv.buildPlatform != stdenv.hostPlatform) {
+    inherit (stdenv.hostPlatform.go) GOOS GOARCH;
+  };
+  goEnv' = crossGoEnv // goEnv;
 in
 lib.makeScope newScope (
   self:
@@ -46,12 +57,12 @@ lib.makeScope newScope (
       netrcFile
       nixPackage
       hasDynamicDerivations
-      goEnv
       ;
+    goEnv = goEnv';
 
     helpers = import ./helpers.nix;
 
-    stdlib = callPackage ./stdlib.nix { inherit goEnv; };
+    stdlib = callPackage ./stdlib.nix { goEnv = goEnv'; };
 
     hooks = callPackage ./dag/hooks { };
 

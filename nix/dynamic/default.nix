@@ -140,7 +140,7 @@ let
         --src ${src} \
         --mod-root ${lib.escapeShellArg modRoot} \
         --lockfile ${goLock} \
-        --system ${stdenv.hostPlatform.system} \
+        --system ${stdenv.buildPlatform.system} \
         --go ${go}/bin/go \
         --stdlib ${stdlib} \
         --nix ${nixPackage}/bin/nix \

@@ -31,8 +31,7 @@
   helpers,
   stdlib,
   goEnv,
-  bash,
-  coreutils,
+  buildPackages,
   ...
 }:
 
@@ -182,15 +181,18 @@ let
     derivation (
       {
         inherit name;
-        inherit (stdenv.hostPlatform) system;
-        builder = "${bash}/bin/bash";
+        # Raw derivations bypass stdenv's platform handling. The builder
+        # (bash + go tool compile) runs on the build machine; cross targets
+        # are selected via GOOS/GOARCH in `env`, not via drv `system`.
+        inherit (stdenv.buildPlatform) system;
+        builder = "${buildPackages.bash}/bin/bash";
         args = [ rawGoCompileScript ];
         # compileManifestJSON now carries per-file lists; pass it via a
         # temp file so packages with thousands of source files don't risk
         # MAX_ARG_STRLEN. (The stdenv/cgo path already avoids this via
         # __structuredAttrs.)
         passAsFile = [ "compileManifestJSON" ];
-        goPath = "${coreutils}/bin:${go}/bin";
+        goPath = "${buildPackages.coreutils}/bin:${go}/bin";
         go2nixBin = "${go2nix}/bin/go2nix";
       }
       // env
@@ -249,10 +251,16 @@ let
     }
     // extraEnv;
 
+  # Target platform for `go tool compile`/`link`. goEnv wins so a user-set
+  # GOOS/GOARCH (via mkGoEnv { goEnv = ...; }) is honoured everywhere the
+  # plugin/link manifest/buildMode look at the target.
+  targetGoos = goEnv.GOOS or stdenv.hostPlatform.go.GOOS or null;
+  targetGoarch = goEnv.GOARCH or stdenv.hostPlatform.go.GOARCH or null;
+
   # Match Go's internal/platform.DefaultPIE: PIE for darwin, windows, android, ios.
   buildMode =
     let
-      goos = stdenv.hostPlatform.go.GOOS;
+      goos = targetGoos;
     in
     if
       builtins.elem goos [
@@ -317,8 +325,8 @@ let
       # File lists in the manifest are computed at eval time by `go list`;
       # pass the same target platform here that the build derivations will
       # use so constraint evaluation matches.
-      goos = stdenv.hostPlatform.go.GOOS or null;
-      goarch = stdenv.hostPlatform.go.GOARCH or null;
+      goos = targetGoos;
+      goarch = targetGoarch;
     }
     // (if goProxy != null then { inherit goProxy; } else { })
     // (if CGO_ENABLED != null then { cgoEnabled = toString CGO_ENABLED; } else { })
@@ -570,10 +578,10 @@ let
   rawDepsImportcfg = derivation (
     {
       name = "${pname}-deps-importcfg";
-      inherit (stdenv.hostPlatform) system;
-      builder = "${bash}/bin/bash";
+      inherit (stdenv.buildPlatform) system;
+      builder = "${buildPackages.bash}/bin/bash";
       __structuredAttrs = true;
-      PATH = "${coreutils}/bin";
+      PATH = "${buildPackages.coreutils}/bin";
       inherit allPkgsImportcfg;
       stdlibCfg = "${stdlib}/importcfg";
       args = [
@@ -795,8 +803,8 @@ let
         else
           null;
       inherit pname;
-      goos = stdenv.hostPlatform.go.GOOS or null;
-      goarch = stdenv.hostPlatform.go.GOARCH or null;
+      goos = targetGoos;
+      goarch = targetGoarch;
       inherit ldflags;
       inherit tags;
       inherit gcflags;
