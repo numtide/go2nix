@@ -31,6 +31,7 @@ type CompileManifest struct {
 	Version        int            `json:"version"`
 	Kind           string         `json:"kind"`
 	ImportcfgParts []string       `json:"importcfgParts"`
+	Tags           []string       `json:"tags"`
 	GCFlags        []string       `json:"gcflags"`
 	PGOProfile     *string        `json:"pgoProfile"`
 	Files          *ManifestFiles `json:"files,omitempty"`

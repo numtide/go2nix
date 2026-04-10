@@ -247,6 +247,7 @@ func linkBinary(manifestPath, output string) error {
 			ImportCfg:   compileCfg,
 			TrimPath:    tmpDir,
 			GCFlagsList: gcflagsList,
+			Tags:        m.Tags,
 			PGOProfile:  pgoProfile,
 			Files:       pf,
 		}); err != nil {

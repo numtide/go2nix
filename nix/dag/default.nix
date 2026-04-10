@@ -221,6 +221,7 @@ let
         version = 2;
         kind = "compile";
         importcfgParts = [ "${stdlib}/importcfg" ] ++ map depCompileCfg deps;
+        inherit tags;
         gcflags =
           let
             base = gcflags;

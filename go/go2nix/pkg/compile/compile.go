@@ -23,6 +23,7 @@ type Options struct {
 	ImportCfg   string            // path to importcfg file
 	TrimPath    string            // path prefix to trim (defaults to $NIX_BUILD_TOP)
 	GCFlagsList []string          // extra flags for go tool compile
+	Tags        []string          // build tags for // #cgo constraint evaluation (file selection happened at eval time; this only gates #cgo CFLAGS/LDFLAGS/pkg-config lines)
 	GoVersion   string            // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
 	PGOProfile  string            // path to pprof CPU profile for PGO; empty disables PGO
 	Files       *gofiles.PkgFiles // explicit file lists (bypasses ListFiles discovery; paths relative to SrcDir)
