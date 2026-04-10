@@ -78,7 +78,73 @@
 }@args:
 
 let
-  caAttrs = lib.optionalAttrs contentAddressed {
+  inherit (lib)
+    concatStringsSep
+    filterAttrs
+    foldl
+    genAttrs
+    hasPrefix
+    init
+    last
+    mapAttrsToList
+    optional
+    optionalAttrs
+    optionalString
+    optionals
+    removePrefix
+    splitString
+    unique
+    ;
+
+  hasPackageOverrides = packageOverrides != { };
+
+  # Per-package override resolution. Factored from the three near-identical
+  # blocks in the third-party/local/test mapAttrs and short-circuited on
+  # packageOverrides == {} so the no-override case (the vast majority of
+  # packages, since overrides are rare) does no work.
+  resolveOverride =
+    importPath: modulePath: isCgo:
+    if !hasPackageOverrides then
+      {
+        extraNativeBuildInputs = [ ];
+        extraEnv = { };
+        srcOverlay = null;
+        check = true;
+      }
+    else
+      let
+        isExactOverride = builtins.hasAttr importPath packageOverrides;
+        rawOverride = packageOverrides.${importPath} or packageOverrides.${modulePath} or { };
+        # nativeBuildInputs only reaches PATH via stdenv (cgo path);
+        # rawGoCompile (non-cgo) hardcodes goPath and discards it. Reject
+        # for non-cgo so users get an error instead of a silent no-op —
+        # but only for exact-match overrides. A module-path override
+        # legitimately spans both cgo and non-cgo packages in the same
+        # module, so for the fallback case we silently drop the attr.
+        pkgOverride =
+          if isExactOverride || isCgo then
+            rawOverride
+          else
+            builtins.removeAttrs rawOverride [ "nativeBuildInputs" ];
+        knownOverrideAttrs = [
+          "env"
+          "srcOverlay"
+        ]
+        ++ optional isCgo "nativeBuildInputs";
+        unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
+      in
+      {
+        extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
+        extraEnv = pkgOverride.env or { };
+        srcOverlay = pkgOverride.srcOverlay or null;
+        check =
+          unknownAttrs == [ ]
+          || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: ${concatStringsSep ", " knownOverrideAttrs}${
+            optionalString (!isCgo) " (nativeBuildInputs is cgo-only — rawGoCompile hardcodes PATH)"
+          }";
+      };
+
+  caAttrs = optionalAttrs contentAddressed {
     __contentAddressed = true;
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
@@ -90,7 +156,7 @@ let
     # path-substitution and the drv-output-substitution goals.
     allowSubstitutes = false;
   };
-  ifaceAttrs = lib.optionalAttrs contentAddressed {
+  ifaceAttrs = optionalAttrs contentAddressed {
     outputs = [
       "out"
       "iface"
@@ -164,6 +230,19 @@ let
         --importcfg-output "$out/importcfg"
     fi
   '';
+  # Only what builtins.derivation understands. caMk adds
+  # __contentAddressed/outputHash*/outputs; everything else
+  # (nativeBuildInputs, __structuredAttrs, buildInputs) is stdenv
+  # machinery rawGoCompile bypasses. The dep edges are carried via string
+  # context in env.compileManifestJSON.
+  rawGoCompilePassthroughAttrs = genAttrs [
+    "outputs"
+    "__contentAddressed"
+    "outputHashMode"
+    "outputHashAlgo"
+    "allowSubstitutes"
+    "preferLocalBuild"
+  ] (_: null);
   rawGoCompile =
     attrs@{
       name,
@@ -171,19 +250,7 @@ let
       ...
     }:
     let
-      # Pull through only what builtins.derivation understands. caMk
-      # adds __contentAddressed/outputHash*/outputs; everything else
-      # (nativeBuildInputs, __structuredAttrs, buildInputs) is stdenv
-      # machinery we're bypassing. The dep edges are carried via string
-      # context in env.compileManifestJSON.
-      passthrough = lib.getAttrs (lib.intersectLists (lib.attrNames attrs) [
-        "outputs"
-        "__contentAddressed"
-        "outputHashMode"
-        "outputHashAlgo"
-        "allowSubstitutes"
-        "preferLocalBuild"
-      ]) attrs;
+      passthrough = builtins.intersectAttrs rawGoCompilePassthroughAttrs attrs;
     in
     derivation (
       # env first so the core wiring below can't be clobbered by a stray
@@ -269,7 +336,7 @@ let
     # Only emitted when set so drv hashes for packages without an overlay are
     # unchanged. The "${...}" interpolation carries derivation context so the
     # overlay becomes a build-time input of this compile drv (no IFD).
-    // lib.optionalAttrs (srcOverlay != null) { goSrcOverlay = "${srcOverlay}"; };
+    // optionalAttrs (srcOverlay != null) { goSrcOverlay = "${srcOverlay}"; };
 
   # Target platform for `go tool compile`/`link`. goEnv wins so a user-set
   # GOOS/GOARCH (via mkGoEnv { goEnv = ...; }) is honoured everywhere the
@@ -402,41 +469,15 @@ let
       # Direct dependency derivations (resolved lazily via Nix's laziness).
       deps = map (imp: packages.${imp}) pkg.imports;
 
-      # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
-      # Lookup order: exact import path, then module path, then empty.
-      isExactOverride = builtins.hasAttr importPath packageOverrides;
-      rawOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
-      # nativeBuildInputs only reaches PATH via stdenv (cgo path);
-      # rawGoCompile (non-cgo) hardcodes goPath and discards it. Reject
-      # for non-cgo so users get an error instead of a silent no-op —
-      # but only for exact-match overrides. A module-path override
-      # legitimately spans both cgo and non-cgo packages in the same
-      # module, so for the fallback case we silently drop the attr.
-      pkgOverride =
-        if isExactOverride || isCgo then
-          rawOverride
-        else
-          builtins.removeAttrs rawOverride [ "nativeBuildInputs" ];
-      knownOverrideAttrs = [
-        "env"
-        "srcOverlay"
-      ]
-      ++ lib.optional isCgo "nativeBuildInputs";
-      unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
-      extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
-      extraEnv = pkgOverride.env or { };
-      srcOverlay = pkgOverride.srcOverlay or null;
-
       # Auto-add CC for CGO packages; use stdenvNoCC for pure Go packages.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
       mkDeriv = pickMk isCgo;
+
+      override = resolveOverride importPath minfo.path isCgo;
+      inherit (override) extraNativeBuildInputs extraEnv srcOverlay;
     in
-    assert
-      unknownAttrs == [ ]
-      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: ${lib.concatStringsSep ", " knownOverrideAttrs}${
-        lib.optionalString (!isCgo) " (nativeBuildInputs is cgo-only — rawGoCompile hardcodes PATH)"
-      }";
+    assert override.check;
     mkDeriv {
       name = pkg.drvName;
       __structuredAttrs = true;
@@ -470,8 +511,7 @@ let
   # output when empty, so this is a no-op (and hash-neutral) for projects
   # without such packages.
   allLocalPkgInfo =
-    goPackagesResult.localPackages
-    // lib.optionalAttrs doCheck (goPackagesResult.testLocalPackages or { });
+    goPackagesResult.localPackages // optionalAttrs doCheck (goPackagesResult.testLocalPackages or { });
 
   # O(1) "is this rel-dir a local package?" lookup, used to exclude
   # nested packages from a parent's pkgSrc — without this, touching
@@ -481,7 +521,7 @@ let
   # builtins.path does not descend into a directory the filter rejects,
   # so an exact-match attrset check is sufficient (no prefix scan).
   localPkgDirSet = builtins.listToAttrs (
-    lib.mapAttrsToList (_: p: {
+    mapAttrsToList (_: p: {
       name = p.dir;
       value = true;
     }) allLocalPkgInfo
@@ -500,15 +540,19 @@ let
   # before ResolveEmbeds — without this an in-closure srcOverlay package
   # (e.g. an embedded UI dist imported by the main binary) fails the
   # testrunner's embed resolution with "no matching files found".
-  localSrcOverlays = lib.filterAttrs (_: v: v != null) (
-    builtins.mapAttrs (
-      importPath: _:
-      let
-        override = packageOverrides.${importPath} or packageOverrides.${goPackagesResult.modulePath} or { };
-      in
-      if override ? srcOverlay then "${override.srcOverlay}" else null
-    ) allLocalPkgInfo
-  );
+  localSrcOverlays =
+    if !hasPackageOverrides then
+      { }
+    else
+      filterAttrs (_: v: v != null) (
+        builtins.mapAttrs (
+          importPath: _:
+          let
+            override = packageOverrides.${importPath} or packageOverrides.${goPackagesResult.modulePath} or { };
+          in
+          if override ? srcOverlay then "${override.srcOverlay}" else null
+        ) allLocalPkgInfo
+      );
 
   localPackages = builtins.mapAttrs (
     importPath: pkg:
@@ -538,7 +582,7 @@ let
         filter =
           path: type:
           let
-            rel = lib.removePrefix (srcStr + "/") (toString path);
+            rel = removePrefix (srcStr + "/") (toString path);
           in
           !(type == "directory" && (localPkgDirSet ? ${rel} || builtins.pathExists (path + "/go.mod")));
       };
@@ -559,42 +603,15 @@ let
       # on source touches and benefit from early-cutoff.
       mkDeriv = caMk (pickMk isCgo);
 
-      # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
-      # Lookup order: exact import path, then module path, then empty.
-      isExactOverride = builtins.hasAttr importPath packageOverrides;
-      rawOverride =
-        packageOverrides.${importPath} or packageOverrides.${goPackagesResult.modulePath} or { };
-      # nativeBuildInputs only reaches PATH via stdenv (cgo path);
-      # rawGoCompile (non-cgo) hardcodes goPath and discards it. Reject
-      # for non-cgo so users get an error instead of a silent no-op —
-      # but only for exact-match overrides. A module-path override
-      # legitimately spans both cgo and non-cgo packages in the same
-      # module, so for the fallback case we silently drop the attr.
-      pkgOverride =
-        if isExactOverride || isCgo then
-          rawOverride
-        else
-          builtins.removeAttrs rawOverride [ "nativeBuildInputs" ];
-      knownOverrideAttrs = [
-        "env"
-        "srcOverlay"
-      ]
-      ++ lib.optional isCgo "nativeBuildInputs";
-      unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
-      extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
-      extraEnv = pkgOverride.env or { };
-      srcOverlay = pkgOverride.srcOverlay or null;
+      override = resolveOverride importPath goPackagesResult.modulePath isCgo;
+      inherit (override) extraNativeBuildInputs extraEnv srcOverlay;
     in
     # Safety (defense-in-depth): reject paths with ".." path components.
     # The plugin already validates via canonical()/relative(), but guard here too.
     assert
-      !(builtins.any (c: c == "..") (lib.splitString "/" relDir))
+      !(builtins.any (c: c == "..") (splitString "/" relDir))
       || builtins.throw "go2nix: local package '${importPath}' has dir '${relDir}' outside source tree";
-    assert
-      unknownAttrs == [ ]
-      || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: ${lib.concatStringsSep ", " knownOverrideAttrs}${
-        lib.optionalString (!isCgo) " (nativeBuildInputs is cgo-only — rawGoCompile hardcodes PATH)"
-      }";
+    assert override.check;
     mkDeriv {
       name = "golocal-${helpers.sanitizeName importPath}";
       __structuredAttrs = true;
@@ -634,7 +651,7 @@ let
   # private-touch cascade drops the importcfg rebuild.
   mkAllPkgsCfg =
     pick:
-    lib.concatStringsSep "\n" (
+    concatStringsSep "\n" (
       map (importPath: "packagefile ${importPath}=${pick packages.${importPath} importPath}") (
         builtins.attrNames packages
       )
@@ -678,7 +695,7 @@ let
   # plugin's second `go list -deps -test` pass. Built with the same pipeline
   # as normal third-party packages. Their dependencies may include packages
   # from the normal `packages` set.
-  testPackages = lib.optionalAttrs doCheck (
+  testPackages = optionalAttrs doCheck (
     builtins.mapAttrs (
       importPath: pkg:
       let
@@ -694,32 +711,10 @@ let
         cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
         mkDeriv = pickMk isCgo;
 
-        isExactOverride = builtins.hasAttr importPath packageOverrides;
-        rawOverride = packageOverrides.${importPath} or packageOverrides.${minfo.path} or { };
-        # nativeBuildInputs only reaches PATH via stdenv (cgo path);
-        # rawGoCompile (non-cgo) hardcodes goPath and discards it.
-        # Filter (don't throw) when matched via module-path fallback —
-        # module-level overrides legitimately span cgo and non-cgo packages.
-        pkgOverride =
-          if isExactOverride || isCgo then
-            rawOverride
-          else
-            builtins.removeAttrs rawOverride [ "nativeBuildInputs" ];
-        knownOverrideAttrs = [
-          "env"
-          "srcOverlay"
-        ]
-        ++ lib.optional isCgo "nativeBuildInputs";
-        unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
-        extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
-        extraEnv = pkgOverride.env or { };
-        srcOverlay = pkgOverride.srcOverlay or null;
+        override = resolveOverride importPath minfo.path isCgo;
+        inherit (override) extraNativeBuildInputs extraEnv srcOverlay;
       in
-      assert
-        unknownAttrs == [ ]
-        || builtins.throw "packageOverrides.${importPath}: unknown attributes ${builtins.toJSON unknownAttrs}. Valid: ${lib.concatStringsSep ", " knownOverrideAttrs}${
-          lib.optionalString (!isCgo) " (nativeBuildInputs is cgo-only — rawGoCompile hardcodes PATH)"
-        }";
+      assert override.check;
       mkDeriv {
         name = pkg.drvName;
         __structuredAttrs = true;
@@ -747,7 +742,7 @@ let
   # of the build importcfg so that test-only imports (e.g., testify) resolve.
   # Bundled as a single derivation to preserve O(1) input validation on the
   # final app derivation (same pattern as depsImportcfg).
-  testDepsImportcfg = lib.optionalAttrs doCheck (
+  testDepsImportcfg = optionalAttrs doCheck (
     let
       testOnlyEntries = map (
         importPath:
@@ -756,7 +751,7 @@ let
         in
         "packagefile ${importPath}=${pkg}/${importPath}.a"
       ) (builtins.attrNames testPackages);
-      testOnlyImportcfg = lib.concatStringsSep "\n" testOnlyEntries;
+      testOnlyImportcfg = concatStringsSep "\n" testOnlyEntries;
     in
     stdenvNoCC.mkDerivation {
       name = "${pname}-test-deps-importcfg";
@@ -791,11 +786,11 @@ let
   # "local replace target ... does not exist").
   mainSrc =
     let
-      cleanModRoot = lib.removePrefix "./" modRoot;
+      cleanModRoot = removePrefix "./" modRoot;
       subPkgDirs = map (
         sp:
         let
-          clean = lib.removePrefix "./" sp;
+          clean = removePrefix "./" sp;
         in
         if modRoot == "." then clean else "${cleanModRoot}/${clean}"
       ) normalizedSubPackages;
@@ -805,17 +800,17 @@ let
       normalizeRelPath =
         p:
         let
-          folded = lib.foldl (
+          folded = foldl (
             acc: seg:
             if seg == "" || seg == "." then
               acc
             else if seg == ".." then
-              if acc == [ ] || lib.last acc == ".." then acc ++ [ ".." ] else lib.init acc
+              if acc == [ ] || last acc == ".." then acc ++ [ ".." ] else init acc
             else
               acc ++ [ seg ]
-          ) [ ] (lib.splitString "/" p);
+          ) [ ] (splitString "/" p);
         in
-        if folded == [ ] then "." else lib.concatStringsSep "/" folded;
+        if folded == [ ] then "." else concatStringsSep "/" folded;
 
       # Transitively collect local-replace target dirs, src-relative.
       # Reads go.mod via the src store path so it works whether src is a
@@ -830,7 +825,7 @@ let
               let
                 goMod = "${src}/${key}/go.mod";
                 rels =
-                  if lib.hasPrefix ".." key then
+                  if hasPrefix ".." key then
                     # Replace target escaped src — nothing more to read.
                     [ ]
                   else if builtins.pathExists goMod then
@@ -843,8 +838,8 @@ let
         );
       # Only when tests run — keeps mainSrc (and so the link drv hash)
       # unchanged for doCheck = false builds.
-      replaceDirs = lib.optionals doCheck (
-        lib.filter (d: d != cleanModRoot && d != "." && !(lib.hasPrefix ".." d)) (
+      replaceDirs = optionals doCheck (
+        builtins.filter (d: d != cleanModRoot && d != "." && !(hasPrefix ".." d)) (
           replaceDirsOf cleanModRoot
         )
       );
@@ -852,7 +847,7 @@ let
       # Include modRoot for go.mod access plus sibling-replace module roots
       # so the testrunner can walk them.
       allowedDirs = [ cleanModRoot ] ++ subPkgDirs ++ replaceDirs;
-      allowedDirSet = lib.genAttrs allowedDirs (_: true);
+      allowedDirSet = genAttrs allowedDirs (_: true);
       # When modRoot is "." or any subPackage resolves to ".", the entire
       # source tree is needed — no prefix filtering required.
       includeAll = builtins.elem "." allowedDirs;
@@ -863,7 +858,7 @@ let
       filter =
         path: type:
         let
-          rel = lib.removePrefix (toString src + "/") (toString path);
+          rel = removePrefix (toString src + "/") (toString path);
           # A go.mod-bearing directory that isn't an allowed module root
           # (modRoot, a subPackage dir, or a local-replace target) is a
           # nested-module boundary; go list stopped there, so its files are
@@ -878,8 +873,8 @@ let
           true
         else
           path == toString src
-          || builtins.any (prefix: rel == prefix || lib.hasPrefix (prefix + "/") rel) allowedDirs
-          || builtins.any (prefix: lib.hasPrefix (rel + "/") prefix) allowedDirs;
+          || builtins.any (prefix: rel == prefix || hasPrefix (prefix + "/") rel) allowedDirs
+          || builtins.any (prefix: hasPrefix (rel + "/") prefix) allowedDirs;
     };
 
   moduleRoot = if modRoot == "." then "${mainSrc}" else "${mainSrc}/${modRoot}";
@@ -919,16 +914,20 @@ let
   # Selects testDepsImportcfg when test-only deps exist, depsImportcfg otherwise.
   hasTestDeps = doCheck && goPackagesResult ? testPackages && goPackagesResult.testPackages != { };
 
+  # Shared by link and test manifests; hoisted so the mapAttrs runs once.
+  localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
+  localIfaces = builtins.mapAttrs (importPath: pkg: "${pkg.iface}/${importPath}.x") localPackages;
+
   linkManifestJSON = builtins.toJSON (
     {
       version = 2;
       kind = "link";
       importcfgParts = [ "${depsImportcfg}/importcfg" ];
-      localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
+      inherit localArchives;
     }
-    // lib.optionalAttrs contentAddressed {
+    // optionalAttrs contentAddressed {
       compileImportcfgParts = [ "${depsImportcfg}/importcfg" ];
-      localIfaces = builtins.mapAttrs (importPath: pkg: "${pkg.iface}/${importPath}.x") localPackages;
+      inherit localIfaces;
     }
     // {
       subPackages =
@@ -937,7 +936,7 @@ let
           spImportPath =
             sp:
             let
-              clean = lib.removePrefix "./" sp;
+              clean = removePrefix "./" sp;
             in
             if sp == "." || clean == "" then modulePath else "${modulePath}/${clean}";
 
@@ -965,15 +964,15 @@ let
               operator = item: map (i: { key = i; }) (importsOf item.key);
             };
           modKeysOf =
-            ip:
-            lib.unique (
+            closure:
+            unique (
               builtins.concatMap (
                 item:
                 let
                   p = goPackagesResult.packages.${item.key} or null;
                 in
-                lib.optional (p != null) p.modKey
-              ) (closureOf ip)
+                optional (p != null) p.modKey
+              ) closure
             );
           # cmd/go's gcToolchain.ld picks CXX over CC for -extld when any
           # package in root.Deps has CXXFiles || SwigCXXFiles
@@ -981,7 +980,7 @@ let
           # includes the main package (start node), so this also covers the
           # main-package-itself-has-cxx case without a side-channel marker.
           hasCxx =
-            ip:
+            closure:
             builtins.any (
               item:
               let
@@ -990,7 +989,7 @@ let
                     or { };
               in
               (f.cxxFiles or [ ]) != [ ] || (f.swigCxxFiles or [ ]) != [ ]
-            ) (closureOf ip);
+            ) closure;
           toModule =
             modKey:
             let
@@ -1000,7 +999,7 @@ let
             {
               inherit (m) path version;
             }
-            // lib.optionalAttrs (repl != null) {
+            // optionalAttrs (repl != null) {
               replacePath = repl.path;
               replaceVersion = if repl.version != "" then repl.version else m.version;
             };
@@ -1009,12 +1008,15 @@ let
           sp:
           let
             ip = spImportPath sp;
+            # Evaluated once and shared so genericClosure runs once per
+            # subPackage, not once each for modKeysOf and hasCxx.
+            closure = closureOf ip;
           in
           {
             path = sp;
             files = goPackagesResult.localPackages.${ip}.files or null;
-            modules = map toModule (modKeysOf ip);
-            cxx = hasCxx ip;
+            modules = map toModule (modKeysOf closure);
+            cxx = hasCxx closure;
           }
         ) normalizedSubPackages;
       inherit moduleRoot;
@@ -1036,21 +1038,21 @@ let
     }
   );
 
-  testManifestJSON = lib.optionalString doCheck (
+  testManifestJSON = optionalString doCheck (
     builtins.toJSON (
       {
         version = 2;
         kind = "test";
         importcfgParts =
           if hasTestDeps then [ "${testDepsImportcfg}/importcfg" ] else [ "${depsImportcfg}/importcfg" ];
-        localArchives = builtins.mapAttrs (importPath: pkg: "${pkg}/${importPath}.a") localPackages;
+        inherit localArchives;
       }
-      // lib.optionalAttrs contentAddressed {
+      // optionalAttrs contentAddressed {
         compileImportcfgParts =
           if hasTestDeps then [ "${testDepsImportcfg}/importcfg" ] else [ "${depsImportcfg}/importcfg" ];
-        localIfaces = builtins.mapAttrs (importPath: pkg: "${pkg.iface}/${importPath}.x") localPackages;
+        inherit localIfaces;
       }
-      // lib.optionalAttrs (localSrcOverlays != { }) { srcOverlays = localSrcOverlays; }
+      // optionalAttrs (localSrcOverlays != { }) { srcOverlays = localSrcOverlays; }
       // {
         inherit moduleRoot;
         inherit tags;
@@ -1078,7 +1080,7 @@ stdenv.mkDerivation (
     buildInputs = [
       depsImportcfg
     ]
-    ++ lib.optional doCheck testDepsImportcfg
+    ++ optional doCheck testDepsImportcfg
     ++ (args.buildInputs or [ ]);
 
     # Skip all the no-op phases. The hook sets configurePhase /
@@ -1093,7 +1095,7 @@ stdenv.mkDerivation (
     dontPatchELF = true;
     noAuditTmpdir = true;
 
-    disallowedReferences = lib.optional (!allowGoReference) go ++ (args.disallowedReferences or [ ]);
+    disallowedReferences = optional (!allowGoReference) go ++ (args.disallowedReferences or [ ]);
 
     passthru = {
       inherit
@@ -1107,7 +1109,7 @@ stdenv.mkDerivation (
         ;
       inherit (goPackagesResult) modulePath;
     }
-    // lib.optionalAttrs doCheck {
+    // optionalAttrs doCheck {
       inherit testPackages testDepsImportcfg;
     }
     // (args.passthru or { });
