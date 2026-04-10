@@ -120,15 +120,6 @@ func linkBinary(manifestPath, output string) error {
 		return fmt.Errorf("getting Go version: %w", err)
 	}
 
-	deps := make([]buildinfo.ModDep, 0, len(m.Modules))
-	for _, mm := range m.Modules {
-		dep := buildinfo.ModDep{Path: mm.Path, Version: mm.Version}
-		if mm.ReplacePath != "" {
-			dep.Replace = &buildinfo.ModDep{Path: mm.ReplacePath, Version: mm.ReplaceVersion}
-		}
-		deps = append(deps, dep)
-	}
-
 	godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot)
 
 	settings := buildinfo.BuildSettings{
@@ -193,6 +184,15 @@ func linkBinary(manifestPath, output string) error {
 		// after a cgo one doesn't inherit -extld / -linkmode external.
 		_ = os.Remove(filepath.Join(tmpDir, ".has_cgo"))
 		_ = os.Remove(filepath.Join(tmpDir, ".has_cxx"))
+
+		deps := make([]buildinfo.ModDep, 0, len(sp.Modules))
+		for _, mm := range sp.Modules {
+			dep := buildinfo.ModDep{Path: mm.Path, Version: mm.Version}
+			if mm.ReplacePath != "" {
+				dep.Replace = &buildinfo.ModDep{Path: mm.ReplacePath, Version: mm.ReplaceVersion}
+			}
+			deps = append(deps, dep)
+		}
 
 		var importpath, srcdir, binname string
 

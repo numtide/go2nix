@@ -66,10 +66,12 @@ else
       out_val=$($result/bin/app-replace)
       [ "$out_val" = "42" ] || { echo "FAIL: expected 42, got $out_val"; exit 1; }
 
-      echo "=== Asserting modinfo contains dep lines (lockfile-free mode) ==="
+      echo "=== Asserting modinfo records only modules linked into THIS binary ==="
+      # main.go imports go.uber.org/atomic; testify/spew/difflib are
+      # transitive test deps of atomic listed in go.sum but never linked.
       go version -m "$result/bin/app-replace" | tee buildinfo.txt
       ndeps=$(grep -cE '^[[:space:]]+dep[[:space:]]' buildinfo.txt || true)
-      [ "$ndeps" -ge 1 ] || { echo "FAIL: expected >= 1 dep lines, got $ndeps"; exit 1; }
+      [ "$ndeps" -eq 1 ] || { echo "FAIL: expected exactly 1 dep line, got $ndeps"; exit 1; }
       grep -E '^[[:space:]]+dep[[:space:]]+go\.uber\.org/atomic[[:space:]]+v1\.11\.0' buildinfo.txt \
         || { echo "FAIL: expected dep go.uber.org/atomic v1.11.0"; exit 1; }
       grep -E '^[[:space:]]+=>[[:space:]]+github\.com/uber-go/atomic[[:space:]]+v1\.11\.0' buildinfo.txt \
