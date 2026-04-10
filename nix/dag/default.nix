@@ -179,7 +179,12 @@ let
       ]) attrs;
     in
     derivation (
-      {
+      # env first so the core wiring below can't be clobbered by a stray
+      # builder/args/system/passAsFile key arriving via goEnv or
+      # packageOverrides.<pkg>.env. passthrough is an explicit allowlist
+      # so it stays last.
+      env
+      // {
         inherit name;
         # Raw derivations bypass stdenv's platform handling. The builder
         # (bash + go tool compile) runs on the build machine; cross targets
@@ -195,7 +200,6 @@ let
         goPath = "${buildPackages.coreutils}/bin:${go}/bin";
         go2nixBin = "${go2nix}/bin/go2nix";
       }
-      // env
       // passthrough
     );
 
@@ -352,7 +356,7 @@ let
     in
     mod
     // {
-      inherit fetchPath;
+      inherit fetchPath version;
       dirSuffix = "${helpers.escapeModPath fetchPath}@${helpers.escapeModPath version}";
     }
   ) allModules;
@@ -741,6 +745,10 @@ let
   moduleRoot = if modRoot == "." then "${mainSrc}" else "${mainSrc}/${modRoot}";
 
   # Filter out known args so extra attrs pass through to mkDerivation.
+  # Attrs we set ourselves below (env, buildInputs, passthru,
+  # disallowedReferences) are also stripped here and merged explicitly
+  # so a caller-supplied value is appended rather than silently dropped
+  # by the literal-attrset override.
   extraArgs = builtins.removeAttrs args [
     "src"
     "goLock"
@@ -756,6 +764,10 @@ let
     "allowGoReference"
     "meta"
     "nativeBuildInputs"
+    "buildInputs"
+    "env"
+    "passthru"
+    "disallowedReferences"
     "modRoot"
     "packageOverrides"
     "doCheck"
@@ -850,7 +862,11 @@ stdenv.mkDerivation (
     inherit doCheck;
 
     nativeBuildInputs = [ hooks.goAppHook ] ++ overrideNativeBuildInputs ++ nativeBuildInputs;
-    buildInputs = [ depsImportcfg ] ++ lib.optional doCheck testDepsImportcfg;
+    buildInputs = [
+      depsImportcfg
+    ]
+    ++ lib.optional doCheck testDepsImportcfg
+    ++ (args.buildInputs or [ ]);
 
     # Skip all the no-op phases. The hook sets configurePhase /
     # buildPhase / installPhase / checkPhase explicitly; the rest are
@@ -864,7 +880,7 @@ stdenv.mkDerivation (
     dontPatchELF = true;
     noAuditTmpdir = true;
 
-    disallowedReferences = lib.optional (!allowGoReference) go;
+    disallowedReferences = lib.optional (!allowGoReference) go ++ (args.disallowedReferences or [ ]);
 
     passthru = {
       inherit
@@ -880,7 +896,8 @@ stdenv.mkDerivation (
     }
     // lib.optionalAttrs doCheck {
       inherit testPackages testDepsImportcfg;
-    };
+    }
+    // (args.passthru or { });
 
     env =
       goEnv
@@ -888,6 +905,7 @@ stdenv.mkDerivation (
         inherit linkManifestJSON;
       }
       // (if CGO_ENABLED != null then { inherit CGO_ENABLED; } else { })
-      // (if doCheck then { inherit testManifestJSON; } else { });
+      // (if doCheck then { inherit testManifestJSON; } else { })
+      // (args.env or { });
   }
 )
