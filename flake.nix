@@ -155,6 +155,7 @@
           check-godebug-table = callPkg ./packages/check-godebug-table/default.nix;
           cross-platform-env = callPkgWith ./tests/nix/cross_platform_test.nix { inherit pkgs; };
           mainsrc-replace = callPkgWith ./tests/nix/mainsrc_replace_test.nix { inherit pkgs; };
+          nested-module = callPkgWith ./tests/nix/nested_module_test.nix { inherit pkgs; };
           # tests/nix/{helpers,fetch_go_module}_test.nix return `true` or
           # throw. seq forces them at eval time so a failure breaks the
           # check; the runCommand body is just the success marker.
