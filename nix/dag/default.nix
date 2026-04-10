@@ -510,6 +510,10 @@ let
       # for every local package. The filter only needs to drop nested
       # package directories — builtins.path skips a rejected directory's
       # children, so an O(1) set lookup on the directory itself suffices.
+      # Nested-module subtrees are also dropped: go list stopped at their
+      # go.mod, so they are never compiled and would only churn the store
+      # path. The package's own root is never passed to the filter, so a
+      # modRoot/replace-target package's go.mod doesn't self-exclude.
       srcStr = toString src;
       pkgSrc = builtins.path {
         path = if isRoot then src else src + "/${relDir}";
@@ -519,10 +523,7 @@ let
           let
             rel = lib.removePrefix (srcStr + "/") (toString path);
           in
-          # Exclude directories that are themselves other local packages
-          # (their sources are isolated in their own pkgSrc). The root
-          # itself is never passed to the filter, so relDir won't match.
-          !(type == "directory" && localPkgDirSet ? ${rel});
+          !(type == "directory" && (localPkgDirSet ? ${rel} || builtins.pathExists (path + "/go.mod")));
       };
 
       srcDir = "${pkgSrc}";
@@ -834,21 +835,31 @@ let
       # Include modRoot for go.mod access plus sibling-replace module roots
       # so the testrunner can walk them.
       allowedDirs = [ cleanModRoot ] ++ subPkgDirs ++ replaceDirs;
+      allowedDirSet = lib.genAttrs allowedDirs (_: true);
       # When modRoot is "." or any subPackage resolves to ".", the entire
-      # source tree is needed — no filtering required.
+      # source tree is needed — no prefix filtering required.
       includeAll = builtins.elem "." allowedDirs;
     in
     builtins.path {
       path = src;
       name = "${pname}-main-src";
       filter =
-        path: _type:
-        if includeAll then
+        path: type:
+        let
+          rel = lib.removePrefix (toString src + "/") (toString path);
+          # A go.mod-bearing directory that isn't an allowed module root
+          # (modRoot, a subPackage dir, or a local-replace target) is a
+          # nested-module boundary; go list stopped there, so its files are
+          # never compiled or tested. Checked unconditionally so it also
+          # applies in the includeAll case.
+          isNestedModule =
+            type == "directory" && !(allowedDirSet ? ${rel}) && builtins.pathExists (path + "/go.mod");
+        in
+        if isNestedModule then
+          false
+        else if includeAll then
           true
         else
-          let
-            rel = lib.removePrefix (toString src + "/") (toString path);
-          in
           path == toString src
           || builtins.any (prefix: rel == prefix || lib.hasPrefix (prefix + "/") rel) allowedDirs
           || builtins.any (prefix: lib.hasPrefix (rel + "/") prefix) allowedDirs;
