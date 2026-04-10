@@ -6,4 +6,4 @@
 testify-basic /nix/store/9csffkvgwyv1pmfphskqk8b4kmhmcj4q-testify-basic-0.0.1.drv
 xtest-local-dep /nix/store/7va2vdhw47wkk6sgajg8vs9rkfq459r7-xtest-local-dep-0.0.1.drv
 cgo-internal-test /nix/store/5f7v58dgrvj0fr20mahr3m0y8nwhfmms-cgo-internal-test-0.0.1.drv
-torture-app-full /nix/store/wqx0hwd7nwdgnq9s9v4ww4a3151mmrpw-torture-app-full-0.0.1.drv
+torture-app-full /nix/store/h6v7rjbqyjdd5jvk0l6pid408w1cyhva-torture-app-full-0.0.1.drv
