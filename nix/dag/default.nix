@@ -66,10 +66,10 @@
   # without CA can't cut off anything (the input-addressed .x path
   # changes whenever src does).
   contentAddressed ? false,
-  # Phase 1: checks only supported for modRoot == "." (single-module case).
-  # When modRoot != ".", mainSrc doesn't include local replace targets outside
-  # the module root, so test discovery/compilation may fail. Users can override
-  # with doCheck = true if their layout doesn't use out-of-tree replaces.
+  # Defaults to (modRoot == ".") for back-compat: enabling tests changes
+  # the link drv hash, and modRoot != "." callers historically built
+  # without checks. mainSrc now includes sibling-replace dirs, so passing
+  # doCheck = true works for monorepo layouts.
   doCheck ? (modRoot == "."),
   checkFlags ? [ ],
   ...
@@ -725,7 +725,11 @@ let
     map (attrs: attrs.nativeBuildInputs or [ ]) (builtins.attrValues packageOverrides)
   );
 
-  # Source for the final link derivation: only the main package directories.
+  # Source for the final link derivation. The link step itself only needs
+  # the main-package directories plus go.mod, but the testrunner re-walks
+  # go.mod from ${mainSrc}/${modRoot}, so any local `replace => ../sibling`
+  # target must also be present (otherwise doCheck fails with
+  # "local replace target ... does not exist").
   mainSrc =
     let
       cleanModRoot = lib.removePrefix "./" modRoot;
@@ -736,8 +740,59 @@ let
         in
         if modRoot == "." then clean else "${cleanModRoot}/${clean}"
       ) normalizedSubPackages;
-      # Include modRoot for go.mod access.
-      allowedDirs = [ cleanModRoot ] ++ subPkgDirs;
+
+      # Resolve a/b/../c → a/c in src-relative string space. Kept here
+      # (not in helpers.nix) because it needs lib for string ops.
+      normalizeRelPath =
+        p:
+        let
+          folded = lib.foldl (
+            acc: seg:
+            if seg == "" || seg == "." then
+              acc
+            else if seg == ".." then
+              if acc == [ ] || lib.last acc == ".." then acc ++ [ ".." ] else lib.init acc
+            else
+              acc ++ [ seg ]
+          ) [ ] (lib.splitString "/" p);
+        in
+        if folded == [ ] then "." else lib.concatStringsSep "/" folded;
+
+      # Transitively collect local-replace target dirs, src-relative.
+      # Reads go.mod via the src store path so it works whether src is a
+      # literal path, a fileset.toSource result, or a builtin fetcher.
+      replaceDirsOf =
+        startDir:
+        map (x: x.key) (
+          builtins.genericClosure {
+            startSet = [ { key = startDir; } ];
+            operator =
+              { key, ... }:
+              let
+                goMod = "${src}/${key}/go.mod";
+                rels =
+                  if lib.hasPrefix ".." key then
+                    # Replace target escaped src — nothing more to read.
+                    [ ]
+                  else if builtins.pathExists goMod then
+                    helpers.parseLocalReplaces (builtins.readFile goMod)
+                  else
+                    [ ];
+              in
+              map (r: { key = normalizeRelPath "${key}/${r}"; }) rels;
+          }
+        );
+      # Only when tests run — keeps mainSrc (and so the link drv hash)
+      # unchanged for doCheck = false builds.
+      replaceDirs = lib.optionals doCheck (
+        lib.filter (d: d != cleanModRoot && d != "." && !(lib.hasPrefix ".." d)) (
+          replaceDirsOf cleanModRoot
+        )
+      );
+
+      # Include modRoot for go.mod access plus sibling-replace module roots
+      # so the testrunner can walk them.
+      allowedDirs = [ cleanModRoot ] ++ subPkgDirs ++ replaceDirs;
       # When modRoot is "." or any subPackage resolves to ".", the entire
       # source tree is needed — no filtering required.
       includeAll = builtins.elem "." allowedDirs;
