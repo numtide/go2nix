@@ -47,6 +47,73 @@ func FuzzAdd(f *testing.F) {}
 	}
 }
 
+func writeTestFile(t *testing.T, body string) string {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "x_test.go")
+	if err := os.WriteFile(f, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestGenerateBadSignature(t *testing.T) {
+	cases := []struct {
+		name, src, wantArg string
+	}{
+		{"Test", "func TestBad(x int) {}\n", "t *testing.T"},
+		{"Benchmark", "func BenchmarkBad() {}\n", "b *testing.B"},
+		{"Fuzz", "func FuzzBad(f *testing.T) {}\n", "f *testing.F"},
+		{"TestMain", "func TestMain() {}\n", "m *testing.M"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := writeTestFile(t, "package foo\nimport \"testing\"\nvar _ = testing.Short\n"+tc.src)
+			_, err := Generate(Options{ImportPath: "example.com/foo", TestGoFiles: []string{f}})
+			if err == nil {
+				t.Fatalf("expected error for bad %s signature, got nil", tc.name)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "wrong signature for") || !strings.Contains(msg, tc.wantArg) {
+				t.Errorf("error %q does not match upstream format (want %q)", msg, tc.wantArg)
+			}
+			if !strings.Contains(msg, "x_test.go:") {
+				t.Errorf("error %q missing file:line position", msg)
+			}
+		})
+	}
+}
+
+func TestGenerateGenericTestFunc(t *testing.T) {
+	f := writeTestFile(t, "package foo\nimport \"testing\"\nfunc TestGeneric[T any](t *testing.T) { _ = t }\n")
+	_, err := Generate(Options{ImportPath: "example.com/foo", TestGoFiles: []string{f}})
+	if err == nil {
+		t.Fatal("expected error for generic test func, got nil")
+	}
+	if !strings.Contains(err.Error(), "test functions cannot have type parameters") {
+		t.Errorf("error %q does not mention type parameters", err.Error())
+	}
+}
+
+func TestGenerateModulePath(t *testing.T) {
+	got, err := Generate(Options{
+		ImportPath: "example.com/foo/bar",
+		ModulePath: "example.com/foo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(got)
+	if !strings.Contains(src, `testdeps.ModulePath = "example.com/foo"`) {
+		t.Error("missing testdeps.ModulePath assignment")
+	}
+	if !strings.Contains(src, `testdeps.ImportPath = "example.com/foo/bar"`) {
+		t.Error("missing testdeps.ImportPath assignment")
+	}
+	if strings.Index(src, "testdeps.ModulePath") > strings.Index(src, "testdeps.ImportPath") {
+		t.Error("ModulePath should be set before ImportPath (matches upstream template)")
+	}
+}
+
 func TestGenerateExternal(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "foo_ext_test.go")

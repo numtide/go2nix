@@ -12,6 +12,7 @@ package testmain
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/doc"
 	"go/parser"
@@ -27,6 +28,7 @@ import (
 // Options configures test main generation.
 type Options struct {
 	ImportPath   string   // import path of the package under test
+	ModulePath   string   // module path of the main module (for testdeps.ModulePath)
 	TestGoFiles  []string // absolute paths to internal _test.go files
 	XTestGoFiles []string // absolute paths to external _test.go files
 }
@@ -52,12 +54,14 @@ type testFuncs struct {
 	NeedXtest   bool
 
 	ImportPath string // package under test
+	ModulePath string // main module path
 }
 
 // Generate produces test main source code for the given options.
 func Generate(opts Options) ([]byte, error) {
 	t := &testFuncs{
 		ImportPath: opts.ImportPath,
+		ModulePath: opts.ModulePath,
 	}
 
 	fset := token.NewFileSet()
@@ -106,28 +110,32 @@ func (t *testFuncs) load(fset *token.FileSet, filename, pkg string, doImport, se
 				*doImport, *seen = true, true
 				continue
 			}
-			if isTestFunc(n, "M") {
-				if t.TestMain != nil {
-					return errors.New("multiple definitions of TestMain")
-				}
-				t.TestMain = &testFunc{pkg, name, "", false}
-				*doImport, *seen = true, true
+			if err := checkTestFunc(fset, n, "M"); err != nil {
+				return err
 			}
+			if t.TestMain != nil {
+				return errors.New("multiple definitions of TestMain")
+			}
+			t.TestMain = &testFunc{pkg, name, "", false}
+			*doImport, *seen = true, true
 		case isTest(name, "Test"):
-			if isTestFunc(n, "T") {
-				t.Tests = append(t.Tests, testFunc{pkg, name, "", false})
-				*doImport, *seen = true, true
+			if err := checkTestFunc(fset, n, "T"); err != nil {
+				return err
 			}
+			t.Tests = append(t.Tests, testFunc{pkg, name, "", false})
+			*doImport, *seen = true, true
 		case isTest(name, "Benchmark"):
-			if isTestFunc(n, "B") {
-				t.Benchmarks = append(t.Benchmarks, testFunc{pkg, name, "", false})
-				*doImport, *seen = true, true
+			if err := checkTestFunc(fset, n, "B"); err != nil {
+				return err
 			}
+			t.Benchmarks = append(t.Benchmarks, testFunc{pkg, name, "", false})
+			*doImport, *seen = true, true
 		case isTest(name, "Fuzz"):
-			if isTestFunc(n, "F") {
-				t.FuzzTargets = append(t.FuzzTargets, testFunc{pkg, name, "", false})
-				*doImport, *seen = true, true
+			if err := checkTestFunc(fset, n, "F"); err != nil {
+				return err
 			}
+			t.FuzzTargets = append(t.FuzzTargets, testFunc{pkg, name, "", false})
+			*doImport, *seen = true, true
 		}
 	}
 	ex := doc.Examples(f)
@@ -163,6 +171,24 @@ func isTestFunc(fn *ast.FuncDecl, arg string) bool {
 		return true
 	}
 	return false
+}
+
+// checkTestFunc reports an error if fn is named like a test function but
+// has the wrong signature or has type parameters.
+// Ported from cmd/go/internal/load/test.go (checkTestFunc).
+func checkTestFunc(fset *token.FileSet, fn *ast.FuncDecl, arg string) error {
+	var why string
+	if !isTestFunc(fn, arg) {
+		why = fmt.Sprintf("must be: func %s(%s *testing.%s)", fn.Name.String(), strings.ToLower(arg), arg)
+	}
+	if fn.Type.TypeParams.NumFields() > 0 {
+		why = "test functions cannot have type parameters"
+	}
+	if why != "" {
+		pos := fset.Position(fn.Pos())
+		return fmt.Errorf("%s: wrong signature for %s, %s", pos, fn.Name.String(), why)
+	}
+	return nil
 }
 
 // isTest checks Go test naming convention: prefix + optional uppercase letter.
@@ -225,6 +251,7 @@ var examples = []testing.InternalExample{
 }
 
 func init() {
+	testdeps.ModulePath = {{printf "%q" .ModulePath}}
 	testdeps.ImportPath = {{printf "%q" .ImportPath}}
 }
 
