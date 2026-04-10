@@ -377,11 +377,79 @@ func TestExtEmbed(t *testing.T) { _ = fs }
 	}
 	pkg := pkgs[0]
 
+	if !slices.Equal(pkg.TestEmbedPatterns, []string{"*.txt"}) {
+		t.Errorf("TestEmbedPatterns = %v, want [*.txt]", pkg.TestEmbedPatterns)
+	}
+	if len(pkg.TestEmbedFiles) != 0 || pkg.TestEmbedCfg != nil {
+		t.Errorf("TestEmbedFiles/Cfg populated before ResolveEmbeds: %v / %v", pkg.TestEmbedFiles, pkg.TestEmbedCfg)
+	}
+
+	if err := pkg.ResolveEmbeds(); err != nil {
+		t.Fatal(err)
+	}
+
 	want := []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"}
 	if !slices.Equal(pkg.TestEmbedFiles, want) {
 		t.Errorf("TestEmbedFiles = %v, want %v (sorted)", pkg.TestEmbedFiles, want)
 	}
 	if !slices.Equal(pkg.XTestEmbedFiles, want) {
 		t.Errorf("XTestEmbedFiles = %v, want %v (sorted)", pkg.XTestEmbedFiles, want)
+	}
+}
+
+func TestListLocalPackages_DefersBrokenEmbed(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\n")
+	// ui's //go:embed pattern matches nothing on disk; xtest's pattern is
+	// likewise unsatisfied. Listing must succeed; ResolveEmbeds surfaces it.
+	writeFile(t, filepath.Join(root, "ui", "ui.go"), `package ui
+
+import "embed"
+
+//go:embed all:dist
+var Assets embed.FS
+`)
+	writeFile(t, filepath.Join(root, "ui", "ui_ext_test.go"), `package ui_test
+
+import (
+	_ "embed"
+	"testing"
+)
+
+//go:embed missing.jsonc
+var cfg string
+
+func TestX(t *testing.T) { _ = cfg }
+`)
+
+	pkgs, err := ListLocalPackages(root, "", "")
+	if err != nil {
+		t.Fatalf("ListLocalPackages should defer broken embed resolution; got: %v", err)
+	}
+
+	var ui *LocalPkg
+	for _, p := range pkgs {
+		if p.ImportPath == "example.com/test/ui" {
+			ui = p
+		}
+	}
+	if ui == nil {
+		t.Fatalf("ui package not listed: %v", importPaths(pkgs))
+	}
+	if !slices.Equal(ui.EmbedPatterns, []string{"all:dist"}) {
+		t.Errorf("EmbedPatterns = %v, want [all:dist]", ui.EmbedPatterns)
+	}
+	if !slices.Equal(ui.XTestEmbedPatterns, []string{"missing.jsonc"}) {
+		t.Errorf("XTestEmbedPatterns = %v, want [missing.jsonc]", ui.XTestEmbedPatterns)
+	}
+
+	err = ui.ResolveEmbeds()
+	if err == nil {
+		t.Fatal("ResolveEmbeds should surface the missing-match error")
+	}
+	if !strings.Contains(err.Error(), "no matching files found") {
+		t.Errorf("expected 'no matching files found' in: %v", err)
 	}
 }

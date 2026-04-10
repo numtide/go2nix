@@ -7,6 +7,11 @@
 # subPackages closure (default = ["."], and the root main.go does not
 # import them). The testrunner must skip cmd/unbuilt's test rather than
 # fail trying to compile it against an importcfg that lacks unbuiltdep.
+#
+# internal/brokenembed is likewise out-of-closure and has a //go:embed
+# pattern with no match in the source closure. The testrunner must defer
+# embed-pattern resolution until after the LocalArchives filter so this
+# package is skipped, not fatal.
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
