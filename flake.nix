@@ -152,6 +152,14 @@
           check-godebug-table = callPkg ./packages/check-godebug-table/default.nix;
           cross-platform-env = callPkgWith ./tests/nix/cross_platform_test.nix { inherit pkgs; };
           mainsrc-replace = callPkgWith ./tests/nix/mainsrc_replace_test.nix { inherit pkgs; };
+          # tests/nix/{helpers,fetch_go_module}_test.nix return `true` or
+          # throw. seq forces them at eval time so a failure breaks the
+          # check; the runCommand body is just the success marker.
+          nix-unit-tests = builtins.seq (import ./tests/nix/helpers_test.nix) (
+            builtins.seq (import ./tests/nix/fetch_go_module_test.nix { inherit pkgs; }) (
+              pkgs.runCommand "nix-unit-tests" { } "echo OK > $out"
+            )
+          );
           # The --help check just confirms the binary links and the CLI
           # surface is intact. The benchmark itself can't run in nix's
           # build sandbox (it spawns a nested daemon and fetches from
