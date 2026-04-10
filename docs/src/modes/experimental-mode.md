@@ -126,8 +126,10 @@ The build-time logic lives in the `go2nix resolve` command
 
 - Requires Nix >= 2.34 with experimental features (`recursive-nix`,
   `ca-derivations`, `dynamic-derivations`)
-- Build-time overhead from `nix derivation add` calls (~32ms each)
-- Parallelism limited by SQLite write lock (saturates at ~4 concurrent adds)
+- Build-time overhead from derivation registration: `.drv` paths are
+  computed in-process (microseconds each) and registered concurrently over
+  the nix-daemon socket; the per-derivation `nix derivation add` subprocess
+  is only used as a fallback when no daemon is reachable
 
 Performance and scaling characteristics depend on recursive-nix support,
-content-addressed derivations, and the overhead of `nix derivation add`.
+content-addressed derivations, and daemon round-trip latency.

@@ -28,7 +28,7 @@ Examples:
 
 ```bash
 go2nix generate .                       # write go2nix.toml in the current module
-go2nix .                                # same — generate is the default command
+go2nix                                  # same — generate is the default when no subcommand is given
 go2nix generate -o lock.toml ./a ./b    # merged lockfile for two modules
 ```
 
@@ -102,8 +102,9 @@ Outputs JSON with each package's import path and dependencies.
 ### resolve
 
 Build-time command for experimental mode (the `nix/dynamic/` builder).
-Discovers the package graph, creates CA derivations via
-`nix derivation add`, and produces a `.drv` file as output. See
+Discovers the package graph, computes CA `.drv` paths in-process, registers
+them with the nix-daemon (falling back to `nix derivation add` if no daemon
+socket is reachable), and produces a `.drv` file as output. See
 [Experimental Mode](modes/experimental-mode.md).
 
 ```
@@ -133,7 +134,8 @@ go2nix resolve [flags]
 | `--overrides` | No | JSON-encoded packageOverrides |
 | `--cacert` | No | Path to CA certificate bundle |
 | `--netrc-file` | No | Path to .netrc for private modules |
-| `--nix-jobs` | No | Max concurrent `nix derivation add` calls |
+| `--nix-jobs` | No | Max concurrent derivation registrations |
+| `--daemon-socket` | No | nix-daemon Unix socket; default `$NIX_DAEMON_SOCKET_PATH`. When reachable, derivations are registered over the socket instead of via `nix` CLI subprocesses |
 
 This command is not intended for direct use — it is invoked by the
 experimental-mode Nix builder inside a recursive-nix build.

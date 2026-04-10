@@ -28,9 +28,21 @@ Requires `nixPackage` to be set in `mkGoEnv` and Nix >= 2.34 with
 
 ## Required attributes
 
+### `src` {#src}
+
+Source tree. For monorepos with `modRoot`, this should be the repository
+root.
+
+In default mode, `src` is passed to `builtins.resolveGoPackages`, which
+shells out to `go list` at eval time. To keep that call IFD-free, prefer a
+source path (`./.`) or an eval-time fetcher (`builtins.fetchTarball`,
+`builtins.fetchGit`). A derivation-backed value such as
+`pkgs.fetchFromGitHub` is accepted, but the plugin must realise it at eval
+time and emits an IFD warning.
+
 | Attribute | Type | Modes | Description |
 |-----------|------|-------|-------------|
-| `src` | path | both | Source tree. For monorepos with `modRoot`, this should be the repository root. |
+| `src` | path | both | See above. |
 | `pname` | string | both | Package name for the output derivation. |
 | `version` | string | default only | Package version. The experimental builder does not accept this attribute (its wrapper produces a CA `.drv` whose name is derived from `pname` alone). |
 

@@ -15,7 +15,6 @@ The plugin registers a single primop:
 
 ```nix
 builtins.resolveGoPackages {
-  go          = "${go}/bin/go";  # path to the Go binary
   src         = ./.;             # source tree
   subPackages = [ "./..." ];     # optional, default ["./..."]
   modRoot     = ".";             # optional
@@ -29,6 +28,12 @@ builtins.resolveGoPackages {
 }
 ```
 
+`go` is intentionally omitted: the plugin defaults to the Go toolchain baked
+in at its own build time, so the call carries no derivation context and the
+default-mode evaluation stays IFD-free. You may pass
+`go = "/path/to/bin/go"` to override the toolchain (e.g. a `nix-shell` Go),
+but a derivation-backed value like `"${pkgs.go}/bin/go"` will be rejected.
+
 It runs `go list -json -deps` against `src` and returns:
 
 - `packages` — third-party package metadata (`modKey`, `subdir`,
@@ -36,6 +41,8 @@ It runs `go list -json -deps` against `src` and returns:
 - `localPackages` — local package metadata (`dir`, `localImports`,
   `thirdPartyImports`, `isCgo`)
 - `modulePath` — the main module's import path
+- `goVersion` — the main module's `go` directive (e.g. `"1.25"`); the dag
+  builder threads this as `-lang` to local-package compiles
 - `replacements` — `replace` directives from `go.mod`
 - `testPackages` — test-only third-party packages (when `doCheck = true`)
 - `moduleHashes` — module NAR hashes (when `resolveHashes = true`; see
