@@ -7,6 +7,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::process::Command;
 
 /// Baked-in default Go binary path, set at compile time via GO2NIX_DEFAULT_GO.
@@ -388,6 +389,180 @@ fn run_go_list_test(
     Ok(output.stdout)
 }
 
+fn mod_root_dir(src: &str, mod_root: &str) -> PathBuf {
+    if mod_root == "." {
+        PathBuf::from(src)
+    } else {
+        PathBuf::from(src).join(mod_root)
+    }
+}
+
+/// Run a cheap local-only `go list` that captures import strings and file
+/// names of every package under `./...` without touching GOMODCACHE.
+///
+/// This is the cache-key fingerprint: imports come from header parsing of
+/// local source (`go/build readGoInfo` reads only through the import block),
+/// so its output changes exactly when the third-party closure or local file
+/// lists can change. `-mod=mod` keeps it tolerant of an empty modcache;
+/// `-find`/`-deps` are intentionally omitted (the former clears Imports,
+/// the latter would walk into GOMODCACHE).
+pub(crate) fn run_local_import_probe(input: &JsonInput) -> Result<Vec<u8>> {
+    let go_bin = input
+        .go
+        .as_deref()
+        .or(DEFAULT_GO)
+        .ok_or_else(|| anyhow!("no go binary"))?;
+
+    let modcache = tempfile::tempdir().context("creating empty GOMODCACHE for probe")?;
+    let work_dir = mod_root_dir(&input.src, &input.mod_root);
+
+    let mut cmd = Command::new(go_bin);
+    cmd.arg("list");
+    cmd.arg("-e");
+    cmd.arg("-mod=mod");
+    cmd.arg("-buildvcs=false");
+    cmd.arg(
+        "-json=ImportPath,Imports,TestImports,XTestImports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,FFiles,HFiles,SysoFiles,TestGoFiles,XTestGoFiles,EmbedPatterns",
+    );
+    if !input.tags.is_empty() {
+        cmd.arg("-tags");
+        cmd.arg(input.tags.join(","));
+    }
+    cmd.arg("./...");
+
+    cmd.current_dir(&work_dir);
+    cmd.env_clear();
+    for (k, v) in inherit_env(&["HOME"]) {
+        cmd.env(&k, &v);
+    }
+    cmd.env("GOMODCACHE", modcache.path());
+    cmd.env("GOCACHE", modcache.path().join("gocache"));
+    cmd.env("GOPROXY", "off");
+    cmd.env("GOFLAGS", "");
+    cmd.env("GONOSUMCHECK", "*");
+    cmd.env("GOENV", "off");
+    cmd.env("GOWORK", "off");
+    if !input.goos.is_empty() {
+        cmd.env("GOOS", &input.goos);
+    }
+    if !input.goarch.is_empty() {
+        cmd.env("GOARCH", &input.goarch);
+    }
+    if !input.cgo_enabled.is_empty() {
+        cmd.env("CGO_ENABLED", &input.cgo_enabled);
+    }
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("local-import probe: failed to execute '{go_bin}'"))?;
+    if !output.status.success() {
+        bail!(
+            "local-import probe failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(output.stdout)
+}
+
+/// Inputs to `hash_cache_key`. Separated from `compute_cache_key` so the
+/// hashing can be unit-tested without a Go toolchain or filesystem.
+#[derive(Default)]
+pub(crate) struct CacheKeyParts<'a> {
+    pub(crate) go_sum: &'a [u8],
+    pub(crate) go_mod: &'a [u8],
+    pub(crate) probe: &'a [u8],
+    pub(crate) goos: &'a str,
+    pub(crate) goarch: &'a str,
+    pub(crate) cgo_enabled: &'a str,
+    pub(crate) tags: Vec<String>,
+    pub(crate) sub_packages: Vec<String>,
+    pub(crate) mod_root: &'a str,
+    pub(crate) do_check: bool,
+    pub(crate) resolve_hashes: bool,
+    pub(crate) go_version: &'a str,
+}
+
+/// Length-prefixed concatenation hash so adjacent fields cannot collide.
+pub(crate) fn hash_cache_key(p: &CacheKeyParts) -> String {
+    fn feed(h: &mut Sha256, b: &[u8]) {
+        h.update((b.len() as u64).to_le_bytes());
+        h.update(b);
+    }
+    let mut h = Sha256::new();
+    h.update(crate::resolve_cache::SCHEMA_VERSION.to_le_bytes());
+    feed(&mut h, p.go_sum);
+    feed(&mut h, p.go_mod);
+    feed(&mut h, p.probe);
+    feed(&mut h, p.goos.as_bytes());
+    feed(&mut h, p.goarch.as_bytes());
+    feed(&mut h, p.cgo_enabled.as_bytes());
+    let mut tags = p.tags.clone();
+    tags.sort();
+    feed(&mut h, tags.join(",").as_bytes());
+    let mut sps = p.sub_packages.clone();
+    sps.sort();
+    feed(&mut h, sps.join(",").as_bytes());
+    feed(&mut h, p.mod_root.as_bytes());
+    feed(&mut h, &[p.do_check as u8]);
+    feed(&mut h, &[p.resolve_hashes as u8]);
+    feed(&mut h, p.go_version.as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+/// Gather all key inputs from disk + the toolchain and hash them.
+pub(crate) fn compute_cache_key(input: &JsonInput, probe: &[u8]) -> Result<String> {
+    let go_bin = input
+        .go
+        .as_deref()
+        .or(DEFAULT_GO)
+        .ok_or_else(|| anyhow!("no go binary"))?;
+    let work_dir = mod_root_dir(&input.src, &input.mod_root);
+    let go_sum = std::fs::read(work_dir.join("go.sum")).unwrap_or_default();
+    let go_mod = std::fs::read(work_dir.join("go.mod")).unwrap_or_default();
+    // Toolchain identity: `go version` alone is insufficient — two toolchains
+    // with the same release but different baked-in GOEXPERIMENT or sub-arch
+    // defaults can select different files. `go env` of this small set captures
+    // the difference; an exec failure here disables the cache rather than
+    // hashing an empty string.
+    let go_version = Command::new(go_bin)
+        .args([
+            "env",
+            "GOVERSION",
+            "GOEXPERIMENT",
+            "GOAMD64",
+            "GOARM",
+            "GOARM64",
+            "GOFIPS140",
+        ])
+        .env("GOENV", "off")
+        .env("GOFLAGS", "")
+        .output()
+        .with_context(|| format!("running '{go_bin} env' for cache key"))
+        .and_then(|o| {
+            if o.status.success() {
+                Ok(String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            } else {
+                bail!("'{go_bin} env' exited {}", o.status.code().unwrap_or(-1))
+            }
+        })?;
+
+    Ok(hash_cache_key(&CacheKeyParts {
+        go_sum: &go_sum,
+        go_mod: &go_mod,
+        probe,
+        goos: &input.goos,
+        goarch: &input.goarch,
+        cgo_enabled: &input.cgo_enabled,
+        tags: input.tags.clone(),
+        sub_packages: input.sub_packages.clone(),
+        mod_root: &input.mod_root,
+        do_check: input.do_check,
+        resolve_hashes: input.resolve_hashes,
+        go_version: &go_version,
+    }))
+}
+
 pub(crate) fn parse_test_packages(
     stdout: &[u8],
     third_party_paths: &BTreeSet<String>,
@@ -705,6 +880,11 @@ pub(crate) struct JsonInput {
     /// Enables lockfile-free builds.
     #[serde(default)]
     pub(crate) resolve_hashes: bool,
+    /// Read-only directory of pre-built resolve-cache entries (`<key>.json`).
+    /// Passed as a JsonInput field (rather than only an env var) so Nix can
+    /// track the dependency via string context when it's a store path.
+    #[serde(default)]
+    pub(crate) resolve_cache_dir: Option<String>,
 }
 
 fn default_sub_packages() -> Vec<String> {
@@ -1008,6 +1188,61 @@ pub(crate) fn package_graph_to_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn key_parts(tags: &[&str], sps: &[&str]) -> CacheKeyParts<'static> {
+        CacheKeyParts {
+            go_sum: b"sum",
+            go_mod: b"mod",
+            probe: b"probe",
+            goos: "linux",
+            goarch: "amd64",
+            cgo_enabled: "1",
+            tags: tags.iter().map(|s| (*s).to_owned()).collect(),
+            sub_packages: sps.iter().map(|s| (*s).to_owned()).collect(),
+            mod_root: ".",
+            do_check: false,
+            resolve_hashes: true,
+            go_version: "go version go1.26.1 linux/amd64",
+        }
+    }
+
+    #[test]
+    fn cache_key_is_deterministic() {
+        let a = hash_cache_key(&key_parts(&["foo"], &["./..."]));
+        let b = hash_cache_key(&key_parts(&["foo"], &["./..."]));
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 64); // sha256 hex
+    }
+
+    #[test]
+    fn cache_key_varies_with_tags_and_subpackages() {
+        let base = hash_cache_key(&key_parts(&["foo"], &["./..."]));
+        assert_ne!(base, hash_cache_key(&key_parts(&["bar"], &["./..."])));
+        assert_ne!(base, hash_cache_key(&key_parts(&["foo"], &["./cmd/x"])));
+    }
+
+    #[test]
+    fn cache_key_sorts_tags_and_subpackages() {
+        let a = hash_cache_key(&key_parts(&["a", "b"], &["./x", "./y"]));
+        let b = hash_cache_key(&key_parts(&["b", "a"], &["./y", "./x"]));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_no_field_collision() {
+        // Length-prefixing prevents "su" + "mmod" == "sum" + "mod".
+        let a = hash_cache_key(&CacheKeyParts {
+            go_sum: b"su",
+            go_mod: b"mmod",
+            ..key_parts(&[], &[])
+        });
+        let b = hash_cache_key(&CacheKeyParts {
+            go_sum: b"sum",
+            go_mod: b"mod",
+            ..key_parts(&[], &[])
+        });
+        assert_ne!(a, b);
+    }
 
     /// Minimal go list JSON for a third-party package.
     fn third_party_json(import_path: &str, mod_path: &str, version: &str) -> String {

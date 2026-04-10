@@ -15,6 +15,7 @@ mod module_hashes;
 mod nar;
 mod nar_cache;
 mod resolve;
+mod resolve_cache;
 
 use std::ffi::{CStr, CString};
 
@@ -43,6 +44,30 @@ pub unsafe extern "C" fn resolve_go_packages_json(
 
         let opts: resolve::JsonInput =
             serde_json::from_str(input).map_err(|e| format!("failed to parse input JSON: {e}"))?;
+
+        // Persistent DAG cache: a cheap local-only `go list` probe + go.sum/
+        // go.mod + platform inputs key the full output JSON. On a hit we
+        // return without running `go list -deps`, so GOMODCACHE never needs
+        // to be realised. Any failure here is best-effort and falls through.
+        let cache_key = if std::env::var("GO2NIX_RESOLVE_CACHE").as_deref() == Ok("0") {
+            None
+        } else {
+            match resolve::run_local_import_probe(&opts)
+                .and_then(|probe| resolve::compute_cache_key(&opts, &probe))
+            {
+                Ok(key) => {
+                    if let Some(hit) = resolve_cache::read(opts.resolve_cache_dir.as_deref(), &key)
+                    {
+                        return Ok(hit);
+                    }
+                    Some(key)
+                }
+                Err(e) => {
+                    eprintln!("go2nix: resolve-cache disabled for this eval: {e:#}");
+                    None
+                }
+            }
+        };
 
         let graph = resolve::resolve_packages(&opts).map_err(|e| format!("{e:#}"))?;
 
@@ -74,8 +99,13 @@ pub unsafe extern "C" fn resolve_go_packages_json(
             std::collections::BTreeMap::new()
         };
 
-        resolve::package_graph_to_json(&graph, &opts.src, hashes)
-            .map_err(|e| format!("{e:#}"))
+        let json = resolve::package_graph_to_json(&graph, &opts.src, hashes)
+            .map_err(|e| format!("{e:#}"))?;
+
+        if let Some(key) = cache_key {
+            resolve_cache::write(&key, &json);
+        }
+        Ok(json)
     }
 
     match inner(input_json) {
