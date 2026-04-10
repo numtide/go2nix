@@ -15,5 +15,8 @@ import ../test-lib/run-dag-test.nix {
   };
   vendorHash = "sha256-cdW4DhPUubSvJ9edTYgum3ppEkEPuoYFrU+gonyCpOk=";
   dagFile = "${flake}/tests/packages/dotool/dag.nix";
-  checkCommand = "$result/bin/dotool --version";
+  checkCommand = ''
+    output=$($result/bin/dotool --version)
+    [ "$output" = "1.6" ] || { echo "FAIL: dotool --version = '$output', want '1.6' (ldflags -X main.Version not applied)"; exit 1; }
+  '';
 }
