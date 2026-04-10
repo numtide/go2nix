@@ -73,5 +73,11 @@ else
           || { echo "FAIL: missing 'build $key' in go version -m output"; exit 1; }
       done
 
+      echo "=== Asserting modinfo contains dep lines (lockfile mode) ==="
+      ndeps=$(grep -cE '^[[:space:]]+dep[[:space:]]' buildinfo.txt || true)
+      [ "$ndeps" -ge 1 ] || { echo "FAIL: expected >= 1 dep lines, got $ndeps"; exit 1; }
+      grep -E '^[[:space:]]+dep[[:space:]]+github\.com/stretchr/testify[[:space:]]' buildinfo.txt \
+        || { echo "FAIL: expected dep github.com/stretchr/testify"; exit 1; }
+
       echo "PASS: testify-basic" > $out
     ''

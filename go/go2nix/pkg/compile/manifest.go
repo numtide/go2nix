@@ -128,13 +128,26 @@ type LinkManifest struct {
 	SubPackages           []LinkSubPackage  `json:"subPackages"`
 	ModuleRoot            string            `json:"moduleRoot"`
 	Lockfile              *string           `json:"lockfile"`
-	Pname                 string            `json:"pname"`
-	GOOS                  *string           `json:"goos"`
-	GOARCH                *string           `json:"goarch"`
-	LDFlags               []string          `json:"ldflags"`
-	GCFlags               []string          `json:"gcflags"`
-	Tags                  []string          `json:"tags"`
-	PGOProfile            *string           `json:"pgoProfile"`
+	// Modules is the resolved third-party module set, threaded straight
+	// from the Nix build graph so debug.BuildInfo.Deps is populated
+	// regardless of whether a lockfile is in use.
+	Modules    []ManifestModule `json:"modules,omitempty"`
+	Pname      string           `json:"pname"`
+	GOOS       *string          `json:"goos"`
+	GOARCH     *string          `json:"goarch"`
+	LDFlags    []string         `json:"ldflags"`
+	GCFlags    []string         `json:"gcflags"`
+	Tags       []string         `json:"tags"`
+	PGOProfile *string          `json:"pgoProfile"`
+}
+
+// ManifestModule is one third-party module in a LinkManifest, used to
+// populate debug.BuildInfo.Deps.
+type ManifestModule struct {
+	Path           string `json:"path"`
+	Version        string `json:"version"`
+	ReplacePath    string `json:"replacePath,omitempty"`
+	ReplaceVersion string `json:"replaceVersion,omitempty"`
 }
 
 // LinkSubPackage is one main-package entry in a LinkManifest.

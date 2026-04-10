@@ -11,7 +11,6 @@ import (
 
 	"github.com/numtide/go2nix/pkg/buildinfo"
 	"github.com/numtide/go2nix/pkg/compile"
-	"github.com/numtide/go2nix/pkg/lockfile"
 	"github.com/numtide/go2nix/pkg/mvscheck"
 )
 
@@ -121,24 +120,13 @@ func linkBinary(manifestPath, output string) error {
 		return fmt.Errorf("getting Go version: %w", err)
 	}
 
-	var deps []buildinfo.ModDep
-	if m.Lockfile != nil && *m.Lockfile != "" {
-		lock, err := lockfile.Read(*m.Lockfile)
-		if err != nil {
-			return fmt.Errorf("reading lockfile: %w", err)
+	deps := make([]buildinfo.ModDep, 0, len(m.Modules))
+	for _, mm := range m.Modules {
+		dep := buildinfo.ModDep{Path: mm.Path, Version: mm.Version}
+		if mm.ReplacePath != "" {
+			dep.Replace = &buildinfo.ModDep{Path: mm.ReplacePath, Version: mm.ReplaceVersion}
 		}
-
-		for modKey := range lock.Mod {
-			modPath, version, ok := strings.Cut(modKey, "@")
-			if !ok {
-				continue
-			}
-			dep := buildinfo.ModDep{Path: modPath, Version: version}
-			if replacePath, ok := lock.Replace[modKey]; ok {
-				dep.Replace = &buildinfo.ModDep{Path: replacePath, Version: version}
-			}
-			deps = append(deps, dep)
-		}
+		deps = append(deps, dep)
 	}
 
 	godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot)
