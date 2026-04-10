@@ -413,18 +413,19 @@ let
   #   - Cross-app sharing: same local package in two apps = same derivation
   #   - Fine-grained rebuilds: changing internal/db doesn't rebuild internal/web
 
-  # Map relDir → set of immediate-child package dirs. Used to exclude
+  # O(1) "is this rel-dir a local package?" lookup, used to exclude
   # nested packages from a parent's pkgSrc — without this, touching
   # internal/store/ring.go invalidates the parent main package
   # because the recursive filter includes everything under the parent dir.
   # go:embed files in non-package subdirs are still included.
-  allLocalDirs = lib.mapAttrsToList (_: p: p.dir) goPackagesResult.localPackages;
-  childPkgDirsOf =
-    relDir:
-    let
-      prefix = if relDir == "." then "" else relDir + "/";
-    in
-    builtins.filter (d: d != relDir && (relDir == "." || lib.hasPrefix prefix d)) allLocalDirs;
+  # builtins.path does not descend into a directory the filter rejects,
+  # so an exact-match attrset check is sufficient (no prefix scan).
+  localPkgDirSet = builtins.listToAttrs (
+    lib.mapAttrsToList (_: p: {
+      name = p.dir;
+      value = true;
+    }) goPackagesResult.localPackages
+  );
 
   localPackages = builtins.mapAttrs (
     importPath: pkg:
@@ -437,35 +438,28 @@ let
       # A root-level package (relDir == ".") includes the entire source.
       isRoot = relDir == ".";
 
-      # Subdirectories under this package that are themselves packages —
-      # excluded so their source changes don't invalidate this one.
-      nestedPkgDirs = childPkgDirsOf relDir;
-      isInNestedPkg = rel: builtins.any (d: rel == d || lib.hasPrefix (d + "/") rel) nestedPkgDirs;
-
-      # Per-package filtered source: only this package's directory enters the store.
+      # Per-package filtered source: only this package's directory enters
+      # the store. Rooting at src+relDir (not src) means builtins.path
+      # walks just this subtree instead of pruning from the top of src
+      # for every local package. The filter only needs to drop nested
+      # package directories — builtins.path skips a rejected directory's
+      # children, so an O(1) set lookup on the directory itself suffices.
+      srcStr = toString src;
       pkgSrc = builtins.path {
-        path = src;
+        path = if isRoot then src else src + "/${relDir}";
         name = "golocal-${helpers.sanitizeName importPath}-src";
         filter =
-          path: _type:
+          path: type:
           let
-            rel = lib.removePrefix (toString src + "/") (toString path);
+            rel = lib.removePrefix (srcStr + "/") (toString path);
           in
-          if isInNestedPkg rel then
-            false
-          else if isRoot then
-            true
-          else
-            # Allow the root directory itself.
-            path == toString src
-            # Allow exact match and children of this package's directory.
-            || rel == relDir
-            || lib.hasPrefix (relDir + "/") rel
-            # Allow parent directories so Nix descends into them.
-            || lib.hasPrefix (rel + "/") relDir;
+          # Exclude directories that are themselves other local packages
+          # (their sources are isolated in their own pkgSrc). The root
+          # itself is never passed to the filter, so relDir won't match.
+          !(type == "directory" && localPkgDirSet ? ${rel});
       };
 
-      srcDir = if isRoot then "${pkgSrc}" else "${pkgSrc}/${relDir}";
+      srcDir = "${pkgSrc}";
 
       # Dependencies: other local packages + third-party packages.
       deps =

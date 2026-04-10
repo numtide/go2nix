@@ -64,7 +64,8 @@ pub unsafe extern "C" fn resolve_go_packages_json(
             let gomodcache = resolve::find_gomodcache(go_bin)
                 .map_err(|e| format!("finding GOMODCACHE: {e:#}"))?;
 
-            module_hashes::resolve_module_hashes(&go_sum_path, &gomodcache)
+            let wanted = graph.required_module_keys();
+            module_hashes::resolve_module_hashes(&go_sum_path, &gomodcache, Some(&wanted))
                 .map_err(|e| format!("resolving module hashes: {e:#}"))?
                 .into_iter()
                 .map(|(k, v)| (k, v.nar_hash))

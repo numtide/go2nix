@@ -447,6 +447,32 @@ pub(crate) struct PackageGraph {
     test_only_paths: BTreeSet<String>,
 }
 
+impl PackageGraph {
+    /// Set of "path@version" module keys actually referenced by the build
+    /// graph (third-party + test packages, plus replacement targets). Used
+    /// to filter go.sum before NAR-hashing — go.sum is a superset of the
+    /// build list (it includes every module MVS considered).
+    pub(crate) fn required_module_keys(&self) -> BTreeSet<String> {
+        let mut keys = BTreeSet::new();
+        for p in self.packages.iter().chain(self.test_packages.iter()) {
+            let effective = if p.replace_version.is_empty() {
+                &p.mod_version
+            } else {
+                &p.replace_version
+            };
+            keys.insert(format!("{}@{}", p.mod_path, effective));
+        }
+        // Replacement targets are what go.sum actually keys on when a
+        // module is replaced; include them so the hash is available.
+        for (path, version) in self.replacements.values() {
+            if !version.is_empty() {
+                keys.insert(format!("{path}@{version}"));
+            }
+        }
+        keys
+    }
+}
+
 pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
     let mut packages = Vec::new();
     let mut pkg_errors = Vec::new();
