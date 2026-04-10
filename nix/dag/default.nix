@@ -493,6 +493,23 @@ let
   # without -lang (silently flipping loopvar semantics for pre-1.22 modules).
   localGoVersion = goPackagesResult.goVersion or "";
 
+  # importPath → srcOverlay store path for local packages with one set.
+  # Mirrors the per-package override lookup below so the testrunner sees
+  # the same overlay the compile drv applied. Threaded into
+  # testManifestJSON.srcOverlays so checkPhase can layer overlay content
+  # before ResolveEmbeds — without this an in-closure srcOverlay package
+  # (e.g. an embedded UI dist imported by the main binary) fails the
+  # testrunner's embed resolution with "no matching files found".
+  localSrcOverlays = lib.filterAttrs (_: v: v != null) (
+    builtins.mapAttrs (
+      importPath: _:
+      let
+        override = packageOverrides.${importPath} or packageOverrides.${goPackagesResult.modulePath} or { };
+      in
+      if override ? srcOverlay then "${override.srcOverlay}" else null
+    ) allLocalPkgInfo
+  );
+
   localPackages = builtins.mapAttrs (
     importPath: pkg:
     let
@@ -1033,6 +1050,7 @@ let
           if hasTestDeps then [ "${testDepsImportcfg}/importcfg" ] else [ "${depsImportcfg}/importcfg" ];
         localIfaces = builtins.mapAttrs (importPath: pkg: "${pkg.iface}/${importPath}.x") localPackages;
       }
+      // lib.optionalAttrs (localSrcOverlays != { }) { srcOverlays = localSrcOverlays; }
       // {
         inherit moduleRoot;
         inherit tags;

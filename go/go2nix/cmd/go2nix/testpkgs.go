@@ -104,6 +104,7 @@ func runTestPackagesCmd(args []string) {
 		GCFlagsList:      m.GCFlags,
 		CheckFlagsList:   m.CheckFlags,
 		LocalArchives:    m.LocalArchives,
+		SrcOverlays:      m.SrcOverlays,
 	}
 
 	if err := testrunner.Run(opts); err != nil {
