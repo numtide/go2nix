@@ -45,7 +45,14 @@ else
       result=$(nix-build ${go2nixSrc}/tests/fixtures/cxx-pkgconfig/dag.nix \
         -I nixpkgs=${nixpkgsPath} \
         --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
-        --no-out-link)
+        --no-out-link 2>build.log)
+      cat build.log >&2
+
+      # The dynimport test-link uses CXX when the package has C++ sources
+      # (cmd/go's gccld); a CC-driven attempt would emit
+      # "undefined reference to symbol '_ZdlPvm'" before the build recovers.
+      ! grep -qE 'undefined reference|_ZdlPvm' build.log \
+        || { echo "FAIL: dynimport test-link used CC for a CXXFiles package"; exit 1; }
 
       got=$($result/bin/cxx-pkgconfig)
       [ "$got" = "hello-snappy" ] || { echo "FAIL: got '$got', want hello-snappy"; exit 1; }
