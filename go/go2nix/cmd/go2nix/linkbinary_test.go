@@ -8,9 +8,10 @@ import (
 
 func TestExpandLDFlags(t *testing.T) {
 	tests := []struct {
-		name  string
-		flags []string
-		want  []string
+		name    string
+		flags   []string
+		want    []string
+		wantErr bool
 	}{
 		{
 			name:  "nil input",
@@ -43,6 +44,16 @@ func TestExpandLDFlags(t *testing.T) {
 			want:  []string{"-s", "-X", "main.Version=1.6", "-w", "-X", "main.Commit=abc"},
 		},
 		{
+			name:  "quoted extldflags are preserved as one value",
+			flags: []string{"-extldflags '-static -L/foo/lib '"},
+			want:  []string{"-extldflags", "-static -L/foo/lib "},
+		},
+		{
+			name:  "double-quoted values are preserved",
+			flags: []string{`-X "main.Message=hello world"`},
+			want:  []string{"-X", "main.Message=hello world"},
+		},
+		{
 			name:  "extra whitespace is collapsed",
 			flags: []string{"  -s  ", "  -X   main.Version=1.6  "},
 			want:  []string{"-s", "-X", "main.Version=1.6"},
@@ -52,11 +63,40 @@ func TestExpandLDFlags(t *testing.T) {
 			flags: []string{"", "-s", ""},
 			want:  []string{"-s"},
 		},
+		{
+			name:    "unterminated quoted string returns error",
+			flags:   []string{"-extldflags '-static -L/foo/lib"},
+			wantErr: true,
+		},
+		{
+			name:  "literal backslash preserved",
+			flags: []string{"-X main.Path=C:\\Users\\me"},
+			want:  []string{"-X", "main.Path=C:\\Users\\me"},
+		},
+		{
+			name:  "mid-token quote is literal",
+			flags: []string{`a"b c"d`},
+			want:  []string{`a"b`, `c"d`},
+		},
+		{
+			name:  "adjacent quoted fields",
+			flags: []string{`"hello" "world"`},
+			want:  []string{"hello", "world"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := expandLDFlags(tt.flags)
+			got, err := expandLDFlags(tt.flags)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expandLDFlags(%v) returned nil error, want error", tt.flags)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expandLDFlags(%v) returned unexpected error: %v", tt.flags, err)
+			}
 			if !slicesEqual(got, tt.want) {
 				t.Errorf("expandLDFlags(%v) = %v, want %v", tt.flags, got, tt.want)
 			}

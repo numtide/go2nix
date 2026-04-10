@@ -289,7 +289,11 @@ func linkBinary(manifestPath, output string) error {
 			"-buildmode=" + buildMode,
 			"-importcfg", linkCfg,
 		}
-		linkArgs = append(linkArgs, expandLDFlags(m.LDFlags)...)
+		ldflags, err := expandLDFlags(m.LDFlags)
+		if err != nil {
+			return fmt.Errorf("parsing ldflags for %s: %w", importpath, err)
+		}
+		linkArgs = append(linkArgs, ldflags...)
 		linkArgs = append(linkArgs, linkFlags...)
 		linkArgs = append(linkArgs, "-o", filepath.Join(binDir, binname))
 		linkArgs = append(linkArgs, mainArchive)
@@ -333,14 +337,67 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// expandLDFlags splits each ldflag element by whitespace into separate args.
-// Nix users write ldflags like ["-X main.Version=1.6"] (one string with a
-// space). When invoking the linker directly (not via `go build`), each token
-// must be a separate exec arg.
-func expandLDFlags(flags []string) []string {
+// expandLDFlags splits each ldflag element into separate exec arguments using
+// the same quoting rules as `go build -ldflags` (cmd/internal/quoted.Split).
+//
+// Nix users write ldflags like ["-X main.Version=1.6"] or
+// ["-extldflags '-static -L/foo/lib'"] and expect the quoted value to stay
+// intact when invoking the linker directly.
+func expandLDFlags(flags []string) ([]string, error) {
 	var out []string
 	for _, f := range flags {
-		out = append(out, strings.Fields(f)...)
+		parts, err := quotedSplit(f)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, parts...)
 	}
-	return out
+	return out, nil
+}
+
+// quotedSplit is copied from src/cmd/internal/quoted/quoted.go (Go 1.26.1,
+// BSD-3-Clause) so go2nix's ldflags parsing matches go build -ldflags exactly.
+// Upstream ships an identical copy in cmd/dist/quoted.go for the same reason.
+//
+// Split splits s into a list of fields, allowing single or double quotes
+// around elements. There is no unescaping or other processing within
+// quoted fields.
+func quotedSplit(s string) ([]string, error) {
+	// Split fields allowing '' or "" around elements.
+	// Quotes further inside the string do not count.
+	var f []string
+	for len(s) > 0 {
+		for len(s) > 0 && isSpaceByte(s[0]) {
+			s = s[1:]
+		}
+		if len(s) == 0 {
+			break
+		}
+		// Accepted quoted string. No unescaping inside.
+		if s[0] == '"' || s[0] == '\'' {
+			quote := s[0]
+			s = s[1:]
+			i := 0
+			for i < len(s) && s[i] != quote {
+				i++
+			}
+			if i >= len(s) {
+				return nil, fmt.Errorf("unterminated %c string", quote)
+			}
+			f = append(f, s[:i])
+			s = s[i+1:]
+			continue
+		}
+		i := 0
+		for i < len(s) && !isSpaceByte(s[i]) {
+			i++
+		}
+		f = append(f, s[:i])
+		s = s[i:]
+	}
+	return f, nil
+}
+
+func isSpaceByte(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
