@@ -42,7 +42,15 @@ else
         --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
         --no-out-link)
 
-      $result/bin/cgo-internal-test
+      out=$($result/bin/cgo-internal-test); echo "$out"
+
+      echo "=== Asserting srcOverlay won over source-tree embeds (cgo + raw paths) ==="
+      banner=$(echo "$out" | sed -n 2p)
+      version=$(echo "$out" | sed -n 3p)
+      [ "$banner" = "hello-from-overlay" ] \
+        || { echo "FAIL: adder.Banner() = '$banner', want hello-from-overlay (cgo srcOverlay path)"; exit 1; }
+      [ "$version" = "v1.2.3-overlay" ] \
+        || { echo "FAIL: stamp.Version = '$version', want v1.2.3-overlay (rawGoCompile srcOverlay path)"; exit 1; }
 
       echo "=== Asserting purebin (built after a cgo subPackage) is statically linked ==="
       [ "$($result/bin/purebin)" = "pure" ] || { echo "FAIL: purebin output"; exit 1; }

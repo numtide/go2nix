@@ -22,4 +22,21 @@ goEnv.buildGoApplication {
     "."
     "./cmd/purebin"
   ];
+  # srcOverlay regression: adder is cgo (stdenv hook path), stamp is
+  # pure Go (rawGoCompile path). The overlay must win over the
+  # source-tree placeholder in both.
+  packageOverrides = {
+    "example.com/cgo-internal-test/internal/adder" = {
+      srcOverlay = pkgs.runCommand "adder-overlay" { } ''
+        mkdir -p $out
+        echo -n "hello-from-overlay" > $out/data.txt
+      '';
+    };
+    "example.com/cgo-internal-test/internal/stamp" = {
+      srcOverlay = pkgs.runCommand "stamp-overlay" { } ''
+        mkdir -p $out
+        echo -n "v1.2.3-overlay" > $out/VERSION
+      '';
+    };
+  };
 }
