@@ -211,9 +211,12 @@ func CollectGoModModules(dir string) ([]ModInfo, error) {
 		return nil, fmt.Errorf("parsing go.mod: %w", err)
 	}
 
-	replaces := make(map[string]*modfile.Replace, len(mf.Replace))
+	// Key by (Old.Path, Old.Version): a replace with Old.Version != "" applies
+	// only when the module resolves to exactly that version. The wildcard form
+	// (Old.Version == "") applies to any version. Mirrors modfile semantics.
+	replaces := make(map[module.Version]*modfile.Replace, len(mf.Replace))
 	for _, r := range mf.Replace {
-		replaces[r.Old.Path] = r
+		replaces[r.Old] = r
 	}
 
 	seen := map[string]bool{}
@@ -223,7 +226,11 @@ func CollectGoModModules(dir string) ([]ModInfo, error) {
 		version := req.Mod.Version
 		fetchPath := modPath
 
-		if r, ok := replaces[modPath]; ok {
+		r, ok := replaces[req.Mod]
+		if !ok {
+			r, ok = replaces[module.Version{Path: modPath}]
+		}
+		if ok {
 			if r.New.Version == "" {
 				// Local replace — skip.
 				continue

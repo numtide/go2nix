@@ -90,6 +90,11 @@
           test-fixture-torture-app-full = callPkgWith ./packages/test-fixture-torture-app-full/default.nix {
             inherit flake system;
           };
+          test-fixture-torture-app-replace =
+            callPkgWith ./packages/test-fixture-torture-app-replace/default.nix
+              {
+                inherit flake system;
+              };
 
           go2nix-testgen = callPkgWith ./packages/go2nix-testgen/default.nix {
             inherit flake system;
