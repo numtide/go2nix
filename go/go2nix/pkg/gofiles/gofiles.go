@@ -166,7 +166,7 @@ func ResolveEmbedCfg(dir string, patterns []string) (*EmbedCfg, error) {
 			return nil, fmt.Errorf("pattern %q: invalid pattern syntax", pattern)
 		}
 
-		match, err := filepath.Glob(filepath.Join(dir, filepath.FromSlash(glob)))
+		match, err := filepath.Glob(filepath.Join(quoteGlob(dir), filepath.FromSlash(glob)))
 		if err != nil {
 			return nil, fmt.Errorf("pattern %q: %w", pattern, err)
 		}
@@ -323,6 +323,24 @@ func sliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// quoteGlob returns s with all filepath.Glob metacharacters quoted so they
+// match literally. Ported from cmd/go/internal/str.QuoteGlob. Backslash is
+// not escaped (it is the path separator on Windows).
+func quoteGlob(s string) string {
+	if !strings.ContainsAny(s, `*?[`) {
+		return s
+	}
+	var sb strings.Builder
+	for _, c := range s {
+		switch c {
+		case '*', '?', '[':
+			sb.WriteByte('\\')
+		}
+		sb.WriteRune(c)
+	}
+	return sb.String()
 }
 
 // validEmbedPattern reports whether pattern is a valid //go:embed pattern.

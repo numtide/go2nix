@@ -11,6 +11,7 @@ package testmain
 
 import (
 	"bytes"
+	"errors"
 	"go/ast"
 	"go/doc"
 	"go/parser"
@@ -107,7 +108,7 @@ func (t *testFuncs) load(fset *token.FileSet, filename, pkg string, doImport, se
 			}
 			if isTestFunc(n, "M") {
 				if t.TestMain != nil {
-					continue // multiple TestMain — skip
+					return errors.New("multiple definitions of TestMain")
 				}
 				t.TestMain = &testFunc{pkg, name, "", false}
 				*doImport, *seen = true, true

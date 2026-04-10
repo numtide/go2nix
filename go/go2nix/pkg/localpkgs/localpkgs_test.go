@@ -3,6 +3,7 @@ package localpkgs
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -331,5 +332,56 @@ func TestAdd(t *testing.T) {
 	}
 	if pkg.TestGoFiles[0] != "foo_test.go" {
 		t.Errorf("TestGoFiles[0] = %q, want foo_test.go", pkg.TestGoFiles[0])
+	}
+}
+
+func TestListLocalPackages_TestEmbedFilesSorted(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(root, "lib.go"), "package test\n")
+	writeFile(t, filepath.Join(root, "lib_test.go"), `package test
+
+import (
+	"embed"
+	"testing"
+)
+
+//go:embed *.txt
+var fs embed.FS
+
+func TestEmbed(t *testing.T) { _ = fs }
+`)
+	writeFile(t, filepath.Join(root, "ext_test.go"), `package test_test
+
+import (
+	"embed"
+	"testing"
+)
+
+//go:embed *.txt
+var fs embed.FS
+
+func TestExtEmbed(t *testing.T) { _ = fs }
+`)
+	for _, name := range []string{"c.txt", "a.txt", "d.txt", "b.txt", "e.txt"} {
+		writeFile(t, filepath.Join(root, name), "x")
+	}
+
+	pkgs, err := ListLocalPackages(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("expected 1 package, got %d", len(pkgs))
+	}
+	pkg := pkgs[0]
+
+	want := []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"}
+	if !slices.Equal(pkg.TestEmbedFiles, want) {
+		t.Errorf("TestEmbedFiles = %v, want %v (sorted)", pkg.TestEmbedFiles, want)
+	}
+	if !slices.Equal(pkg.XTestEmbedFiles, want) {
+		t.Errorf("XTestEmbedFiles = %v, want %v (sorted)", pkg.XTestEmbedFiles, want)
 	}
 }

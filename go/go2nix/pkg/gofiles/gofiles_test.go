@@ -293,6 +293,28 @@ func TestResolveEmbedCfg_DirModuleBoundary(t *testing.T) {
 	}
 }
 
+func TestResolveEmbedCfg_DirWithGlobMeta(t *testing.T) {
+	// Package directory path contains glob metacharacters; they must be
+	// matched literally, not as a glob, when resolving embed patterns.
+	base := t.TempDir()
+	dir := filepath.Join(base, "proj[v2]")
+	writeFile(t, filepath.Join(dir, "a.txt"), "a")
+	writeFile(t, filepath.Join(dir, "b.txt"), "b")
+
+	cfg, err := ResolveEmbedCfg(dir, []string{"*.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched := cfg.Patterns["*.txt"]
+	slices.Sort(matched)
+	if !slices.Equal(matched, []string{"a.txt", "b.txt"}) {
+		t.Errorf("Patterns[*.txt] = %v, want [a.txt b.txt]", matched)
+	}
+	if cfg.Files["a.txt"] != filepath.Join(dir, "a.txt") {
+		t.Errorf("Files[a.txt] = %q, want %q", cfg.Files["a.txt"], filepath.Join(dir, "a.txt"))
+	}
+}
+
 func TestResolveEmbedCfg_Deduplication(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "readme.txt"), "hello")
