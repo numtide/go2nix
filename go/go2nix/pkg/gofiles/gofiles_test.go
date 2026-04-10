@@ -320,23 +320,6 @@ func TestResolveEmbedCfg_InvalidPattern(t *testing.T) {
 	}
 }
 
-func TestResolveEmbedCfg_IrregularFileRejected(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "real.txt"), "real")
-	// Create a symlink — should be rejected as irregular.
-	if err := os.Symlink("real.txt", filepath.Join(dir, "link.txt")); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := ResolveEmbedCfg(dir, []string{"link.txt"})
-	if err == nil {
-		t.Fatal("expected error for symlink, got nil")
-	}
-	if !strings.Contains(err.Error(), "irregular file") {
-		t.Errorf("expected 'irregular file' in error, got: %v", err)
-	}
-}
-
 func TestResolveEmbedCfg_ModuleBoundary(t *testing.T) {
 	dir := t.TempDir()
 	// Create a subdirectory that contains its own go.mod — a module boundary.
@@ -427,5 +410,52 @@ func TestResolveEmbedCfg_Deduplication(t *testing.T) {
 	}
 	if len(cfg.Patterns["readme.txt"]) != 1 {
 		t.Errorf("Patterns[readme.txt] = %v, want 1 entry", cfg.Patterns["readme.txt"])
+	}
+}
+
+func TestResolveEmbedCfg_SymlinkLeafFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "real.txt"), "content")
+	if err := os.Symlink("real.txt", filepath.Join(dir, "link.txt")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	cfg, err := ResolveEmbedCfg(dir, []string{"link.txt"})
+	if err != nil {
+		t.Fatalf("ResolveEmbedCfg(link.txt) errored: %v; symlinked leaf files must be embeddable (golang/go#59924)", err)
+	}
+	if got := cfg.Patterns["link.txt"]; len(got) != 1 || got[0] != "link.txt" {
+		t.Errorf("Patterns[link.txt] = %v, want [link.txt]", got)
+	}
+	if cfg.Files["link.txt"] != filepath.Join(dir, "link.txt") {
+		t.Errorf("Files[link.txt] = %q, want %q", cfg.Files["link.txt"], filepath.Join(dir, "link.txt"))
+	}
+}
+
+func TestResolveEmbedCfg_SymlinkToDirectoryRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "realdir", "f.txt"), "x")
+	if err := os.Symlink("realdir", filepath.Join(dir, "linkdir")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	_, err := ResolveEmbedCfg(dir, []string{"linkdir"})
+	if err == nil {
+		t.Fatal("ResolveEmbedCfg(linkdir) succeeded; want error: symlink-to-directory must be rejected (only leaf files are followed)")
+	}
+	if !strings.Contains(err.Error(), "cannot embed irregular file") {
+		t.Errorf("got %q, want error containing %q", err, "cannot embed irregular file")
+	}
+}
+
+func TestResolveEmbedCfg_DanglingSymlinkRejected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("nonexistent", filepath.Join(dir, "dangling.txt")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	_, err := ResolveEmbedCfg(dir, []string{"dangling.txt"})
+	if err == nil {
+		t.Fatal("ResolveEmbedCfg(dangling.txt) succeeded; want error: dangling symlinks must be rejected")
 	}
 }
