@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"go/build"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -120,19 +121,26 @@ func linkBinary(manifestPath, output string) error {
 		return fmt.Errorf("getting Go version: %w", err)
 	}
 
-	godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot)
-
+	// DefaultGODEBUG depends on per-main-package //go:debug source
+	// directives, so it (and the BuildSettings that carry it) is computed
+	// inside the SubPackages loop. Everything else is invariant.
 	settings := buildinfo.BuildSettings{
-		BuildMode:      buildMode,
-		Tags:           strings.Join(m.Tags, ","),
-		DefaultGODEBUG: godebugDefault,
-		CGOEnabled:     compile.GoEnvVar("CGO_ENABLED"),
-		GOARCH:         goarch,
-		GOOS:           goos,
+		BuildMode:  buildMode,
+		Tags:       strings.Join(m.Tags, ","),
+		CGOEnabled: compile.GoEnvVar("CGO_ENABLED"),
+		GOARCH:     goarch,
+		GOOS:       goos,
 	}
 	if key := buildinfo.ArchLevelVar(goarch); key != "" {
 		settings.GOARCHLevel = compile.GoEnvVar(key)
 	}
+
+	// build.Context for ParseSourceGodebugs — directive collection respects
+	// build constraints, so use the same GOOS/GOARCH/tags as the compile.
+	bctx := build.Default
+	bctx.GOOS = goos
+	bctx.GOARCH = goarch
+	bctx.BuildTags = m.Tags
 
 	// Step 6: Read merged importcfg once; the per-binary modinfo line (which
 	// carries BuildInfo.Path = main package import path) is appended inside
@@ -202,6 +210,10 @@ func linkBinary(manifestPath, output string) error {
 			srcdir = filepath.Join(m.ModuleRoot, clean)
 			binname = filepath.Base(clean)
 		}
+
+		srcDirectives := buildinfo.ParseSourceGodebugs(&bctx, srcdir)
+		godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot, srcDirectives)
+		settings.DefaultGODEBUG = godebugDefault
 
 		slog.Info("compiling main", "pkg", importpath)
 

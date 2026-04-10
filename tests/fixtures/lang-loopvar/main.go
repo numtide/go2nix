@@ -1,3 +1,11 @@
+// Binary lang-loopvar is the regression fixture for -lang threading.
+//
+// The //go:debug directive below is the regression fixture for source-file
+// godebug parsing: with go 1.21 the table-derived DefaultGODEBUG would not
+// include panicnil (Changed=21), so its presence proves the directive was
+// honoured.
+//
+//go:debug panicnil=1
 package main
 
 import (

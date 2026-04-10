@@ -26,7 +26,10 @@ else
   in
   pkgs.runCommand "test-dag-fixture-lang-loopvar"
     {
-      nativeBuildInputs = [ nix ];
+      nativeBuildInputs = [
+        nix
+        pkgs.go
+      ];
       requiredSystemFeatures = [ "recursive-nix" ];
     }
     ''
@@ -40,5 +43,11 @@ else
         --no-out-link)
 
       $result/bin/lang-loopvar
+
+      echo "=== Verifying //go:debug source directive is honoured ==="
+      go version -m $result/bin/lang-loopvar | tee /tmp/modinfo
+      grep -q "DefaultGODEBUG=.*panicnil=1" /tmp/modinfo \
+        || { echo "FAIL: DefaultGODEBUG missing panicnil=1 from //go:debug"; exit 1; }
+
       echo "PASS: lang-loopvar" > $out
     ''
