@@ -20,11 +20,13 @@ func TestAdd(t *testing.T) {
 	}
 }
 
-// TestBanner asserts the source-tree data.txt, not the srcOverlay value:
-// the testrunner recompiles from mainSrc (link-derivation source), which
-// srcOverlay does not touch. This pins that divergence so it's deliberate.
-func TestBanner(t *testing.T) {
-	if got := Banner(); got != "hello-from-embed" {
-		t.Fatalf("Banner() = %q, want %q", got, "hello-from-embed")
+// TestBannerFromOverlay is the testrunner srcOverlay regression: data.txt in
+// the source tree says "hello-from-embed", but dag.nix's
+// packageOverrides.<adder>.srcOverlay supplies "hello-from-overlay". The
+// testrunner now layers the same overlay (via testManifest.srcOverlays)
+// before ResolveEmbeds/compile, so checkPhase sees what the build saw.
+func TestBannerFromOverlay(t *testing.T) {
+	if got := Banner(); got != "hello-from-overlay" {
+		t.Fatalf("Banner() = %q, want %q (testrunner must apply srcOverlay)", got, "hello-from-overlay")
 	}
 }

@@ -195,10 +195,14 @@ type TestManifest struct {
 	// step still uses ImportcfgParts/LocalArchives (.a link objects).
 	CompileImportcfgParts []string          `json:"compileImportcfgParts,omitempty"`
 	LocalIfaces           map[string]string `json:"localIfaces,omitempty"`
-	ModuleRoot            string            `json:"moduleRoot"`
-	Tags                  []string          `json:"tags"`
-	GCFlags               []string          `json:"gcflags"`
-	CheckFlags            []string          `json:"checkFlags"`
+	// SrcOverlays maps importPath → packageOverrides.<pkg>.srcOverlay store
+	// path so the testrunner can layer the same overlay before
+	// ResolveEmbeds/compile, mirroring compile-go-pkg.sh.
+	SrcOverlays map[string]string `json:"srcOverlays,omitempty"`
+	ModuleRoot  string            `json:"moduleRoot"`
+	Tags        []string          `json:"tags"`
+	GCFlags     []string          `json:"gcflags"`
+	CheckFlags  []string          `json:"checkFlags"`
 }
 
 // LoadTestManifest reads and validates a test manifest from path.

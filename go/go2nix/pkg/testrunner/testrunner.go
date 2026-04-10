@@ -41,6 +41,13 @@ type Options struct {
 	// them just produces a confusing "could not import" failure.
 	// Nil means no filter (test everything ListLocalPackages finds).
 	LocalArchives map[string]string
+	// SrcOverlays maps importPath → packageOverrides.<pkg>.srcOverlay
+	// store path. The per-package compile drv layered this onto its
+	// pkgSrc before ResolveEmbedCfg (compile-go-pkg.sh:24-28); the
+	// testrunner walks mainSrc instead, so without re-applying the
+	// overlay any in-closure srcOverlay package fails embed resolution
+	// (or, with placeholders present, observes source-tree content).
+	SrcOverlays map[string]string
 }
 
 func (o Options) checkFlagsArgs() []string {
@@ -108,6 +115,11 @@ func Run(opts Options) error {
 		if !inScope(p.ImportPath) {
 			continue
 		}
+		if overlay, ok := opts.SrcOverlays[p.ImportPath]; ok {
+			if err := applySrcOverlay(p, overlay); err != nil {
+				return fmt.Errorf("applying srcOverlay for %s: %w", p.ImportPath, err)
+			}
+		}
 		if err := p.ResolveEmbeds(); err != nil {
 			return fmt.Errorf("listing local packages: %w", err)
 		}
@@ -118,6 +130,26 @@ func Run(opts Options) error {
 			return fmt.Errorf("testing %s: %w", p.ImportPath, err)
 		}
 	}
+	return nil
+}
+
+// applySrcOverlay layers the packageOverrides.<pkg>.srcOverlay derivation
+// onto a writable copy of the package's source dir and repoints p.SrcDir
+// at it, mirroring compile-go-pkg.sh's overlay step. Subsequent
+// ResolveEmbeds and any internal/xtest recompile then see overlay content.
+func applySrcOverlay(p *localpkgs.LocalPkg, overlay string) error {
+	dst, err := os.MkdirTemp("", "srcoverlay-*")
+	if err != nil {
+		return err
+	}
+	for _, src := range []string{p.SrcDir, overlay} {
+		cmd := exec.Command("cp", "-rL", "--no-preserve=mode", src+"/.", dst+"/")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("cp -rL %s: %w: %s", src, err, out)
+		}
+	}
+	slog.Debug("applied srcOverlay", "pkg", p.ImportPath, "overlay", overlay)
+	p.SrcDir = dst
 	return nil
 }
 

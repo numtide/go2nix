@@ -147,8 +147,6 @@ Keep a placeholder file in the source tree (e.g. `ui/dist/.gitkeep`) so
 the eval-time `go list` doesn't error on a `//go:embed` pattern with zero
 matches; the overlay then replaces or augments it at build time.
 
-`srcOverlay` only reaches the per-package compile derivation. The
-`doCheck` testrunner recompiles from the link derivation's `mainSrc`,
-which is the unmodified source tree — so tests see the placeholder, not
-the overlay. This is usually what you want (tests don't need the bundled
-SPA), but if a test asserts on overlaid content it will fail.
+The `doCheck` testrunner applies the same overlay before resolving
+`//go:embed` patterns and recompiling for tests, so tests see the
+overlaid content too.
