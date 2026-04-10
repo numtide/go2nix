@@ -67,6 +67,10 @@ time and emits an IFD warning.
 | `meta` | attrset | `{}` | default only | Nix meta attributes. |
 | `contentAddressed` | bool | `false` | default only | Make per-package and importcfg derivations floating-CA and add an `iface` (export-data) output so private-symbol-only edits don't cascade. Requires the `ca-derivations` experimental feature; the final binary stays input-addressed. See [Incremental Builds → Early cutoff](incremental-builds.md#early-cutoff-with-contentaddressed--true) for details and limitations. |
 
+Any attribute not listed above is forwarded to the final `mkDerivation`.
+`env`, `buildInputs`, `passthru`, and `disallowedReferences` are merged
+with the builder's own values rather than replacing them.
+
 ## `modRoot`
 
 When building one module inside a larger source tree (e.g., a monorepo), set

@@ -19,14 +19,14 @@ builtins.resolveGoPackages {
   subPackages = [ "./..." ];     # optional, default ["./..."]
   modRoot     = ".";             # optional
   tags        = [ ];             # optional build tags
-  goos        = null;            # optional cross target
-  goarch      = null;            # optional cross target
-  goProxy     = null;            # optional GOPROXY override
-  cgoEnabled  = null;            # optional CGO_ENABLED value
   doCheck     = false;           # also resolve test-only deps
   resolveHashes = false;         # also compute module NAR hashes
 }
 ```
+
+`goos`, `goarch`, and `cgoEnabled` may also be passed as **strings** (e.g.
+`goos = "linux"`); omit them entirely to use the host platform — passing
+`null` is rejected. `goProxy` accepts a string or `null`.
 
 `go` is intentionally omitted: the plugin defaults to the Go toolchain baked
 in at its own build time, so the call carries no derivation context and the
@@ -37,9 +37,11 @@ but a derivation-backed value like `"${pkgs.go}/bin/go"` will be rejected.
 It runs `go list -json -deps` against `src` and returns:
 
 - `packages` — third-party package metadata (`modKey`, `subdir`,
-  `imports`, `drvName`, `isCgo`)
+  `imports`, `drvName`, `isCgo`, plus optionally `cgoPkgConfig`,
+  `cgoCflags`, `cgoLdflags`, `files`)
 - `localPackages` — local package metadata (`dir`, `localImports`,
-  `thirdPartyImports`, `isCgo`)
+  `thirdPartyImports`, `isCgo`, plus optionally `cgoPkgConfig`,
+  `cgoCflags`, `cgoLdflags`, `files`)
 - `modulePath` — the main module's import path
 - `goVersion` — the main module's `go` directive (e.g. `"1.25"`); the dag
   builder threads this as `-lang` to local-package compiles

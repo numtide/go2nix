@@ -104,9 +104,17 @@ both modes.
 
 Pure Nix utility functions:
 
-- `sanitizeName` — Whitelist `[a-zA-Z0-9+-._?=]`, `/` → `-`, `~` → `_`, `@` → `_at_` for derivation names.
+- `sanitizeName` / `maxSanitizedLen` — `/` → `-`, `~` → `_`, `@` → `_at_`;
+  results longer than 160 chars are truncated to a prefix + 8-hex-char
+  sha256 of the original. Mirrored in `pkg/nixdrv/sanitize.go` and the
+  Rust plugin.
 - `removePrefix` — Substring after a known prefix.
 - `escapeModPath` — Go module case-escaping (`A` → `!a`).
+- `normalizeSubPackages` — canonicalise `./cmd/foo` / `cmd/foo` / `./...`
+  inputs to the form the dag builder expects.
+- `parseLocalReplaces` / `goModLocalReplaceDirs` — extract local-path
+  `replace` targets from a `go.mod` and transitively walk them, used to
+  derive `srcDirs` automatically.
 
 ## Staleness detection
 

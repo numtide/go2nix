@@ -106,7 +106,7 @@ for ad-hoc builds and during early development.
 
 | When | What | Applies to | How |
 |------|------|-----------|-----|
-| Generation | MVS ([Minimal Version Selection](https://go.dev/ref/mod#minimal-version-selection)) consistency | All modes | `go list -json -deps` resolves actual versions |
+| Generation | Module set | All modes | parses `go.mod`/`go.sum` directly (no `go list` invocation) |
 | Nix eval | Package graph | Default only | `builtins.resolveGoPackages` runs `go list` at eval time |
 | Build time | Lockfile consistency | Default, with lockfile | `link-binary` re-reads `go.mod` and checks every required module is present in the lockfile at the right version; skipped when `goLock = null` |
 

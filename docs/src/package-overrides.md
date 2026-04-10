@@ -19,12 +19,8 @@ compiling a package, the builder looks up an override in this order:
 
 Only the first match is used; entries are **not** merged. Module-path keys
 are convenient when one module ships many cgo packages that all need the
-same system libraries.
-
-> The module-path fallback applies to **third-party** (and test) packages
-> only. Local packages from your own main module are matched by exact
-> import path; a key equal to your main module's path will not be applied
-> to every local package.
+same system libraries. The fallback applies uniformly to local, third-party,
+and test packages.
 
 ## Supported keys
 

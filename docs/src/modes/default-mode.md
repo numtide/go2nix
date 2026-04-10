@@ -12,9 +12,12 @@ are read from the lockfile's `[mod]` section, with optional `[replace]` entries
 applied to module fetch paths. When a single dependency changes, only it and
 its reverse dependencies rebuild.
 
-## Lockfile requirements
+## Lockfile
 
-The default mode requires a lockfile with `[mod]` (and optionally `[replace]`)
+The default mode does **not** require a lockfile — `goLock` defaults to
+`null`, in which case module hashes are resolved at eval time from `go.sum`
+(see [Lockfile-free builds](../lockfile-format.md#lockfile-free-builds)). To
+opt into a committed lockfile with `[mod]` (and optionally `[replace]`)
 sections:
 
 ```bash
