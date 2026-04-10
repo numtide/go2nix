@@ -16,4 +16,10 @@ goEnv.buildGoApplication {
   src = ./.;
   goLock = ./go2nix.toml;
   doCheck = true;
+  # Root binary first (imports cgo via internal/adder), pure-Go second:
+  # regression for .has_cgo marker leaking across SubPackages iterations.
+  subPackages = [
+    "."
+    "./cmd/purebin"
+  ];
 }
