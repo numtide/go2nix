@@ -1069,6 +1069,9 @@ func discoverInputPaths(storePaths []string) InputPaths {
 		if isDir(p + "/lib/pkgconfig") {
 			result.PkgConfigDirs = append(result.PkgConfigDirs, p+"/lib/pkgconfig")
 		}
+		if isDir(p + "/share/pkgconfig") {
+			result.PkgConfigDirs = append(result.PkgConfigDirs, p+"/share/pkgconfig")
+		}
 
 		// Follow propagated-build-inputs (space-separated store paths).
 		data, err := os.ReadFile(p + "/nix-support/propagated-build-inputs")

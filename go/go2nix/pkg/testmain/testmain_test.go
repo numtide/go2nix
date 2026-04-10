@@ -115,6 +115,40 @@ func TestFoo(t *testing.T) {}
 	}
 }
 
+func TestGenerateDuplicateTestMain(t *testing.T) {
+	dir := t.TempDir()
+	intFile := filepath.Join(dir, "a_test.go")
+	if err := os.WriteFile(intFile, []byte(`package foo
+
+import "testing"
+
+func TestMain(m *testing.M) { m.Run() }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	extFile := filepath.Join(dir, "b_test.go")
+	if err := os.WriteFile(extFile, []byte(`package foo_test
+
+import "testing"
+
+func TestMain(m *testing.M) { m.Run() }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Generate(Options{
+		ImportPath:   "example.com/foo",
+		TestGoFiles:  []string{intFile},
+		XTestGoFiles: []string{extFile},
+	})
+	if err == nil {
+		t.Fatal("expected error for duplicate TestMain, got nil")
+	}
+	if !strings.Contains(err.Error(), "multiple definitions of TestMain") {
+		t.Errorf("expected 'multiple definitions of TestMain' in error, got: %v", err)
+	}
+}
+
 func TestGenerateExamples(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "example_test.go")

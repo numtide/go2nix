@@ -124,6 +124,7 @@ func ListLocalPackages(root string, tags string, goVersion string) ([]*LocalPkg,
 				for f := range cfg.Files {
 					testEmbedFiles = append(testEmbedFiles, f)
 				}
+				slices.Sort(testEmbedFiles)
 			}
 			var xtestEmbedFiles []string
 			var xtestEmbedCfg *gofiles.EmbedCfg
@@ -136,6 +137,7 @@ func ListLocalPackages(root string, tags string, goVersion string) ([]*LocalPkg,
 				for f := range cfg.Files {
 					xtestEmbedFiles = append(xtestEmbedFiles, f)
 				}
+				slices.Sort(xtestEmbedFiles)
 			}
 
 			localPkg := &LocalPkg{
