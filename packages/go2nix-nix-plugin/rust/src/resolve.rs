@@ -309,7 +309,7 @@ fn run_go_list(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,FFiles,HFiles,SysoFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
     cmd.arg("-deps");
     cmd.arg("-e");
     cmd.arg("-buildvcs=false");
@@ -353,7 +353,7 @@ fn run_go_list_test(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,FFiles,HFiles,SysoFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
     cmd.arg("-deps");
     cmd.arg("-test");
     cmd.arg("-e");
@@ -1589,5 +1589,40 @@ mod tests {
 
         std::env::remove_var("GOPROXY");
         std::env::remove_var("NETRC");
+    }
+
+    /// Regression: the -json= field filter must include MFiles/SwigFiles/
+    /// SwigCXXFiles or go list silently omits them and the compile-time
+    /// "not yet supported" check never fires.
+    #[test]
+    fn run_go_list_surfaces_mfiles_and_swig() {
+        let Some(go) = DEFAULT_GO else {
+            eprintln!("skip: GO2NIX_DEFAULT_GO unset at build time");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module example.com/mswig\n\ngo 1.23\n").unwrap();
+        // CgoFiles is required for go/build to classify .m/.swig as package sources.
+        std::fs::write(
+            dir.path().join("a.go"),
+            "package mswig\n// #cgo LDFLAGS: -lm\nimport \"C\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("x.m"), "// objc\n").unwrap();
+        std::fs::write(dir.path().join("x.swig"), "%module mswig\n").unwrap();
+        std::fs::write(dir.path().join("x.swigcxx"), "%module mswigxx\n").unwrap();
+
+        let stdout = run_go_list(
+            go,
+            dir.path().to_str().unwrap(),
+            &["./...".to_string()],
+            &test_opts(Some("off")),
+        )
+        .unwrap();
+        let graph = parse_go_packages(&stdout).unwrap();
+        let f = &graph.local_packages[0].files;
+        assert_eq!(f.m_files, vec!["x.m"], "MFiles missing from go list output");
+        assert_eq!(f.swig_files, vec!["x.swig"], "SwigFiles missing");
+        assert_eq!(f.swig_cxx_files, vec!["x.swigcxx"], "SwigCXXFiles missing");
     }
 }
