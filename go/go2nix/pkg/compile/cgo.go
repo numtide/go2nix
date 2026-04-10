@@ -127,9 +127,19 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		return err
 	}
 
-	// Step 3: test link + dynimport.
-	if err := cgoTestLinkAndDynimport(cc, cgowork, opts, uid, compiledOFiles, cgoFlagsLDFLAGS, cgoLdflags, cgoCflags); err != nil {
+	// Step 3: test link + dynimport. The test link uses CXX when the
+	// package has C++ sources, matching cmd/go's gccld
+	// (cmd/go/internal/work/exec.go:2383).
+	linker := cc
+	if len(files.CXXFiles) > 0 || len(files.SwigCXXFiles) > 0 {
+		linker = cxx
+	}
+	dynFailObj, err := cgoTestLinkAndDynimport(cc, linker, cgowork, opts, uid, compiledOFiles, cgoFlagsLDFLAGS, cgoLdflags, cgoCflags)
+	if err != nil {
 		return err
+	}
+	if dynFailObj != "" {
+		compiledOFiles = append(compiledOFiles, dynFailObj)
 	}
 
 	// Generate //go:cgo_ldflag directives so the linker picks up LDFLAGS.
@@ -315,11 +325,21 @@ func compileCFiles(cc, cxx, cgowork, srcDir, uid string, files gofiles.PkgFiles,
 	return compiledOFiles, nil
 }
 
-// cgoTestLinkAndDynimport performs the cgo test link and extracts dynamic imports.
-func cgoTestLinkAndDynimport(cc, cgowork string, opts Options, uid string, compiledOFiles, cgoFlagsLDFLAGS, cgoLdflags, cgoCflags []string) error {
+// cgoTestLinkAndDynimport performs the cgo test link and extracts dynamic
+// imports. _cgo_main.c is always compiled with cc; the link itself uses
+// linker (cxx when the package has C++ sources, cc otherwise) — see
+// cmd/go's gccld (cmd/go/internal/work/exec.go:2383).
+//
+// Failure of the test link is an expected outcome (e.g. .syso files with
+// unexpected dependencies) and is handled by writing an empty
+// "dynimportfail" marker that gets packed into the archive; cmd/link
+// recognises that member name and forces external linking (golang/go#52863;
+// cmd/go/internal/work/exec.go:3284, cmd/link/internal/ld/lib.go:1139).
+// The link's stderr is suppressed accordingly, matching cmd/go.
+func cgoTestLinkAndDynimport(cc, linker, cgowork string, opts Options, uid string, compiledOFiles, cgoFlagsLDFLAGS, cgoLdflags, cgoCflags []string) (string, error) {
 	cgoMainC := filepath.Join(cgowork, "_cgo_main.c")
 	if _, err := os.Stat(cgoMainC); err != nil {
-		return nil //nolint:nilerr // missing _cgo_main.c is expected, not an error
+		return "", nil //nolint:nilerr // missing _cgo_main.c is expected, not an error
 	}
 
 	mainO := filepath.Join(cgowork, "_cgo_main_"+uid+".o")
@@ -327,7 +347,7 @@ func cgoTestLinkAndDynimport(cc, cgowork string, opts Options, uid string, compi
 	mainArgs = append(mainArgs, cgoCflags...)
 	mainArgs = append(mainArgs, cgoMainC, "-o", mainO)
 	if err := runIn("", cc, mainArgs...); err != nil {
-		return fmt.Errorf("cc _cgo_main.c: %w", err)
+		return "", fmt.Errorf("cc _cgo_main.c: %w", err)
 	}
 
 	testLinkO := filepath.Join(cgowork, "_cgo__"+uid+".o")
@@ -335,34 +355,26 @@ func cgoTestLinkAndDynimport(cc, cgowork string, opts Options, uid string, compi
 	linkArgs = append(linkArgs, "-lpthread")
 	linkArgs = append(linkArgs, cgoFlagsLDFLAGS...)
 	linkArgs = append(linkArgs, cgoLdflags...)
-	if err := runIn("", cc, linkArgs...); err != nil {
-		// Test link may fail due to unresolved external symbols.
-		// Retry allowing unresolved symbols since this binary is
-		// only used to extract dynamic imports.
-		var flag string
-		switch opts.goos {
-		case "darwin":
-			flag = "-Wl,-undefined,dynamic_lookup"
-		default:
-			flag = "-Wl,--unresolved-symbols=ignore-all"
+	cmd := exec.Command(linker, linkArgs...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		slog.Debug("cgo test link failed; emitting dynimportfail marker", "err", err, "out", string(out))
+		fail := filepath.Join(cgowork, "dynimportfail")
+		if werr := os.WriteFile(fail, nil, 0o644); werr != nil {
+			return "", werr
 		}
-		if err2 := runIn("", cc, append(linkArgs, flag)...); err2 != nil {
-			slog.Debug("cgo test link failed (no dynamic imports)", "err", err)
-			return nil //nolint:nilerr // test link failure is non-fatal, just means no dynamic imports
-		}
+		return fail, nil
 	}
-	if _, err := os.Stat(testLinkO); err == nil {
-		pkgName := extractPackageName(filepath.Join(cgowork, "_cgo_gotypes.go"))
-		dynOut := filepath.Join(cgowork, "_cgo_import_"+uid+".go")
-		if err := runIn(opts.SrcDir, "go", "tool", "cgo",
-			"-dynimport", testLinkO,
-			"-dynout", dynOut,
-			"-dynpackage", pkgName,
-			"-dynlinker"); err != nil {
-			return fmt.Errorf("cgo dynimport: %w", err)
-		}
+
+	pkgName := extractPackageName(filepath.Join(cgowork, "_cgo_gotypes.go"))
+	dynOut := filepath.Join(cgowork, "_cgo_import_"+uid+".go")
+	if err := runIn(opts.SrcDir, "go", "tool", "cgo",
+		"-dynimport", testLinkO,
+		"-dynout", dynOut,
+		"-dynpackage", pkgName,
+		"-dynlinker"); err != nil {
+		return "", fmt.Errorf("cgo dynimport: %w", err)
 	}
-	return nil
+	return "", nil
 }
 
 // filterCppFlags removes -lc++ and -lstdc++ from flags when no C++ sources
