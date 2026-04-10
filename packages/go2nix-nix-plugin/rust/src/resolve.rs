@@ -6,7 +6,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 /// Baked-in default Go binary path, set at compile time via GO2NIX_DEFAULT_GO.
@@ -900,6 +901,15 @@ struct JsonOutput {
     /// Only populated when resolveHashes is true.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     module_hashes: BTreeMap<String, String>,
+    /// Precomputed per-subPackage import closure (modKeys + cxx).
+    /// Replaces the Nix-side `genericClosure` walk.
+    sub_package_closures: BTreeMap<String, JsonClosure>,
+    /// Transitive local-replace target dirs (src-relative, normalized).
+    /// Replaces the Nix-side go.mod readFile + regex walk.
+    local_replace_dirs: Vec<String>,
+    /// All src-relative directories containing a go.mod. Replaces per-filter
+    /// `pathExists (path + "/go.mod")` syscalls.
+    nested_module_roots: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -925,6 +935,16 @@ struct JsonPkg {
 struct JsonReplacement {
     path: String,
     version: String,
+}
+
+/// Per-subPackage transitive closure summary so `nix/dag` can skip its
+/// `genericClosure` walk: the modKey set (for modinfo `dep` lines) and the
+/// CXX flag (for `-extld`).
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct JsonClosure {
+    mod_keys: Vec<String>,
+    cxx: bool,
 }
 
 /// Convert a `PkgData` to a `JsonPkg`, filtering imports to only include
@@ -963,12 +983,228 @@ fn pkg_data_to_json_pkg(p: &PkgData, allowed_imports: &dyn Fn(&str) -> bool) -> 
     }
 }
 
+/// Map `["./cmd/foo", "."]` → import paths under `module_path`, matching
+/// dag.nix's `spImportPath`.
+fn sub_package_import_path(module_path: &str, sp: &str) -> String {
+    let clean = sp.strip_prefix("./").unwrap_or(sp);
+    if sp == "." || clean.is_empty() {
+        module_path.to_owned()
+    } else {
+        format!("{module_path}/{clean}")
+    }
+}
+
+/// BFS the import graph from each subPackage's import path, collecting the
+/// set of third-party modKeys and whether any reached package has C++/SWIG-C++
+/// sources. Mirrors dag.nix's `closureOf` + `modKeysOf` + `hasCxx`.
+fn compute_sub_package_closures(
+    graph: &PackageGraph,
+    sub_packages: &[String],
+) -> BTreeMap<String, JsonClosure> {
+    // Index third-party packages by import path → (modKey, hasCxx, &imports).
+    let mod_key_of = |p: &PkgData| -> String {
+        let v = if p.replace_version.is_empty() {
+            &p.mod_version
+        } else {
+            &p.replace_version
+        };
+        format!("{}@{v}", p.mod_path)
+    };
+    let has_cxx = |f: &PkgFiles| !f.cxx_files.is_empty() || !f.swig_cxx_files.is_empty();
+
+    let tp_index: BTreeMap<&str, (String, bool, &[String])> = graph
+        .packages
+        .iter()
+        .map(|p| {
+            (
+                p.import_path.as_str(),
+                (mod_key_of(p), has_cxx(&p.files), p.imports.as_slice()),
+            )
+        })
+        .collect();
+    let local_index: BTreeMap<&str, (&LocalPkgData, bool)> = graph
+        .local_packages
+        .iter()
+        .chain(graph.test_local_packages.iter())
+        .map(|p| (p.import_path.as_str(), (p, has_cxx(&p.files))))
+        .collect();
+
+    let mut out = BTreeMap::new();
+    for sp in sub_packages {
+        let root = sub_package_import_path(&graph.module_path, sp);
+        let mut visited: BTreeSet<&str> = BTreeSet::new();
+        let mut queue: VecDeque<&str> = VecDeque::new();
+        let mut mod_keys: BTreeSet<String> = BTreeSet::new();
+        let mut cxx = false;
+
+        queue.push_back(root.as_str());
+        while let Some(ip) = queue.pop_front() {
+            if !visited.insert(ip) {
+                continue;
+            }
+            if let Some((lp, lcxx)) = local_index.get(ip) {
+                cxx |= lcxx;
+                for imp in lp.local_imports.iter().chain(lp.third_party_imports.iter()) {
+                    queue.push_back(imp.as_str());
+                }
+            } else if let Some((mk, tcxx, imports)) = tp_index.get(ip) {
+                cxx |= tcxx;
+                mod_keys.insert(mk.clone());
+                for imp in imports.iter() {
+                    queue.push_back(imp.as_str());
+                }
+            }
+        }
+
+        out.insert(
+            root,
+            JsonClosure {
+                mod_keys: mod_keys.into_iter().collect(),
+                cxx,
+            },
+        );
+    }
+    out
+}
+
+/// Normalize `a/b/../c` → `a/c` in pure string space (mirrors dag.nix's
+/// `normalizeRelPath`).
+fn normalize_rel(p: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for seg in p.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => match out.last() {
+                Some(&last) if last != ".." => {
+                    out.pop();
+                }
+                _ => out.push(".."),
+            },
+            s => out.push(s),
+        }
+    }
+    if out.is_empty() {
+        ".".to_owned()
+    } else {
+        out.join("/")
+    }
+}
+
+/// Transitively walk local-replace directives (`=> ./X` / `=> ../X`) starting
+/// from `mod_root`, returning normalized src-relative target dirs (excluding
+/// `mod_root` itself, `"."`, and any that escape `src` via `..`).
+/// Mirrors dag.nix's `replaceDirsOf` + the post-filter.
+fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
+    fn parse_local_replaces(text: &str) -> Vec<String> {
+        // `=>` only appears in `replace` directives; a local target is one
+        // starting with `./` or `../`. Same condition as helpers.nix.
+        text.lines()
+            .filter_map(|l| {
+                let i = l.find("=>")?;
+                let tgt = l[i + 2..].trim().split_whitespace().next()?;
+                if tgt.starts_with("./") || tgt.starts_with("../") {
+                    Some(tgt.to_owned())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    let clean_mod_root = normalize_rel(mod_root);
+    let mut visited: BTreeSet<String> = BTreeSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    queue.push_back(clean_mod_root.clone());
+    let mut out: Vec<String> = Vec::new();
+
+    while let Some(dir) = queue.pop_front() {
+        if !visited.insert(dir.clone()) {
+            continue;
+        }
+        if dir.starts_with("..") {
+            continue;
+        }
+        let go_mod = if dir == "." {
+            src.join("go.mod")
+        } else {
+            src.join(&dir).join("go.mod")
+        };
+        let Ok(text) = std::fs::read_to_string(&go_mod) else {
+            continue;
+        };
+        for r in parse_local_replaces(&text) {
+            let next = normalize_rel(&format!("{dir}/{r}"));
+            if visited.contains(&next) {
+                continue;
+            }
+            if next != clean_mod_root && next != "." && !next.starts_with("..") {
+                out.push(next.clone());
+            }
+            queue.push_back(next);
+        }
+    }
+    // Dedupe + sort for determinism.
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Walk `src` for every directory containing a `go.mod`; return src-relative
+/// paths (`.` for src itself). Descent does NOT stop at boundaries — the
+/// dag-side filter decides which are nested vs allowed (modRoot/replace dirs).
+fn find_nested_module_roots(src: &Path) -> Vec<String> {
+    fn rel_of(src: &Path, p: &Path) -> String {
+        let r = p.strip_prefix(src).unwrap_or(p);
+        let mut s = String::new();
+        for c in r.components() {
+            if let Component::Normal(seg) = c {
+                if !s.is_empty() {
+                    s.push('/');
+                }
+                s.push_str(&seg.to_string_lossy());
+            }
+        }
+        if s.is_empty() {
+            ".".to_owned()
+        } else {
+            s
+        }
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![src.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if dir.join("go.mod").is_file() {
+            out.push(rel_of(src, &dir));
+        }
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            if !ft.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            // Skip hidden + Go-ignored testdata/vendor.
+            if name.starts_with('.') || name == "testdata" || name == "vendor" {
+                continue;
+            }
+            stack.push(entry.path());
+        }
+    }
+    out.sort();
+    out
+}
+
 /// Convert a `PackageGraph` to a JSON string.
 pub(crate) fn package_graph_to_json(
     graph: &PackageGraph,
-    src_dir: &str,
+    input: &JsonInput,
     module_hashes: BTreeMap<String, String>,
 ) -> Result<String> {
+    let src_dir = input.src.as_str();
     let canon_src = std::fs::canonicalize(src_dir)
         .with_context(|| format!("failed to canonicalize src dir: {src_dir}"))?;
 
@@ -1070,6 +1306,10 @@ pub(crate) fn package_graph_to_json(
         })
         .collect();
 
+    let sub_package_closures = compute_sub_package_closures(graph, &input.sub_packages);
+    let local_replace_dirs = walk_local_replace_dirs(&canon_src, &input.mod_root);
+    let nested_module_roots = find_nested_module_roots(&canon_src);
+
     let output = JsonOutput {
         packages,
         local_packages,
@@ -1079,6 +1319,9 @@ pub(crate) fn package_graph_to_json(
         test_packages,
         test_local_packages,
         module_hashes,
+        sub_package_closures,
+        local_replace_dirs,
+        nested_module_roots,
     };
 
     serde_json::to_string(&output).context("failed to serialize output JSON")
@@ -1242,10 +1485,26 @@ mod tests {
         let graph = parse_go_packages(input.as_bytes()).unwrap();
 
         let mut hashes = BTreeMap::new();
-        hashes.insert("github.com/new/pkg@v2.0.0".to_owned(), "sha256-fork".to_owned());
+        hashes.insert(
+            "github.com/new/pkg@v2.0.0".to_owned(),
+            "sha256-fork".to_owned(),
+        );
 
         let src = tempfile::tempdir().unwrap();
-        let json = package_graph_to_json(&graph, src.path().to_str().unwrap(), hashes).unwrap();
+        let input = JsonInput {
+            go: None,
+            src: src.path().to_string_lossy().into_owned(),
+            do_check: false,
+            tags: vec![],
+            sub_packages: vec![".".into()],
+            mod_root: ".".into(),
+            goos: String::new(),
+            goarch: String::new(),
+            go_proxy: None,
+            cgo_enabled: String::new(),
+            resolve_hashes: false,
+        };
+        let json = package_graph_to_json(&graph, &input, hashes).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         let mod_hashes = &v["moduleHashes"];
@@ -1357,7 +1616,11 @@ mod tests {
 
     // --- parse_test_packages ---
 
-    fn ptp(input: &str, third_party: &BTreeSet<String>, locals: &BTreeSet<String>) -> TestPassResult {
+    fn ptp(
+        input: &str,
+        third_party: &BTreeSet<String>,
+        locals: &BTreeSet<String>,
+    ) -> TestPassResult {
         let mut replacements = BTreeMap::new();
         parse_test_packages(input.as_bytes(), third_party, locals, &mut replacements).unwrap()
     }
@@ -1409,7 +1672,12 @@ mod tests {
         locals.insert("example.com/m/internal/app".to_owned());
         let input = [
             // Already in build graph: skipped.
-            local_pkg_json("example.com/m/internal/app", "example.com/m", "/src/app", &[]),
+            local_pkg_json(
+                "example.com/m/internal/app",
+                "example.com/m",
+                "/src/app",
+                &[],
+            ),
             // Test-only local importing build-graph local + test-only third-party.
             local_pkg_json(
                 "example.com/m/internal/testutil",
@@ -1704,7 +1972,11 @@ mod tests {
             return;
         };
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("go.mod"), "module example.com/mswig\n\ngo 1.23\n").unwrap();
+        std::fs::write(
+            dir.path().join("go.mod"),
+            "module example.com/mswig\n\ngo 1.23\n",
+        )
+        .unwrap();
         // CgoFiles is required for go/build to classify .m/.swig as package sources.
         std::fs::write(
             dir.path().join("a.go"),
@@ -1727,5 +1999,99 @@ mod tests {
         assert_eq!(f.m_files, vec!["x.m"], "MFiles missing from go list output");
         assert_eq!(f.swig_files, vec!["x.swig"], "SwigFiles missing");
         assert_eq!(f.swig_cxx_files, vec!["x.swigcxx"], "SwigCXXFiles missing");
+    }
+
+    // --- Tier-3 offload: closures ---
+
+    fn tp_with_imports(ip: &str, mp: &str, ver: &str, imports: &[&str], cxx: bool) -> String {
+        let imp: Vec<String> = imports.iter().map(|i| format!("\"{i}\"")).collect();
+        let cxx_field = if cxx { r#","CXXFiles":["a.cc"]"# } else { "" };
+        format!(
+            r#"{{"ImportPath":"{ip}","Module":{{"Path":"{mp}","Version":"{ver}"}},"Imports":[{}]{cxx_field}}}"#,
+            imp.join(",")
+        )
+    }
+
+    #[test]
+    fn test_sub_package_closures() {
+        // Graph: m/cmd/a → m/internal/x → tp/a/pkg, tp/b/pkg
+        //        tp/a/pkg → tp/c/pkg (transitive)
+        //        tp/b/pkg has CXXFiles
+        let stdout = format!(
+            "{}\n{}\n{}\n{}\n{}\n",
+            local_pkg_json("m/cmd/a", "m", "/src/cmd/a", &["m/internal/x"]),
+            local_pkg_json(
+                "m/internal/x",
+                "m",
+                "/src/internal/x",
+                &["tp/a/pkg", "tp/b/pkg"]
+            ),
+            tp_with_imports("tp/a/pkg", "tp/a", "v1.0.0", &["tp/c/pkg"], false),
+            tp_with_imports("tp/b/pkg", "tp/b", "v2.0.0", &[], true),
+            tp_with_imports("tp/c/pkg", "tp/c", "v3.0.0", &[], false),
+        );
+        let graph = parse_go_packages(stdout.as_bytes()).unwrap();
+        let closures = compute_sub_package_closures(&graph, &["./cmd/a".into()]);
+        let c = &closures["m/cmd/a"];
+        assert_eq!(
+            c.mod_keys,
+            vec!["tp/a@v1.0.0", "tp/b@v2.0.0", "tp/c@v3.0.0"]
+        );
+        assert!(c.cxx, "transitive cxx must be true (tp/b has CXXFiles)");
+
+        // Second subPackage with no third-party deps and no cxx.
+        let closures2 = compute_sub_package_closures(&graph, &[".".into()]);
+        // root "." → "m"; m has no local pkg in graph → empty closure
+        assert_eq!(closures2["m"].mod_keys, Vec::<String>::new());
+        assert!(!closures2["m"].cxx);
+    }
+
+    #[test]
+    fn test_normalize_rel() {
+        assert_eq!(normalize_rel("a/b/../c"), "a/c");
+        assert_eq!(normalize_rel("./a/./b"), "a/b");
+        assert_eq!(normalize_rel("a/b/../.."), ".");
+        assert_eq!(normalize_rel("../a"), "../a");
+        assert_eq!(normalize_rel("a/../../b"), "../b");
+    }
+
+    #[test]
+    fn test_walk_local_replace_dirs() {
+        let src = tempfile::tempdir().unwrap();
+        let app = src.path().join("app");
+        let sib = src.path().join("sib");
+        let nested = src.path().join("sib/nested");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(
+            app.join("go.mod"),
+            "module app\nreplace x => ../sib\nreplace y => github.com/y v1.0.0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            sib.join("go.mod"),
+            "module sib\nreplace z => ./nested\nreplace esc => ../../escaped\n",
+        )
+        .unwrap();
+        std::fs::write(nested.join("go.mod"), "module nested\n").unwrap();
+
+        let dirs = walk_local_replace_dirs(src.path(), "app");
+        assert_eq!(dirs, vec!["sib", "sib/nested"]);
+    }
+
+    #[test]
+    fn test_nested_module_roots() {
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("go.mod"), "module root\n").unwrap();
+        let nested = src.path().join("a/b/nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("go.mod"), "module nested\n").unwrap();
+        // testdata is skipped
+        let td = src.path().join("testdata/x");
+        std::fs::create_dir_all(&td).unwrap();
+        std::fs::write(td.join("go.mod"), "module td\n").unwrap();
+
+        let roots = find_nested_module_roots(src.path());
+        assert_eq!(roots, vec![".", "a/b/nested"]);
     }
 }

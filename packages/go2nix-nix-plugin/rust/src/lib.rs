@@ -74,8 +74,7 @@ pub unsafe extern "C" fn resolve_go_packages_json(
             std::collections::BTreeMap::new()
         };
 
-        resolve::package_graph_to_json(&graph, &opts.src, hashes)
-            .map_err(|e| format!("{e:#}"))
+        resolve::package_graph_to_json(&graph, &opts, hashes).map_err(|e| format!("{e:#}"))
     }
 
     match inner(input_json) {

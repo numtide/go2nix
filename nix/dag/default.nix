@@ -81,11 +81,7 @@ let
   inherit (lib)
     concatStringsSep
     filterAttrs
-    foldl
     genAttrs
-    hasPrefix
-    init
-    last
     mapAttrsToList
     optional
     optionalAttrs
@@ -93,7 +89,6 @@ let
     optionals
     removePrefix
     splitString
-    unique
     ;
 
   hasPackageOverrides = packageOverrides != { };
@@ -419,6 +414,15 @@ let
     // (if CGO_ENABLED != null then { cgoEnabled = toString CGO_ENABLED; } else { })
   );
 
+  # Precomputed by the plugin: every src-relative directory containing a
+  # go.mod. Replaces per-filter `pathExists (path + "/go.mod")` syscalls.
+  nestedModuleRootSet = builtins.listToAttrs (
+    map (r: {
+      name = r;
+      value = true;
+    }) goPackagesResult.nestedModuleRoots
+  );
+
   # Module hashes from plugin (lockfile-free path).
   pluginModules =
     if hasLockfile then
@@ -591,7 +595,7 @@ let
             let
               rel = removePrefix srcPrefix (toString path);
             in
-            !(localPkgDirSet ? ${rel} || builtins.pathExists (path + "/go.mod"))
+            !(localPkgDirSet ? ${rel} || nestedModuleRootSet ? ${rel})
           );
       };
 
@@ -803,54 +807,11 @@ let
         if modRoot == "." then clean else "${cleanModRoot}/${clean}"
       ) normalizedSubPackages;
 
-      # Resolve a/b/../c → a/c in src-relative string space. Kept here
-      # (not in helpers.nix) because it needs lib for string ops.
-      normalizeRelPath =
-        p:
-        let
-          folded = foldl (
-            acc: seg:
-            if seg == "" || seg == "." then
-              acc
-            else if seg == ".." then
-              if acc == [ ] || last acc == ".." then acc ++ [ ".." ] else init acc
-            else
-              acc ++ [ seg ]
-          ) [ ] (splitString "/" p);
-        in
-        if folded == [ ] then "." else concatStringsSep "/" folded;
-
-      # Transitively collect local-replace target dirs, src-relative.
-      # Reads go.mod via the src store path so it works whether src is a
-      # literal path, a fileset.toSource result, or a builtin fetcher.
-      replaceDirsOf =
-        startDir:
-        map (x: x.key) (
-          builtins.genericClosure {
-            startSet = [ { key = startDir; } ];
-            operator =
-              { key, ... }:
-              let
-                goMod = "${src}/${key}/go.mod";
-                rels =
-                  if hasPrefix ".." key then
-                    # Replace target escaped src — nothing more to read.
-                    [ ]
-                  else if builtins.pathExists goMod then
-                    helpers.parseLocalReplaces (builtins.readFile goMod)
-                  else
-                    [ ];
-              in
-              map (r: { key = normalizeRelPath "${key}/${r}"; }) rels;
-          }
-        );
-      # Only when tests run — keeps mainSrc (and so the link drv hash)
-      # unchanged for doCheck = false builds.
-      replaceDirs = optionals doCheck (
-        builtins.filter (d: d != cleanModRoot && d != "." && !(hasPrefix ".." d)) (
-          replaceDirsOf cleanModRoot
-        )
-      );
+      # Local-replace target dirs (src-relative, transitive). Computed in
+      # the plugin from go.mod, so no readFile + regex walk here. Only used
+      # when tests run — keeps mainSrc (and so the link drv hash) unchanged
+      # for doCheck = false builds.
+      replaceDirs = optionals doCheck goPackagesResult.localReplaceDirs;
 
       # Include modRoot for go.mod access plus sibling-replace module roots
       # so the testrunner can walk them.
@@ -906,7 +867,7 @@ let
         # A go.mod-bearing directory that isn't an allowed module root
         # (modRoot, a subPackage dir, or a local-replace target) is a
         # nested-module boundary; go list stopped there.
-        && !(type == "directory" && !(allowedDirSet ? ${rel}) && builtins.pathExists (path + "/go.mod"));
+        && !(type == "directory" && !(allowedDirSet ? ${rel}) && nestedModuleRootSet ? ${rel});
     };
 
   moduleRoot = if modRoot == "." then "${mainSrc}" else "${mainSrc}/${modRoot}";
@@ -964,7 +925,7 @@ let
     // {
       subPackages =
         let
-          inherit (goPackagesResult) modulePath;
+          inherit (goPackagesResult) modulePath subPackageClosures;
           spImportPath =
             sp:
             let
@@ -972,56 +933,13 @@ let
             in
             if sp == "." || clean == "" then modulePath else "${modulePath}/${clean}";
 
-          # Per-subPackage transitive module closure for modinfo deps.
-          # `go build` records only modules whose packages are actually
-          # linked into the binary; recording allModules over-reports
-          # test-only deps and modules used by other subPackages.
-          # genericClosure dedupes by key, so cycles terminate.
-          importsOf =
-            ip:
-            let
-              lp = goPackagesResult.localPackages.${ip} or null;
-              tp = goPackagesResult.packages.${ip} or null;
-            in
-            if lp != null then
-              (lp.localImports or [ ]) ++ (lp.thirdPartyImports or [ ])
-            else if tp != null then
-              tp.imports or [ ]
-            else
-              [ ];
-          closureOf =
-            ip:
-            builtins.genericClosure {
-              startSet = [ { key = ip; } ];
-              operator = item: map (i: { key = i; }) (importsOf item.key);
-            };
-          modKeysOf =
-            closure:
-            unique (
-              builtins.concatMap (
-                item:
-                let
-                  p = goPackagesResult.packages.${item.key} or null;
-                in
-                optional (p != null) p.modKey
-              ) closure
-            );
+          # Per-subPackage closure (modKeys + cxx) is precomputed in the
+          # plugin: `go build` records only modules whose packages are
+          # actually linked into the binary; recording allModules would
+          # over-report test-only deps and modules used by other subPackages.
           # cmd/go's gcToolchain.ld picks CXX over CC for -extld when any
           # package in root.Deps has CXXFiles || SwigCXXFiles
-          # (cmd/go/internal/work/gc.go:591-595). The closure already
-          # includes the main package (start node), so this also covers the
-          # main-package-itself-has-cxx case without a side-channel marker.
-          hasCxx =
-            closure:
-            builtins.any (
-              item:
-              let
-                f =
-                  (goPackagesResult.localPackages.${item.key} or goPackagesResult.packages.${item.key} or { }).files
-                    or { };
-              in
-              (f.cxxFiles or [ ]) != [ ] || (f.swigCxxFiles or [ ]) != [ ]
-            ) closure;
+          # (cmd/go/internal/work/gc.go:591-595).
           toModule =
             modKey:
             let
@@ -1040,15 +958,13 @@ let
           sp:
           let
             ip = spImportPath sp;
-            # Evaluated once and shared so genericClosure runs once per
-            # subPackage, not once each for modKeysOf and hasCxx.
-            closure = closureOf ip;
+            closure = subPackageClosures.${ip};
           in
           {
             path = sp;
             files = goPackagesResult.localPackages.${ip}.files or null;
-            modules = map toModule (modKeysOf closure);
-            cxx = hasCxx closure;
+            modules = map toModule closure.modKeys;
+            inherit (closure) cxx;
           }
         ) normalizedSubPackages;
       inherit moduleRoot;
