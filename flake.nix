@@ -127,6 +127,12 @@
           test-golden-vs-gobuild = callPkgWith ./packages/test-golden-vs-gobuild/default.nix {
             inherit flake system;
           };
+          test-drv-canary = callPkgWith ./packages/test-drv-canary/default.nix {
+            inherit flake system;
+          };
+          test-eval-stats = callPkgWith ./packages/test-eval-stats/default.nix {
+            inherit flake system;
+          };
 
           go2nix-testgen = callPkgWith ./packages/go2nix-testgen/default.nix {
             inherit flake system;

@@ -1,0 +1,9 @@
+# Expected .drv hashes for the nix/dag semantic-stability canary.
+# Regenerate with ./scripts/update-drv-canary.sh after any change to
+# go/go2nix/, packages/go2nix-nix-plugin/, nix/dag/hooks/, or the nixpkgs
+# flake input. A change to nix/dag/*.nix alone should NOT require
+# updating this file.
+testify-basic /nix/store/clc3wsy19kvianrnvhw13fl037dyzsgq-testify-basic-0.0.1.drv
+xtest-local-dep /nix/store/5z2yjyjvcahcywiwk176sl820l2809vn-xtest-local-dep-0.0.1.drv
+cgo-internal-test /nix/store/2fcqq9ysndbk1bh6xcjrgr4bb720sb04-cgo-internal-test-0.0.1.drv
+torture-app-full /nix/store/0gkbcp1fbh35j17jd3jdl7bnglp3spm9-torture-app-full-0.0.1.drv
