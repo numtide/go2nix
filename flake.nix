@@ -93,6 +93,9 @@
           test-fixture-cxx-cgo = callPkgWith ./packages/test-fixture-cxx-cgo/default.nix {
             inherit flake system;
           };
+          test-fixture-cxx-pkgconfig = callPkgWith ./packages/test-fixture-cxx-pkgconfig/default.nix {
+            inherit flake system;
+          };
           test-fixture-build-tags = callPkgWith ./packages/test-fixture-build-tags/default.nix {
             inherit flake system;
           };
