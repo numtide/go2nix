@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"unicode"
 
 	"github.com/numtide/go2nix/pkg/buildinfo"
 	"github.com/numtide/go2nix/pkg/compile"
@@ -339,7 +338,7 @@ func fileExists(path string) bool {
 }
 
 // expandLDFlags splits each ldflag element into separate exec arguments using
-// shell-style quoting rules.
+// the same quoting rules as `go build -ldflags` (cmd/internal/quoted.Split).
 //
 // Nix users write ldflags like ["-X main.Version=1.6"] or
 // ["-extldflags '-static -L/foo/lib'"] and expect the quoted value to stay
@@ -347,7 +346,7 @@ func fileExists(path string) bool {
 func expandLDFlags(flags []string) ([]string, error) {
 	var out []string
 	for _, f := range flags {
-		parts, err := splitShellFields(f)
+		parts, err := quotedSplit(f)
 		if err != nil {
 			return nil, err
 		}
@@ -356,71 +355,49 @@ func expandLDFlags(flags []string) ([]string, error) {
 	return out, nil
 }
 
-func splitShellFields(s string) ([]string, error) {
-	var (
-		out          []string
-		token        strings.Builder
-		quote        rune
-		escaped      bool
-		tokenStarted bool
-	)
-
-	flush := func() {
-		if !tokenStarted {
-			return
+// quotedSplit is copied from src/cmd/internal/quoted/quoted.go (Go 1.26.1,
+// BSD-3-Clause) so go2nix's ldflags parsing matches go build -ldflags exactly.
+// Upstream ships an identical copy in cmd/dist/quoted.go for the same reason.
+//
+// Split splits s into a list of fields, allowing single or double quotes
+// around elements. There is no unescaping or other processing within
+// quoted fields.
+func quotedSplit(s string) ([]string, error) {
+	// Split fields allowing '' or "" around elements.
+	// Quotes further inside the string do not count.
+	var f []string
+	for len(s) > 0 {
+		for len(s) > 0 && isSpaceByte(s[0]) {
+			s = s[1:]
 		}
-		out = append(out, token.String())
-		token.Reset()
-		tokenStarted = false
-	}
-
-	for _, r := range s {
-		if escaped {
-			token.WriteRune(r)
-			escaped = false
+		if len(s) == 0 {
+			break
+		}
+		// Accepted quoted string. No unescaping inside.
+		if s[0] == '"' || s[0] == '\'' {
+			quote := s[0]
+			s = s[1:]
+			i := 0
+			for i < len(s) && s[i] != quote {
+				i++
+			}
+			if i >= len(s) {
+				return nil, fmt.Errorf("unterminated %c string", quote)
+			}
+			f = append(f, s[:i])
+			s = s[i+1:]
 			continue
 		}
-
-		switch quote {
-		case '\'':
-			if r == '\'' {
-				quote = 0
-				continue
-			}
-			token.WriteRune(r)
-		case '"':
-			switch r {
-			case '"':
-				quote = 0
-			case '\\':
-				escaped = true
-			default:
-				token.WriteRune(r)
-			}
-		default:
-			switch {
-			case unicode.IsSpace(r):
-				flush()
-			case r == '\'' || r == '"':
-				tokenStarted = true
-				quote = r
-			case r == '\\':
-				tokenStarted = true
-				escaped = true
-			default:
-				tokenStarted = true
-				token.WriteRune(r)
-			}
+		i := 0
+		for i < len(s) && !isSpaceByte(s[i]) {
+			i++
 		}
+		f = append(f, s[:i])
+		s = s[i:]
 	}
+	return f, nil
+}
 
-	if escaped {
-		return nil, fmt.Errorf("unterminated escape sequence")
-	}
-	if quote != 0 {
-		return nil, fmt.Errorf("unterminated quoted string")
-	}
-
-	flush()
-	return out, nil
+func isSpaceByte(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }

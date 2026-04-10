@@ -68,6 +68,21 @@ func TestExpandLDFlags(t *testing.T) {
 			flags:   []string{"-extldflags '-static -L/foo/lib"},
 			wantErr: true,
 		},
+		{
+			name:  "literal backslash preserved",
+			flags: []string{"-X main.Path=C:\\Users\\me"},
+			want:  []string{"-X", "main.Path=C:\\Users\\me"},
+		},
+		{
+			name:  "mid-token quote is literal",
+			flags: []string{`a"b c"d`},
+			want:  []string{`a"b`, `c"d`},
+		},
+		{
+			name:  "adjacent quoted fields",
+			flags: []string{`"hello" "world"`},
+			want:  []string{"hello", "world"},
+		},
 	}
 
 	for _, tt := range tests {
