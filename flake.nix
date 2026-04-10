@@ -84,6 +84,9 @@
           test-fixture-test-helper-pkg = callPkgWith ./packages/test-fixture-test-helper-pkg/default.nix {
             inherit flake system;
           };
+          test-fixture-dual-cgo = callPkgWith ./packages/test-fixture-dual-cgo/default.nix {
+            inherit flake system;
+          };
           test-fixture-modroot-nested = callPkgWith ./packages/test-fixture-modroot-nested/default.nix {
             inherit flake system;
           };

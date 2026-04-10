@@ -44,7 +44,10 @@
   tags ? [ ],
   ldflags ? [ ],
   gcflags ? [ ],
-  CGO_ENABLED ? null,
+  # Explicit value wins; otherwise inherit the scope-level goEnv.CGO_ENABLED
+  # so the eval-time `go list` (resolveGoPackages) and the build-time stdlib
+  # agree on which `//go:build cgo` files are in play.
+  CGO_ENABLED ? goEnv.CGO_ENABLED or null,
   goProxy ? null,
   pgoProfile ? null,
   allowGoReference ? false,
