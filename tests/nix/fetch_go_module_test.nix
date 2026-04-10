@@ -1,9 +1,10 @@
 # tests/nix/fetch_go_module_test.nix — unit tests for nix/dag/fetch-go-module.nix
 #
-# Run: nix eval -f tests/nix/fetch_go_module_test.nix --impure
-# Returns true on success, throws on failure.
+# Returns true on success, throws on failure. Exercised by the
+# `nix-unit-tests` flake check; run standalone with
+#   nix eval -f tests/nix/fetch_go_module_test.nix --arg pkgs 'import <nixpkgs> {}'
+{ pkgs }:
 let
-  pkgs = import <nixpkgs> { };
   fetcher = pkgs.callPackage ../../nix/dag/fetch-go-module.nix {
     inherit (pkgs) go;
     helpers = import ../../nix/helpers.nix;
