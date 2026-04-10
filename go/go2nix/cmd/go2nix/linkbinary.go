@@ -178,6 +178,12 @@ func linkBinary(manifestPath, output string) error {
 		return err
 	}
 
+	ldflags, err := expandLDFlags(m.LDFlags)
+	if err != nil {
+		return fmt.Errorf("parsing ldflags: %w", err)
+	}
+	userExtld := hasExtld(ldflags)
+
 	for _, sp := range m.SubPackages {
 		deps := make([]buildinfo.ModDep, 0, len(sp.Modules))
 		for _, mm := range sp.Modules {
@@ -238,14 +244,17 @@ func linkBinary(manifestPath, output string) error {
 		// pick the link mode itself (cmd/link/internal/ld/lib.go:576 sets
 		// iscgo = LibraryByPkg["runtime/cgo"] != nil; config.go:208 picks
 		// external when iscgo && externalobj). Mirror that: pass -extld
-		// unconditionally, never force -linkmode.
+		// unconditionally, never force -linkmode. setextld (gc.go:538-550)
+		// skips this when user ldflags already contain -extld.
 		var linkFlags []string
-		extld := os.Getenv("CC")
-		if sp.CXX {
-			extld = os.Getenv("CXX")
-		}
-		if extld != "" {
-			linkFlags = append(linkFlags, "-extld", extld)
+		if !userExtld {
+			extld := os.Getenv("CC")
+			if sp.CXX {
+				extld = os.Getenv("CXX")
+			}
+			if extld != "" {
+				linkFlags = append(linkFlags, "-extld", extld)
+			}
 		}
 
 		// Propagate sanitizer flags from gcflags to linker.
@@ -278,10 +287,6 @@ func linkBinary(manifestPath, output string) error {
 			"-buildid=redacted",
 			"-buildmode=" + buildMode,
 			"-importcfg", linkCfg,
-		}
-		ldflags, err := expandLDFlags(m.LDFlags)
-		if err != nil {
-			return fmt.Errorf("parsing ldflags for %s: %w", importpath, err)
 		}
 		linkArgs = append(linkArgs, ldflags...)
 		linkArgs = append(linkArgs, linkFlags...)
@@ -320,6 +325,17 @@ func goToolchainVersion() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// hasExtld reports whether ldflags already specify -extld, mirroring
+// cmd/go's setextld check (cmd/go/internal/work/gc.go:538-550).
+func hasExtld(ldflags []string) bool {
+	for _, f := range ldflags {
+		if f == "-extld" || strings.HasPrefix(f, "-extld=") {
+			return true
+		}
+	}
+	return false
 }
 
 // expandLDFlags splits each ldflag element into separate exec arguments using

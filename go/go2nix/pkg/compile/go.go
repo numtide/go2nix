@@ -10,15 +10,7 @@ import (
 )
 
 func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
-	args := []string{
-		"tool", "compile",
-		"-importcfg", opts.ImportCfg,
-		"-p", opts.PFlag,
-		"-buildid", "", // deterministic empty buildID for Nix reproducibility
-		"-trimpath=" + opts.trimRewrite,
-		"-pack",
-	}
-	args = append(args, opts.outputFlags()...)
+	args := append(baseCompileArgs(opts), opts.outputFlags()...)
 	if opts.GoVersion != "" {
 		args = append(args, "-lang=go"+opts.GoVersion)
 	}

@@ -143,6 +143,22 @@ func CompileGoPackage(opts Options) error {
 	return compileGo(opts, files, embedFlag)
 }
 
+// baseCompileArgs returns the flags common to every `go tool compile`
+// invocation. -nolocalimports mirrors cmd/go (work/gc.go:137-141): the
+// alternative -D LocalPrefix branch only applies to legacy GOPATH-style
+// relative imports, and go2nix only ever compiles module-based packages.
+func baseCompileArgs(opts Options) []string {
+	return []string{
+		"tool", "compile",
+		"-importcfg", opts.ImportCfg,
+		"-p", opts.PFlag,
+		"-buildid", "", // deterministic empty buildID for Nix reproducibility
+		"-trimpath=" + opts.trimRewrite,
+		"-nolocalimports",
+		"-pack",
+	}
+}
+
 // outputFlags returns the -o / -linkobj arguments. When IfaceOutput is set,
 // -o gets the export-data-only archive (read by downstream compiles via
 // importcfg) and -linkobj gets the linker object (read by go tool link).

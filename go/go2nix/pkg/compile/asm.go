@@ -51,16 +51,10 @@ func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) erro
 	}
 
 	// Pass 2: compile Go with symabis + asmhdr.
-	compileArgs := []string{
-		"tool", "compile",
-		"-importcfg", opts.ImportCfg,
-		"-p", opts.PFlag,
-		"-buildid", "", // deterministic empty buildID for Nix reproducibility
-		"-trimpath=" + opts.trimRewrite,
+	compileArgs := append(baseCompileArgs(opts),
 		"-symabis", symabis,
 		"-asmhdr", asmhdr,
-		"-pack",
-	}
+	)
 	compileArgs = append(compileArgs, opts.outputFlags()...)
 	if opts.GoVersion != "" {
 		compileArgs = append(compileArgs, "-lang=go"+opts.GoVersion)

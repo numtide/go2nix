@@ -176,15 +176,7 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		cgoGoFiles = append(cgoGoFiles, ldflagFile)
 	}
 
-	compileArgs := []string{
-		"tool", "compile",
-		"-importcfg", opts.ImportCfg,
-		"-p", opts.PFlag,
-		"-buildid", "", // deterministic empty buildID for Nix reproducibility
-		"-trimpath=" + opts.trimRewrite,
-		"-pack",
-	}
-	compileArgs = append(compileArgs, opts.outputFlags()...)
+	compileArgs := append(baseCompileArgs(opts), opts.outputFlags()...)
 	if opts.GoVersion != "" {
 		compileArgs = append(compileArgs, "-lang=go"+opts.GoVersion)
 	}
