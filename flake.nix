@@ -72,6 +72,18 @@
             inherit flake system;
           };
 
+          test-package-dotool-dynamic = callPkgWith ./packages/test-package-dotool-dynamic/default.nix {
+            inherit flake system;
+          };
+          # test-package-nwg-drawer-dynamic kept under packages/ but not wired:
+          # the link drv still misses propagated lib dirs (fails on -lz), unlike
+          # the compile drvs which now get include dirs via CGO_CFLAGS.
+          test-package-yubikey-agent-dynamic =
+            callPkgWith ./packages/test-package-yubikey-agent-dynamic/default.nix
+              {
+                inherit flake system;
+              };
+
           test-fixture-testify-basic = callPkgWith ./packages/test-fixture-testify-basic/default.nix {
             inherit flake system;
           };

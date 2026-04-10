@@ -118,7 +118,10 @@ func (s *DaemonStore) Build(installables ...string) ([]*storepath.StorePath, err
 
 		var sp *storepath.StorePath
 		for _, realised := range r.BuiltOutputs {
-			if sp, err = storepath.FromAbsolutePath(realised.OutPath); err != nil {
+			// Realisation JSON serialises outPath via Nix's StorePath
+			// to_string(), which is the bare HASH-NAME without the
+			// store dir prefix (libstore/include/nix/store/path.hh).
+			if sp, err = storepath.FromString(realised.OutPath); err != nil {
 				return nil, fmt.Errorf("parsing build output %q: %w", realised.OutPath, err)
 			}
 
