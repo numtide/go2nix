@@ -209,6 +209,12 @@ func linkBinary(manifestPath, output string) error {
 	}
 
 	for _, sp := range m.SubPackages {
+		// compileCgo writes .has_cgo / .has_cxx into NIX_BUILD_TOP; clear any
+		// markers left by the previous subpackage so a pure-Go binary built
+		// after a cgo one doesn't inherit -extld / -linkmode external.
+		_ = os.Remove(filepath.Join(tmpDir, ".has_cgo"))
+		_ = os.Remove(filepath.Join(tmpDir, ".has_cxx"))
+
 		var importpath, srcdir, binname string
 
 		clean := strings.TrimPrefix(sp.Path, "./")

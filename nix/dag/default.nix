@@ -508,10 +508,22 @@ let
       # on source touches and benefit from early-cutoff.
       mkDeriv = caMk (pickMk isCgo);
 
-      # Per-package overrides (e.g., nativeBuildInputs for cgo).
-      pkgOverride = packageOverrides.${importPath} or { };
+      # Per-package overrides (e.g., nativeBuildInputs for cgo libraries).
+      # Lookup order: exact import path, then module path, then empty.
+      isExactOverride = builtins.hasAttr importPath packageOverrides;
+      rawOverride =
+        packageOverrides.${importPath} or packageOverrides.${goPackagesResult.modulePath} or { };
       # nativeBuildInputs only reaches PATH via stdenv (cgo path);
-      # rawGoCompile (non-cgo) hardcodes goPath and discards it.
+      # rawGoCompile (non-cgo) hardcodes goPath and discards it. Reject
+      # for non-cgo so users get an error instead of a silent no-op —
+      # but only for exact-match overrides. A module-path override
+      # legitimately spans both cgo and non-cgo packages in the same
+      # module, so for the fallback case we silently drop the attr.
+      pkgOverride =
+        if isExactOverride || isCgo then
+          rawOverride
+        else
+          builtins.removeAttrs rawOverride [ "nativeBuildInputs" ];
       knownOverrideAttrs = [ "env" ] ++ lib.optional isCgo "nativeBuildInputs";
       unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
