@@ -53,8 +53,9 @@ See [Architecture](docs/src/go2nix-architecture.md) for how the builder works,
 go2nix generate .
 ```
 
-`generate` is also the default command, so `go2nix .` works as well. This
-writes a `go2nix.toml` next to your `go.mod` — one NAR hash per module:
+`generate` is also the default when no subcommand is given, so bare `go2nix`
+is equivalent to `go2nix generate .`. This writes a `go2nix.toml` next to
+your `go.mod` — one NAR hash per module:
 
 ```toml
 [mod]
@@ -175,7 +176,7 @@ direnv allow   # or: nix develop
 
 ```bash
 cd go/go2nix && go test ./...                  # Go unit tests
-nix build .#test-dag-fixture-testify-basic     # Nix integration test (one fixture)
+nix build .#test-fixture-testify-basic         # Nix integration test (one fixture)
 nix run .#bench-incremental -- -fixture light  # incremental rebuild benchmark
 nix fmt                                        # format all files
 ```
