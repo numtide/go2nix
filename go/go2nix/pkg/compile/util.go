@@ -138,9 +138,20 @@ func DefaultBuildMode(goos, goarch string) string {
 	return "exe"
 }
 
+// defaultGoModVersion is the language version assumed for a go.mod that
+// lacks a go directive. Mirrors gover.DefaultGoModVersion
+// ($GOROOT/src/cmd/go/internal/gover/version.go:24); cmd/go uses this as
+// the -lang fallback in work/gc.go:71-80.
+const defaultGoModVersion = "1.16"
+
 // findGoVersion walks up from dir looking for go.mod and returns the
-// Go language version (major.minor only), matching cmd/go's -lang behavior.
-// Returns "" if no go.mod is found or it lacks a go directive.
+// Go language version (major.minor only) for cmd/go's -lang flag.
+//
+// The walk stops at the first go.mod found (the module boundary). If that
+// go.mod has no go directive, defaultGoModVersion is returned, matching
+// cmd/go's gover.DefaultGoModVersion fallback. Only when no go.mod is
+// found at all is "" returned (no -lang flag, compiler-native semantics —
+// equivalent to upstream's gover.Local() for p.Module == nil).
 func findGoVersion(dir string) string {
 	for d := dir; ; {
 		data, err := os.ReadFile(filepath.Join(d, "go.mod"))
@@ -149,14 +160,14 @@ func findGoVersion(dir string) string {
 			if err == nil && f.Go != nil {
 				return LangVersion(f.Go.Version)
 			}
+			return defaultGoModVersion
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
-			break
+			return ""
 		}
 		d = parent
 	}
-	return ""
 }
 
 // ToolchainVersion returns the major.minor version of the Go toolchain

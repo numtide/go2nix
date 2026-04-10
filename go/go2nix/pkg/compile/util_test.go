@@ -106,10 +106,39 @@ func TestFindGoVersion(t *testing.T) {
 		t.Errorf("subdir: got %q, want %q", got, "1.21")
 	}
 
-	// Directory with no go.mod returns "".
+	// Directory with no go.mod anywhere in the walk returns "".
+	// t.TempDir() may have ancestors with a go.mod (e.g. a stray /tmp/go.mod
+	// from another test); guard by anchoring an empty go.mod-free root.
 	nomod := t.TempDir()
 	if got := findGoVersion(nomod); got != "" {
 		t.Errorf("no go.mod: got %q, want %q", got, "")
+	}
+
+	// go.mod present but lacks a go directive: fall back to
+	// gover.DefaultGoModVersion ("1.16"), matching cmd/go (work/gc.go:71-80).
+	legacy := t.TempDir()
+	if err := os.WriteFile(filepath.Join(legacy, "go.mod"), []byte("module example.com/legacy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := findGoVersion(legacy); got != "1.16" {
+		t.Errorf("no go directive: got %q, want %q", got, "1.16")
+	}
+
+	// Nested module: inner go.mod (no go directive) is the boundary; the
+	// walk must stop there and return "1.16", not continue to outer's "1.22".
+	outer := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outer, "go.mod"), []byte("module example.com/outer\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(outer, "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inner, "go.mod"), []byte("module example.com/inner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := findGoVersion(inner); got != "1.16" {
+		t.Errorf("nested module boundary: got %q, want %q (must not walk past inner go.mod)", got, "1.16")
 	}
 }
 
