@@ -20,6 +20,9 @@ func TestAdd(t *testing.T) {
 	}
 }
 
+// TestBanner asserts the source-tree data.txt, not the srcOverlay value:
+// the testrunner recompiles from mainSrc (link-derivation source), which
+// srcOverlay does not touch. This pins that divergence so it's deliberate.
 func TestBanner(t *testing.T) {
 	if got := Banner(); got != "hello-from-embed" {
 		t.Fatalf("Banner() = %q, want %q", got, "hello-from-embed")

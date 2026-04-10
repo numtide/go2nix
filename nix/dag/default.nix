@@ -132,6 +132,11 @@ let
     export NIX_BUILD_TOP="$TMPDIR"
     export HOME="$TMPDIR/home"; mkdir -p "$HOME"
     export GOPROXY=off GOSUMDB=off GONOSUMCHECK='*'
+    if [ -n "''${goSrcOverlay:-}" ]; then
+      cp -rL --no-preserve=mode "$goPackageSrcDir" "$TMPDIR/srcdir"
+      cp -rL --no-preserve=mode "$goSrcOverlay"/. "$TMPDIR/srcdir/"
+      goPackageSrcDir="$TMPDIR/srcdir"
+    fi
     mkdir -p "$out/$(dirname "$goPackagePath")"
     if [ -n "''${iface:-}" ]; then
       mkdir -p "$iface/$(dirname "$goPackagePath")"
@@ -243,6 +248,7 @@ let
       srcDir,
       deps,
       extraEnv,
+      srcOverlay ? null,
       files ? null,
       # Module's go-directive (major.minor) for `-lang`. Required for local
       # non-root packages whose filtered srcDir lacks go.mod (so the build-time
@@ -257,7 +263,11 @@ let
       goPackageSrcDir = srcDir;
       goLangVersion = goVersion;
       compileManifestJSON = mkCompileManifestJSON { inherit deps files; };
-    };
+    }
+    # Only emitted when set so drv hashes for packages without an overlay are
+    # unchanged. The "${...}" interpolation carries derivation context so the
+    # overlay becomes a build-time input of this compile drv (no IFD).
+    // lib.optionalAttrs (srcOverlay != null) { goSrcOverlay = "${srcOverlay}"; };
 
   # Target platform for `go tool compile`/`link`. goEnv wins so a user-set
   # GOOS/GOARCH (via mkGoEnv { goEnv = ...; }) is honoured everywhere the
@@ -406,10 +416,15 @@ let
           rawOverride
         else
           builtins.removeAttrs rawOverride [ "nativeBuildInputs" ];
-      knownOverrideAttrs = [ "env" ] ++ lib.optional isCgo "nativeBuildInputs";
+      knownOverrideAttrs = [
+        "env"
+        "srcOverlay"
+      ]
+      ++ lib.optional isCgo "nativeBuildInputs";
       unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
       extraEnv = pkgOverride.env or { };
+      srcOverlay = pkgOverride.srcOverlay or null;
 
       # Auto-add CC for CGO packages; use stdenvNoCC for pure Go packages.
       isCgo = pkg.isCgo or false;
@@ -434,6 +449,7 @@ let
           srcDir
           deps
           extraEnv
+          srcOverlay
           ;
         files = pkg.files or null;
       };
@@ -528,10 +544,15 @@ let
           rawOverride
         else
           builtins.removeAttrs rawOverride [ "nativeBuildInputs" ];
-      knownOverrideAttrs = [ "env" ] ++ lib.optional isCgo "nativeBuildInputs";
+      knownOverrideAttrs = [
+        "env"
+        "srcOverlay"
+      ]
+      ++ lib.optional isCgo "nativeBuildInputs";
       unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
       extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
       extraEnv = pkgOverride.env or { };
+      srcOverlay = pkgOverride.srcOverlay or null;
     in
     # Safety (defense-in-depth): reject paths with ".." path components.
     # The plugin already validates via canonical()/relative(), but guard here too.
@@ -556,6 +577,7 @@ let
           srcDir
           deps
           extraEnv
+          srcOverlay
           ;
         files = pkg.files or null;
         goVersion = localGoVersion;
@@ -652,10 +674,15 @@ let
             rawOverride
           else
             builtins.removeAttrs rawOverride [ "nativeBuildInputs" ];
-        knownOverrideAttrs = [ "env" ] ++ lib.optional isCgo "nativeBuildInputs";
+        knownOverrideAttrs = [
+          "env"
+          "srcOverlay"
+        ]
+        ++ lib.optional isCgo "nativeBuildInputs";
         unknownAttrs = builtins.attrNames (builtins.removeAttrs pkgOverride knownOverrideAttrs);
         extraNativeBuildInputs = pkgOverride.nativeBuildInputs or [ ];
         extraEnv = pkgOverride.env or { };
+        srcOverlay = pkgOverride.srcOverlay or null;
       in
       assert
         unknownAttrs == [ ]
@@ -675,6 +702,7 @@ let
             srcDir
             deps
             extraEnv
+            srcOverlay
             ;
           files = pkg.files or null;
         };

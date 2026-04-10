@@ -12,9 +12,11 @@ import (
 	"fmt"
 
 	"example.com/cgo-internal-test/internal/adder"
+	"example.com/cgo-internal-test/internal/stamp"
 )
 
 func main() {
 	fmt.Println(adder.Add(2, 3) * int(C.one()))
 	fmt.Println(adder.Banner())
+	fmt.Println(stamp.Version)
 }

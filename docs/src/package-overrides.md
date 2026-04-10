@@ -32,6 +32,7 @@ same system libraries.
 |-----|------|--------------|-------------------|-------|
 | `nativeBuildInputs` | list of derivations | cgo packages only | yes | Added to the per-package derivation's `nativeBuildInputs` |
 | `env` | attrset | yes | no | Extra environment variables on the per-package derivation |
+| `srcOverlay` | derivation or path | yes | no | Contents are layered onto the package's source directory at build time |
 
 In default mode, `nativeBuildInputs` from every entry in `packageOverrides`
 (regardless of whether the key matched a package in the graph) are also
@@ -117,3 +118,37 @@ packageOverrides = {
 `env` is default-mode only. The experimental builder synthesizes
 derivations at build time inside `go2nix resolve` and can only forward
 store paths, so it rejects `env` (and any other unknown key) at eval time.
+
+## Example: `srcOverlay` for build-time-generated `//go:embed` content
+
+When a package embeds files that are themselves build outputs — a bundled
+SPA under `//go:embed all:dist`, generated protobuf descriptors, etc. —
+`srcOverlay` lets you supply them as a derivation that is layered onto the
+package's source directory at build time:
+
+```nix
+packageOverrides = {
+  "example.com/app/ui" = {
+    srcOverlay = pkgs.runCommand "ui-dist" { } ''
+      mkdir -p $out/dist
+      cp -r ${uiBundle}/* $out/dist/
+    '';
+  };
+};
+```
+
+The overlay is `cp -rL`'d onto a writable copy of the package's source
+before `go2nix compile-package` runs, so `ResolveEmbedCfg` sees the
+generated files. This is a build-time input of that one compile derivation
+only — it does **not** flow into `src` at evaluation time, so it does not
+trigger IFD and does not invalidate sibling packages.
+
+Keep a placeholder file in the source tree (e.g. `ui/dist/.gitkeep`) so
+the eval-time `go list` doesn't error on a `//go:embed` pattern with zero
+matches; the overlay then replaces or augments it at build time.
+
+`srcOverlay` only reaches the per-package compile derivation. The
+`doCheck` testrunner recompiles from the link derivation's `mainSrc`,
+which is the unmodified source tree — so tests see the placeholder, not
+the overlay. This is usually what you want (tests don't need the bundled
+SPA), but if a test asserts on overlaid content it will fail.

@@ -18,6 +18,15 @@ compileGoPkgBuildPhase() {
   # Write manifest JSON to a file for go2nix to read.
   echo "$compileManifestJSON" >"$NIX_BUILD_TOP/compile-manifest.json"
 
+  # packageOverrides.<pkg>.srcOverlay: build-time-generated files (typically
+  # //go:embed targets). Layer the overlay onto a writable copy so
+  # ResolveEmbedCfg sees the generated content.
+  if [[ -n ${goSrcOverlay:-} ]]; then
+    cp -rL --no-preserve=mode "$goPackageSrcDir" "$NIX_BUILD_TOP/srcdir"
+    cp -rL --no-preserve=mode "$goSrcOverlay"/. "$NIX_BUILD_TOP/srcdir/"
+    goPackageSrcDir="$NIX_BUILD_TOP/srcdir"
+  fi
+
   mkdir -p "$out/$(dirname "$goPackagePath")"
 
   # When the derivation has an `iface` output (interface split mode),
