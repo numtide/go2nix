@@ -233,7 +233,10 @@ let
     );
 
   # Env attrset for per-package compile derivations. goEnv is the scope-level
-  # base; the hook-required keys overlay it; packageOverrides.<pkg>.env wins.
+  # base; packageOverrides.<pkg>.env overlays it; the hook-required wiring
+  # keys come last so a stray env.compileManifestJSON / goPackagePath /
+  # goPackageSrcDir / goLangVersion in an override can't silently break the
+  # build (rawGoCompile already protects builder/args/system the same way).
   mkCompileEnv =
     {
       importPath,
@@ -248,13 +251,13 @@ let
       goVersion ? "",
     }:
     goEnv
+    // extraEnv
     // {
       goPackagePath = importPath;
       goPackageSrcDir = srcDir;
       goLangVersion = goVersion;
       compileManifestJSON = mkCompileManifestJSON { inherit deps files; };
-    }
-    // extraEnv;
+    };
 
   # Target platform for `go tool compile`/`link`. goEnv wins so a user-set
   # GOOS/GOARCH (via mkGoEnv { goEnv = ...; }) is honoured everywhere the
