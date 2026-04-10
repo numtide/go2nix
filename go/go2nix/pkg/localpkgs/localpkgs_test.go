@@ -397,6 +397,91 @@ func TestExtEmbed(t *testing.T) { _ = fs }
 	}
 }
 
+func TestModulePath(t *testing.T) {
+	t.Run("module directive", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "go.mod"), "module example.com/myapp\n\ngo 1.21\n")
+		got, err := ModulePath(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "example.com/myapp" {
+			t.Errorf("ModulePath = %q, want example.com/myapp", got)
+		}
+	})
+	t.Run("no go.mod", func(t *testing.T) {
+		_, err := ModulePath(t.TempDir())
+		if err == nil {
+			t.Fatal("expected error for missing go.mod, got nil")
+		}
+	})
+	t.Run("no module directive", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "go.mod"), "go 1.21\n")
+		got, err := ModulePath(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "" {
+			t.Errorf("ModulePath = %q, want empty (modfile.ModulePath returns \"\" when no module line)", got)
+		}
+	})
+}
+
+func TestResolveEmbeds(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "test.json", "x.yaml"} {
+		writeFile(t, filepath.Join(dir, name), "x")
+	}
+
+	p := &LocalPkg{
+		ImportPath:         "example.com/test",
+		SrcDir:             dir,
+		EmbedPatterns:      []string{"*.txt"},
+		TestEmbedPatterns:  []string{"test.json"},
+		XTestEmbedPatterns: []string{"x.yaml"},
+	}
+	if err := p.ResolveEmbeds(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(p.EmbedFiles, []string{"a.txt", "b.txt"}) {
+		t.Errorf("EmbedFiles = %v, want [a.txt b.txt]", p.EmbedFiles)
+	}
+	if p.EmbedCfg == nil {
+		t.Fatal("EmbedCfg = nil")
+	}
+	if got := p.EmbedCfg.Patterns["*.txt"]; !slices.Equal(got, []string{"a.txt", "b.txt"}) {
+		t.Errorf("EmbedCfg.Patterns[*.txt] = %v, want [a.txt b.txt]", got)
+	}
+	if p.EmbedCfg.Files["a.txt"] != filepath.Join(dir, "a.txt") {
+		t.Errorf("EmbedCfg.Files[a.txt] = %q, want absolute path under SrcDir", p.EmbedCfg.Files["a.txt"])
+	}
+
+	if !slices.Equal(p.TestEmbedFiles, []string{"test.json"}) {
+		t.Errorf("TestEmbedFiles = %v, want [test.json]", p.TestEmbedFiles)
+	}
+	if p.TestEmbedCfg == nil || p.TestEmbedCfg.Files["test.json"] != filepath.Join(dir, "test.json") {
+		t.Errorf("TestEmbedCfg.Files[test.json] = %v", p.TestEmbedCfg)
+	}
+
+	if !slices.Equal(p.XTestEmbedFiles, []string{"x.yaml"}) {
+		t.Errorf("XTestEmbedFiles = %v, want [x.yaml]", p.XTestEmbedFiles)
+	}
+	if p.XTestEmbedCfg == nil || p.XTestEmbedCfg.Files["x.yaml"] != filepath.Join(dir, "x.yaml") {
+		t.Errorf("XTestEmbedCfg.Files[x.yaml] = %v", p.XTestEmbedCfg)
+	}
+
+	// Empty patterns yield nil cfg and an empty (not nil) file slice.
+	empty := &LocalPkg{SrcDir: dir}
+	if err := empty.ResolveEmbeds(); err != nil {
+		t.Fatal(err)
+	}
+	if empty.EmbedCfg != nil || empty.EmbedFiles == nil || len(empty.EmbedFiles) != 0 {
+		t.Errorf("empty patterns: EmbedCfg=%v EmbedFiles=%v, want nil / []", empty.EmbedCfg, empty.EmbedFiles)
+	}
+}
+
 func TestListLocalPackages_DefersBrokenEmbed(t *testing.T) {
 	root := t.TempDir()
 

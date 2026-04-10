@@ -135,6 +135,23 @@ func TestBuildSettingsMatchCmdGo(t *testing.T) {
 	}
 }
 
+func TestFips140Enabled(t *testing.T) {
+	for _, tt := range []struct {
+		v    string
+		want bool
+	}{
+		{"", false},
+		{"off", false},
+		{"latest", true},
+		{"v1.0.0", true},
+		{"inprocess", true},
+	} {
+		if got := Fips140Enabled(tt.v); got != tt.want {
+			t.Errorf("Fips140Enabled(%q) = %v, want %v", tt.v, got, tt.want)
+		}
+	}
+}
+
 func TestGenerateModinfoNoGoSum(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(`module example.com/myapp
