@@ -977,18 +977,23 @@ func buildLinkDrv(
 
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
 
-	// PATH: coreutils + CC for external linking (cgo)
+	// PATH: coreutils + CC for external linking. -extld is passed
+	// unconditionally (matching cmd/go's setextld, gc.go:591-649); cmd/link
+	// picks the link mode itself (lib.go:576 / config.go:208), so it's a
+	// no-op when internal linking is chosen. ccDir is only added when a
+	// cgo package is in the closure, since otherwise the link drv has no
+	// reason to depend on the cc-wrapper store path.
 	pathParts := []string{cfg.coreutilsDir + "/bin"}
-	if hasCgo && cfg.ccPath != "" {
-		// Pass -extld explicitly so the linker uses the correct compiler,
-		// matching cmd/go's setextld behavior (see gc.go).
+	if cfg.ccPath != "" {
 		extld := cfg.ccPath
 		if hasCxx && cfg.cxxPath != "" {
 			extld = cfg.cxxPath
 		}
 		drv.SetEnv("extld", extld)
-		pathParts = append(pathParts, cfg.ccDir+"/bin")
-		drv.AddInputSrc(cfg.ccDir)
+		if hasCgo {
+			pathParts = append(pathParts, cfg.ccDir+"/bin")
+			drv.AddInputSrc(cfg.ccDir)
+		}
 	}
 	drv.SetEnv("PATH", strings.Join(pathParts, ":"))
 

@@ -322,7 +322,8 @@ func TestBuildLinkDrvClosureOnly(t *testing.T) {
 		},
 		"m/lib/unrelated": {
 			ImportPath: "m/lib/unrelated", Imports: nil,
-			CgoFiles: []string{"c.go"}, // cgo in an unrelated pkg must not flip extld
+			CgoFiles: []string{"c.go"}, // cgo+cxx in an unrelated pkg must not
+			CXXFiles: []string{"x.cc"}, // add ccDir to PATH or flip extld to CXX
 			DrvPath:  mkDrv("yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"),
 		},
 	}
@@ -334,6 +335,7 @@ func TestBuildLinkDrvClosureOnly(t *testing.T) {
 		GoBin:        "/nix/store/00000000000000000000000000000000-go/bin/go",
 		StdlibPath:   "/nix/store/00000000000000000000000000000000-stdlib",
 		ccPath:       "/nix/store/00000000000000000000000000000000-cc/bin/cc",
+		cxxPath:      "/nix/store/00000000000000000000000000000000-cc/bin/c++",
 		ccDir:        "/nix/store/00000000000000000000000000000000-cc",
 	}
 	cfg.coreutilsDir = storeDirOf(cfg.CoreutilsBin)
@@ -350,8 +352,16 @@ func TestBuildLinkDrvClosureOnly(t *testing.T) {
 	if strings.Contains(entries, "m/lib/unrelated") {
 		t.Errorf("importcfg references unrelated package:\n%s", entries)
 	}
-	if drv.Env()["extld"] != "" {
-		t.Errorf("extld set despite no cgo in closure: %q", drv.Env()["extld"])
+	// extld is now passed unconditionally (matching cmd/go's setextld);
+	// cmd/link picks the link mode itself, so for a pure-Go closure it
+	// chooses internal and extld is unused. The test cfg has both ccPath
+	// and cxxPath; m/lib/unrelated has cgo+cxx but is outside this main's
+	// closure, so extld must be CC and ccDir must not enter PATH.
+	if got := drv.Env()["extld"]; got != cfg.ccPath {
+		t.Errorf("extld = %q, want CC %q (cxx outside closure must not flip it)", got, cfg.ccPath)
+	}
+	if strings.Contains(drv.Env()["PATH"], cfg.ccDir) {
+		t.Errorf("PATH contains ccDir despite no cgo in closure: %q", drv.Env()["PATH"])
 	}
 }
 

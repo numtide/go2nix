@@ -96,9 +96,11 @@ func linkScript(goStorePath, pname, buildMode string) string {
 	b.WriteString(" \\\n  -importcfg \"$NIX_BUILD_TOP/importcfg\"")
 	b.WriteString(" \\\n  -buildid=")
 	fmt.Fprintf(&b, " \\\n  -buildmode=%s", shellQuote(buildMode))
-	// External linker for cgo packages — uses CC or CXX depending on
-	// whether C++ files are present, matching Go's setextld (gc.go).
-	b.WriteString(" \\\n  ${extld:+-extld \"$extld\" -linkmode external}")
+	// External linker — CXX if any transitive package has C++ sources,
+	// else CC. Always passed (matching cmd/go's setextld); cmd/link picks
+	// the link mode itself via determineLinkMode (cmd/link/internal/ld/
+	// config.go:208), so we never force -linkmode.
+	b.WriteString(" \\\n  ${extld:+-extld \"$extld\"}")
 	// Sanitizer flags (-race, -msan, -asan) propagated from gcflags
 	b.WriteString(" \\\n  ${sanitizerLinkFlags:+$sanitizerLinkFlags}")
 	// GODEBUG default from go.mod's go directive (gc.go:624-626)

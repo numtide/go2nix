@@ -154,6 +154,10 @@ type LinkSubPackage struct {
 	// threaded from the Nix build graph so debug.BuildInfo.Deps records
 	// only modules actually linked into this binary (matching `go build`).
 	Modules []ManifestModule `json:"modules,omitempty"`
+	// CXX reports whether any package in this binary's transitive closure
+	// has C++ sources (CXXFiles or SwigCXXFiles), so link-binary picks the
+	// C++ compiler for -extld (cmd/go/internal/work/gc.go:591-595).
+	CXX bool `json:"cxx,omitempty"`
 }
 
 // LoadLinkManifest reads and validates a link manifest from path.
