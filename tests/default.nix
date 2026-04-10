@@ -19,6 +19,7 @@
   fixtures = {
     testify-basic = import ./fixtures/testify-basic/dag.nix;
     xtest-local-dep = import ./fixtures/xtest-local-dep/dag.nix;
+    cgo-internal-test = import ./fixtures/cgo-internal-test/dag.nix;
     modroot-nested = import ./fixtures/modroot-nested/dag.nix;
   };
 }

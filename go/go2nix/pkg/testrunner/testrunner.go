@@ -206,6 +206,8 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		allFiles = append(allFiles, pkg.CFiles...)
 		allFiles = append(allFiles, pkg.CXXFiles...)
 		allFiles = append(allFiles, pkg.HFiles...)
+		allFiles = append(allFiles, pkg.FFiles...)
+		allFiles = append(allFiles, pkg.SysoFiles...)
 		allFiles = append(allFiles, pkg.TestGoFiles...)
 		for _, f := range allFiles {
 			src := filepath.Join(pkg.SrcDir, f)
@@ -234,9 +236,10 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 
 		// Explicit file list: go/build.ImportDir would classify _test.go
 		// files into TestGoFiles, not GoFiles. We must compile them all
-		// together as a single package.
-		goFiles := append(append([]string{}, pkg.GoFiles...), pkg.CgoFiles...)
-		goFiles = append(goFiles, pkg.TestGoFiles...)
+		// together as a single package. Preserve the package's cgo/asm/
+		// syso file sets so compile.CompileGoPackage takes the cgo or
+		// asm path instead of the pure-Go -complete path.
+		internalFiles := internalTestPkgFiles(pkg, mergedEmbedCfg)
 		if err := compile.CompileGoPackage(compile.Options{
 			ImportPath:  pkg.ImportPath,
 			SrcDir:      mergedDir,
@@ -244,7 +247,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			ImportCfg:   testCompileImportCfg,
 			TrimPath:    opts.TrimPath,
 			GCFlagsList: opts.GCFlagsList,
-			Files:       &gofiles.PkgFiles{GoFiles: goFiles, EmbedCfg: mergedEmbedCfg},
+			Files:       &internalFiles,
 		}); err != nil {
 			return fmt.Errorf("compiling internal test: %w", err)
 		}
@@ -427,6 +430,26 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 
 	slog.Info("tests passed", "pkg", pkg.ImportPath)
 	return nil
+}
+
+// internalTestPkgFiles returns the explicit file list for compiling the
+// internal test archive: the package's production PkgFiles with TestGoFiles
+// folded into GoFiles. CgoFiles/SFiles/CFiles/CXXFiles/HFiles/FFiles/
+// SysoFiles are carried through verbatim so compile.CompileGoPackage routes
+// to the cgo / asm paths exactly as it does for the non-test build.
+func internalTestPkgFiles(pkg *localpkgs.LocalPkg, embedCfg *gofiles.EmbedCfg) gofiles.PkgFiles {
+	goFiles := append(append([]string{}, pkg.GoFiles...), pkg.TestGoFiles...)
+	return gofiles.PkgFiles{
+		GoFiles:   goFiles,
+		CgoFiles:  pkg.CgoFiles,
+		SFiles:    pkg.SFiles,
+		CFiles:    pkg.CFiles,
+		CXXFiles:  pkg.CXXFiles,
+		HFiles:    pkg.HFiles,
+		FFiles:    pkg.FFiles,
+		SysoFiles: pkg.SysoFiles,
+		EmbedCfg:  embedCfg,
+	}
 }
 
 // overrideImportCfgEntry rewrites the importcfg file, replacing (or adding)
