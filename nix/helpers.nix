@@ -3,7 +3,23 @@ rec {
   # Make a string safe for use as a Nix derivation name.
   # Valid store-path characters: [a-zA-Z0-9+-._?=]
   # Go import paths may contain / ~ @, all of which are illegal.
-  sanitizeName = builtins.replaceStrings [ "/" "~" "@" ] [ "-" "_" "_at_" ];
+  #
+  # If the sanitized result exceeds maxSanitizedLen it is truncated to a
+  # prefix plus an 8-hex-char sha256 of the original input. The cap and
+  # algorithm are mirrored in go/go2nix/pkg/nixdrv/sanitize.go and
+  # packages/go2nix-nix-plugin/rust/src/resolve.rs — keep all three in sync.
+  maxSanitizedLen = 160;
+  sanitizeName =
+    s:
+    let
+      san = builtins.replaceStrings [ "/" "~" "@" ] [ "-" "_" "_at_" ] s;
+    in
+    if builtins.stringLength san <= maxSanitizedLen then
+      san
+    else
+      builtins.substring 0 (maxSanitizedLen - 9) san
+      + "-"
+      + builtins.substring 0 8 (builtins.hashString "sha256" s);
 
   # Remove a prefix from a string. Assumes prefix is actually a prefix.
   removePrefix =

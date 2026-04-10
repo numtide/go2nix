@@ -5,6 +5,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
@@ -178,6 +179,12 @@ fn pkg_files_from(p: &GoPackage) -> PkgFiles {
     }
 }
 
+/// Cap on the sanitized component so the full derivation name (prefix +
+/// sanitized + version suffix) stays under Nix's 211-char store-name limit.
+/// Mirrored in go/go2nix/pkg/nixdrv/sanitize.go and nix/helpers.nix — keep
+/// all three in sync.
+const MAX_SANITIZED_LEN: usize = 160;
+
 fn sanitize_name(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -190,6 +197,15 @@ fn sanitize_name(s: &str) -> String {
             _ => out.push('_'),
         }
     }
+    if out.len() <= MAX_SANITIZED_LEN {
+        return out;
+    }
+    // Sanitized output is ASCII-only, so byte truncation is char-safe.
+    let d = Sha256::digest(s.as_bytes());
+    let h = format!("{:02x}{:02x}{:02x}{:02x}", d[0], d[1], d[2], d[3]);
+    out.truncate(MAX_SANITIZED_LEN - 9);
+    out.push('-');
+    out.push_str(&h);
     out
 }
 
@@ -1413,6 +1429,20 @@ mod tests {
             sanitize_name("example.com/@scope/pkg"),
             "example.com-_at_scope-pkg"
         );
+    }
+
+    #[test]
+    fn sanitize_name_length_cap() {
+        let long = format!("example.com/{}", "a".repeat(288));
+        assert_eq!(long.len(), 300);
+        let got = sanitize_name(&long);
+        assert_eq!(got.len(), MAX_SANITIZED_LEN);
+        assert_eq!(got, sanitize_name(&long), "deterministic");
+        // Cross-implementation parity: Go (pkg/nixdrv) and Nix (helpers.nix)
+        // must produce this exact string for the same input.
+        assert_eq!(got, format!("example.com-{}-2d904ea3", "a".repeat(139)));
+        let other = format!("example.com/{}", "b".repeat(288));
+        assert_ne!(sanitize_name(&other), got, "distinct inputs must differ");
     }
 
     // --- pkg_data_to_json_pkg ---
