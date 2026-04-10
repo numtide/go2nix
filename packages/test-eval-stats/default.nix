@@ -79,10 +79,10 @@ else
         fi
       }
 
-      # Baseline @ 13b4e98: 611,001 / 327,242 / 957,299. ~15% headroom.
-      check nrFunctionCalls 700000
-      check nrPrimOpCalls   380000
-      check nrThunks        1100000
+      # Baseline post-Tier-3: 508,738 / 271,447 / 874,295. ~15% headroom.
+      check nrFunctionCalls 590000
+      check nrPrimOpCalls   320000
+      check nrThunks        1010000
 
       if [ "$fail" -ne 0 ]; then
         cat >&2 <<'EOF'
