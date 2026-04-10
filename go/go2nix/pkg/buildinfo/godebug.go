@@ -1,7 +1,9 @@
 package buildinfo
 
 import (
+	"errors"
 	"fmt"
+	"go/build"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +13,63 @@ import (
 
 	"golang.org/x/mod/modfile"
 )
+
+// A Godebug is a single key=value setting parsed from a //go:debug source
+// directive (or, equivalently, a go.mod godebug line).
+type Godebug struct {
+	Key, Value string
+}
+
+var errNotGoDebug = errors.New("not //go:debug line")
+
+// ParseGoDebug parses a //go:debug directive. It mirrors
+// cmd/go/internal/load.ParseGoDebug minus the godebugs-table membership
+// check (go2nix passes unknown keys through, like it does for go.mod
+// godebug lines).
+func ParseGoDebug(text string) (key, value string, err error) {
+	if !strings.HasPrefix(text, "//go:debug") {
+		return "", "", errNotGoDebug
+	}
+	i := strings.IndexAny(text, " \t")
+	if i < 0 {
+		if strings.TrimSpace(text) == "//go:debug" {
+			return "", "", fmt.Errorf("missing key=value")
+		}
+		return "", "", errNotGoDebug
+	}
+	k, v, ok := strings.Cut(strings.TrimSpace(text[i:]), "=")
+	if !ok {
+		return "", "", fmt.Errorf("missing key=value")
+	}
+	if strings.ContainsAny(k, " \t,") || strings.ContainsAny(v, " \t,") {
+		return "", "", fmt.Errorf("key or value contains space or comma")
+	}
+	return k, v, nil
+}
+
+// ParseSourceGodebugs collects //go:debug directives from the package at
+// srcDir using go/build's directive extraction, the same mechanism cmd/go
+// uses (Package.Directives). Directives that fail ParseGoDebug are skipped,
+// matching cmd/go/internal/load.defaultGODEBUG.
+func ParseSourceGodebugs(ctx *build.Context, srcDir string) []Godebug {
+	if ctx == nil {
+		c := build.Default
+		ctx = &c
+	}
+	pkg, err := ctx.ImportDir(srcDir, 0)
+	if err != nil && pkg == nil {
+		return nil
+	}
+	var out []Godebug
+	for _, d := range pkg.Directives {
+		k, v, perr := ParseGoDebug(d.Text)
+		if perr != nil {
+			continue
+		}
+		out = append(out, Godebug{Key: k, Value: v})
+	}
+	return out
+}
 
 // godebugEntry mirrors internal/godebugs.Info for the subset we need.
 // Only entries with Changed > 0 affect the default GODEBUG string.
@@ -65,33 +124,51 @@ var godebugTable = []godebugEntry{
 // DefaultGODEBUG computes the default GODEBUG string for a main package,
 // matching cmd/go/internal/load.defaultGODEBUG.
 //
-// moduleRoot is the path to the directory containing go.mod.
-// Returns "" if the go.mod cannot be read or has no go directive.
-func DefaultGODEBUG(moduleRoot string) string {
+// moduleRoot is the path to the directory containing go.mod. srcDirectives
+// are //go:debug directives parsed from the main package's source files
+// (see ParseSourceGodebugs); they are applied after go.mod's godebug lines
+// so a source-file directive overrides a go.mod one for the same key,
+// including default=.
+func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug) string {
 	goModPath := filepath.Join(moduleRoot, "go.mod")
 	data, err := os.ReadFile(goModPath)
 	if err != nil {
 		return ""
 	}
 	mf, err := modfile.Parse(goModPath, data, nil)
-	if err != nil || mf.Go == nil {
+	if err != nil {
 		return ""
 	}
 
-	goVersion := mf.Go.Version
+	// Mirrors gover.FromGoMod: a go.mod with no `go` directive is treated
+	// as DefaultGoModVersion ("1.16"), the same fallback cmd/go's
+	// MainModules.GoVersion uses. See cmd/go/internal/gover/version.go:64.
+	goVersion := "1.16"
+	if mf.Go != nil {
+		goVersion = mf.Go.Version
+	}
 
-	// Parse go version minor number.
 	minor := parseGoMinor(goVersion)
 	if minor < 0 {
 		return ""
 	}
 
-	// cmd/go resolves the base version first (go directive, optionally
-	// overridden by any `godebug default=goX.Y` directive), then layers
-	// every explicit `godebug key=value` directive on top regardless of
-	// its position relative to `default=`. Do the same: first scan for
-	// `default=` to fix the base minor, then apply non-default directives.
+	// Merge go.mod godebug lines then source-file //go:debug directives, in
+	// that order, so the last writer (source) wins on conflict — matching
+	// cmd/go/internal/load.defaultGODEBUG which applies p.Internal.Build.
+	// Directives after MainModules.Godebugs.
+	directives := make([]Godebug, 0, len(mf.Godebug)+len(srcDirectives))
 	for _, gd := range mf.Godebug {
+		directives = append(directives, Godebug{Key: gd.Key, Value: gd.Value})
+	}
+	directives = append(directives, srcDirectives...)
+
+	// cmd/go resolves the base version first (go directive, optionally
+	// overridden by any `default=goX.Y` from go.mod or source), then layers
+	// every explicit `key=value` directive on top regardless of its
+	// position relative to `default=`. Do the same: first scan for
+	// `default=` to fix the base minor, then apply non-default directives.
+	for _, gd := range directives {
 		if gd.Key != "default" {
 			continue
 		}
@@ -110,8 +187,8 @@ func DefaultGODEBUG(moduleRoot string) string {
 		}
 	}
 
-	// Apply explicit godebug directives from go.mod on top.
-	for _, gd := range mf.Godebug {
+	// Apply explicit non-default directives on top.
+	for _, gd := range directives {
 		if gd.Key == "default" {
 			continue
 		}
