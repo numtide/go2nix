@@ -17,6 +17,7 @@ func runModinfoCmd(args []string) {
 	fs := flag.NewFlagSet("build-modinfo", flag.ExitOnError)
 	lockfilePath := fs.String("lockfile", "", "path to go2nix.toml lockfile")
 	goBin := fs.String("go", "", "path to go binary (default: from PATH)")
+	mainPath := fs.String("main-path", "", "import path of the main package (default: module path)")
 	_ = fs.Parse(args)
 
 	moduleRoot := fs.Arg(0)
@@ -76,7 +77,7 @@ func runModinfoCmd(args []string) {
 		settings.GOARCHLevel = compile.GoEnvVar(key)
 	}
 
-	line, err := buildinfo.GenerateModinfo(moduleRoot, goVersion, deps, settings)
+	line, err := buildinfo.GenerateModinfo(moduleRoot, *mainPath, goVersion, deps, settings)
 	if err != nil {
 		slog.Error("generating modinfo", "err", err)
 		os.Exit(1)

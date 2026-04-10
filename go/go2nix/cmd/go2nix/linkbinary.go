@@ -156,25 +156,16 @@ func linkBinary(manifestPath, output string) error {
 		settings.GOARCHLevel = compile.GoEnvVar(key)
 	}
 
-	modinfo, err := buildinfo.GenerateModinfo(m.ModuleRoot, goVersion, deps, settings)
+	// Step 6: Read merged importcfg once; the per-binary modinfo line (which
+	// carries BuildInfo.Path = main package import path) is appended inside
+	// the SubPackages loop so each binary records its own path.
+	mergedCfgData, err := os.ReadFile(mergedCfg)
 	if err != nil {
-		return fmt.Errorf("generating modinfo: %w", err)
+		return err
 	}
-
-	// Step 6: Build link importcfg (compile importcfg + modinfo).
-	linkCfg := filepath.Join(tmpDir, "importcfg.link")
-	{
-		data, err := os.ReadFile(mergedCfg)
-		if err != nil {
-			return err
-		}
-		content := string(data)
-		if modinfo != "" {
-			content += modinfo + "\n"
-		}
-		if err := os.WriteFile(linkCfg, []byte(content), 0o644); err != nil {
-			return err
-		}
+	linkCfgDir := filepath.Join(tmpDir, "linkcfg")
+	if err := os.MkdirAll(linkCfgDir, 0o755); err != nil {
+		return err
 	}
 
 	// Build gcflags: PIE requires -shared, then append manifest gcflags.
@@ -288,6 +279,18 @@ func linkBinary(manifestPath, output string) error {
 		// GODEBUG default.
 		if godebugDefault != "" {
 			linkFlags = append(linkFlags, "-X=runtime.godebugDefault="+godebugDefault)
+		}
+
+		// Per-binary modinfo: BuildInfo.Path must be the main package's
+		// import path (matching `go build`), so each subPackage gets its
+		// own importcfg.link.
+		modinfo, err := buildinfo.GenerateModinfo(m.ModuleRoot, importpath, goVersion, deps, settings)
+		if err != nil {
+			return fmt.Errorf("generating modinfo for %s: %w", importpath, err)
+		}
+		linkCfg := filepath.Join(linkCfgDir, binname+".importcfg.link")
+		if err := os.WriteFile(linkCfg, append(mergedCfgData, []byte(modinfo+"\n")...), 0o644); err != nil {
+			return err
 		}
 
 		// Assemble linker command.

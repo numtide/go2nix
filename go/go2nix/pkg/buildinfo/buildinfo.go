@@ -101,14 +101,17 @@ func (s BuildSettings) toDebugSettings() []debug.BuildSetting {
 // GenerateModinfo produces the modinfo importcfg line for the linker.
 //
 // moduleRoot is the path to the directory containing go.mod (and optionally
-// go.sum for checksums). goVersion is the full Go toolchain version string
+// go.sum for checksums). mainPath is the import path of the main package
+// being linked (recorded as debug.BuildInfo.Path so `go version -m` shows
+// the per-binary path, matching `go build`); when empty it falls back to
+// the module path. goVersion is the full Go toolchain version string
 // (e.g., "go1.21.5"). deps lists all third-party module dependencies.
 // settings supplies the `build` section so debug.ReadBuildInfo() consumers
 // (govulncheck, prometheus go_build_info, SBOM tools) see the same metadata
 // as a `go build -trimpath` binary.
 //
 // Returns a string like: modinfo "..."
-func GenerateModinfo(moduleRoot, goVersion string, deps []ModDep, settings BuildSettings) (string, error) {
+func GenerateModinfo(moduleRoot, mainPath, goVersion string, deps []ModDep, settings BuildSettings) (string, error) {
 	// Parse go.mod for the main module path.
 	goModPath := filepath.Join(moduleRoot, "go.mod")
 	goModData, err := os.ReadFile(goModPath)
@@ -122,6 +125,9 @@ func GenerateModinfo(moduleRoot, goVersion string, deps []ModDep, settings Build
 	if mf.Module == nil {
 		return "", fmt.Errorf("go.mod missing module directive")
 	}
+	if mainPath == "" {
+		mainPath = mf.Module.Mod.Path
+	}
 
 	// Read go.sum for checksums (optional).
 	sums := readGoSum(filepath.Join(moduleRoot, "go.sum"))
@@ -129,7 +135,7 @@ func GenerateModinfo(moduleRoot, goVersion string, deps []ModDep, settings Build
 	// Build debug.BuildInfo.
 	info := &debug.BuildInfo{
 		GoVersion: goVersion,
-		Path:      mf.Module.Mod.Path,
+		Path:      mainPath,
 		Main: debug.Module{
 			Path:    mf.Module.Mod.Path,
 			Version: "(devel)",

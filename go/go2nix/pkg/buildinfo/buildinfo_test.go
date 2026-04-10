@@ -28,7 +28,7 @@ golang.org/x/crypto v0.17.0/go.mod h1:gCAAfMLgwOJRpTjQ2zCCt2OcSfYMTeZVSRtQlPC7Nq
 		{Path: "golang.org/x/crypto", Version: "v0.17.0"},
 	}
 
-	line, err := GenerateModinfo(dir, "go1.21.5", deps, BuildSettings{
+	line, err := GenerateModinfo(dir, "example.com/myapp/cmd/tool", "go1.21.5", deps, BuildSettings{
 		BuildMode:   "exe",
 		Tags:        "netgo,osusergo",
 		CGOEnabled:  "0",
@@ -43,8 +43,13 @@ golang.org/x/crypto v0.17.0/go.mod h1:gCAAfMLgwOJRpTjQ2zCCt2OcSfYMTeZVSRtQlPC7Nq
 	if !strings.HasPrefix(line, "modinfo ") {
 		t.Errorf("expected modinfo prefix, got: %s", line)
 	}
-	if !strings.Contains(line, "example.com/myapp") {
-		t.Error("missing module path in modinfo")
+	// BuildInfo.Path = main package import path; Main.Path = module path.
+	// `go version -m` renders these as `path\t…` and `mod\t…\t(devel)`.
+	if !strings.Contains(line, "path\\texample.com/myapp/cmd/tool\\n") {
+		t.Errorf("BuildInfo.Path should be main package import path:\n%s", line)
+	}
+	if !strings.Contains(line, "mod\\texample.com/myapp\\t(devel)") {
+		t.Errorf("BuildInfo.Main.Path should be module path:\n%s", line)
 	}
 	if !strings.Contains(line, "golang.org/x/crypto") {
 		t.Error("missing dependency in modinfo")
@@ -90,7 +95,7 @@ go 1.21
 		{Path: "golang.org/x/net", Version: "v0.19.0"},
 	}
 
-	line, err := GenerateModinfo(dir, "go1.21.5", deps, BuildSettings{})
+	line, err := GenerateModinfo(dir, "", "go1.21.5", deps, BuildSettings{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,6 +103,10 @@ go 1.21
 	// Should still work without go.sum, just without hashes.
 	if !strings.Contains(line, "golang.org/x/net") {
 		t.Error("missing dependency in modinfo")
+	}
+	// Empty mainPath falls back to module path.
+	if !strings.Contains(line, "path\\texample.com/myapp\\n") {
+		t.Errorf("empty mainPath should fall back to module path:\n%s", line)
 	}
 }
 
@@ -121,7 +130,7 @@ go 1.21
 		},
 	}
 
-	line, err := GenerateModinfo(dir, "go1.21.5", deps, BuildSettings{})
+	line, err := GenerateModinfo(dir, "example.com/myapp", "go1.21.5", deps, BuildSettings{})
 	if err != nil {
 		t.Fatal(err)
 	}
