@@ -2,6 +2,11 @@
 # is only imported from internal/app/app_test.go). doCheck exercises the
 # plugin's testLocalPackages output and the dag builder's union of those
 # into localPackages so the testrunner has an .a archive for the helper.
+#
+# Also: cmd/unbuilt + internal/unbuiltdep are deliberately NOT in the
+# subPackages closure (default = ["."], and the root main.go does not
+# import them). The testrunner must skip cmd/unbuilt's test rather than
+# fail trying to compile it against an importcfg that lacks unbuiltdep.
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
