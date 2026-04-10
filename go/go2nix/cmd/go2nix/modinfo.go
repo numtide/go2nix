@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/buildinfo"
+	"github.com/numtide/go2nix/pkg/compile"
 	"github.com/numtide/go2nix/pkg/lockfile"
 )
 
@@ -62,7 +63,20 @@ func runModinfoCmd(args []string) {
 		deps = append(deps, dep)
 	}
 
-	line, err := buildinfo.GenerateModinfo(moduleRoot, goVersion, deps)
+	goos := compile.GoEnvVar("GOOS")
+	goarch := compile.GoEnvVar("GOARCH")
+	settings := buildinfo.BuildSettings{
+		BuildMode:      compile.DefaultBuildMode(goos, goarch),
+		DefaultGODEBUG: buildinfo.DefaultGODEBUG(moduleRoot),
+		CGOEnabled:     compile.GoEnvVar("CGO_ENABLED"),
+		GOARCH:         goarch,
+		GOOS:           goos,
+	}
+	if key := buildinfo.ArchLevelVar(goarch); key != "" {
+		settings.GOARCHLevel = compile.GoEnvVar(key)
+	}
+
+	line, err := buildinfo.GenerateModinfo(moduleRoot, goVersion, deps, settings)
 	if err != nil {
 		slog.Error("generating modinfo", "err", err)
 		os.Exit(1)

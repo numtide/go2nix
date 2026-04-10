@@ -829,12 +829,9 @@ func buildFinalDrv(
 		return nil, nil, err
 	}
 
-	// Modinfo and GOROOT are invariant across mains; compute once.
-	modinfoLine, err := generateModinfo(cfg, sorted)
-	if err != nil {
-		slog.Warn("modinfo generation failed, skipping", "err", err)
-		modinfoLine = ""
-	}
+	// GOROOT is invariant across mains; compute once. Modinfo is per-main
+	// (DefaultGODEBUG is derived from the main package's //go:debug
+	// directives), so it's computed inside buildLinkDrv.
 	goroot := cfg.goEnv["GOROOT"]
 
 	// Build a link derivation for each main package
@@ -843,7 +840,7 @@ func buildFinalDrv(
 	var drvs []*nixdrv.Derivation
 
 	for _, mainPkg := range mainPkgs {
-		drvPath, drv, err := buildLinkDrv(cfg, graph, mainPkg, len(mainPkgs), stdlibImports, modinfoLine, goroot)
+		drvPath, drv, err := buildLinkDrv(cfg, graph, sorted, mainPkg, len(mainPkgs), stdlibImports, goroot)
 		if err != nil {
 			return nil, nil, fmt.Errorf("building link for %s: %w", mainPkg.ImportPath, err)
 		}
@@ -876,10 +873,10 @@ func buildFinalDrv(
 func buildLinkDrv(
 	cfg Config,
 	graph map[string]*ResolvedPkg,
+	sorted []*ResolvedPkg,
 	mainPkg *ResolvedPkg,
 	numMains int,
 	stdlibImports []string,
-	modinfoLine string,
 	goroot string,
 ) (*storepath.StorePath, *nixdrv.Derivation, error) {
 	// For single binary, use pname. For multiple binaries, derive name from import path.
@@ -948,7 +945,10 @@ func buildLinkDrv(
 	}
 
 	// Add modinfo so go version -m shows module dependencies.
-	if modinfoLine != "" {
+	modinfoLine, err := generateModinfo(cfg, sorted, mainPkg.DefaultGODEBUG)
+	if err != nil {
+		slog.Warn("modinfo generation failed, skipping", "err", err)
+	} else {
 		importcfgEntries = append(importcfgEntries, modinfoLine)
 	}
 
@@ -1187,9 +1187,28 @@ func loadGoEnv(goBin string) map[string]string {
 }
 
 // generateModinfo constructs the modinfo importcfg line from the package graph.
-func generateModinfo(cfg Config, sorted []*ResolvedPkg) (string, error) {
+func generateModinfo(cfg Config, sorted []*ResolvedPkg, defaultGODEBUG string) (string, error) {
 	// Get Go toolchain version.
 	goVersion := cfg.goEnv["GOVERSION"]
+
+	goos := cfg.goEnv["GOOS"]
+	goarch := cfg.goEnv["GOARCH"]
+	cgoEnabled := cfg.CGOEnabled
+	if cgoEnabled == "" {
+		cgoEnabled = cfg.goEnv["CGO_ENABLED"]
+	}
+	settings := buildinfo.BuildSettings{
+		BuildMode:      cfg.buildMode,
+		LDFlags:        cfg.LDFlags,
+		Tags:           cfg.Tags,
+		DefaultGODEBUG: defaultGODEBUG,
+		CGOEnabled:     cgoEnabled,
+		GOARCH:         goarch,
+		GOOS:           goos,
+	}
+	if key := buildinfo.ArchLevelVar(goarch); key != "" {
+		settings.GOARCHLevel = cfg.goEnv[key]
+	}
 
 	// Collect unique third-party modules from the graph.
 	seen := make(map[string]bool)
@@ -1217,7 +1236,7 @@ func generateModinfo(cfg Config, sorted []*ResolvedPkg) (string, error) {
 		deps = append(deps, dep)
 	}
 
-	return buildinfo.GenerateModinfo(filepath.Join(cfg.Src, cfg.ModRoot), goVersion, deps)
+	return buildinfo.GenerateModinfo(filepath.Join(cfg.Src, cfg.ModRoot), goVersion, deps, settings)
 }
 
 // createFilteredPkgDir creates a temporary directory containing only the files

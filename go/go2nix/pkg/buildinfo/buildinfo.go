@@ -32,14 +32,83 @@ type ModDep struct {
 	Replace *ModDep // non-nil if this module is replaced
 }
 
+// BuildSettings holds the build configuration to embed as `build` lines in
+// the binary's modinfo, matching the subset of cmd/go's setBuildInfo that
+// go2nix can determine. Empty string fields are omitted from the output
+// (except -compiler and -trimpath, which are always emitted).
+type BuildSettings struct {
+	BuildMode      string // -buildmode (e.g., "exe", "pie")
+	LDFlags        string // -ldflags as a single space-joined string
+	Tags           string // -tags as a comma-separated list
+	DefaultGODEBUG string // from go.mod's go directive
+	CGOEnabled     string // "0" or "1"
+	GOARCH         string
+	GOARCHLevel    string // value of GO<ARCH> (e.g., "v1" for GOAMD64); key derived from GOARCH
+	GOOS           string
+}
+
+// archLevelVar maps GOARCH to the GO<ARCH> environment variable name,
+// matching cmd/go's cfg.GOGOARCH().
+var archLevelVar = map[string]string{
+	"386": "GO386", "amd64": "GOAMD64", "arm": "GOARM", "arm64": "GOARM64",
+	"mips": "GOMIPS", "mipsle": "GOMIPS", "mips64": "GOMIPS64", "mips64le": "GOMIPS64",
+	"ppc64": "GOPPC64", "ppc64le": "GOPPC64", "riscv64": "GORISCV64", "wasm": "GOWASM",
+}
+
+// ArchLevelVar returns the GO<ARCH> environment variable name for goarch
+// (e.g., "GOAMD64" for "amd64"), or "" if there is none.
+func ArchLevelVar(goarch string) string {
+	return archLevelVar[goarch]
+}
+
+// toDebugSettings converts BuildSettings to the ordered slice cmd/go emits
+// (see src/cmd/go/internal/load/pkg.go:setBuildInfo).
+func (s BuildSettings) toDebugSettings() []debug.BuildSetting {
+	var out []debug.BuildSetting
+	add := func(k, v string) {
+		out = append(out, debug.BuildSetting{Key: k, Value: v})
+	}
+	if s.BuildMode != "" {
+		add("-buildmode", s.BuildMode)
+	}
+	add("-compiler", "gc")
+	if s.LDFlags != "" {
+		add("-ldflags", s.LDFlags)
+	}
+	if s.Tags != "" {
+		add("-tags", s.Tags)
+	}
+	// go2nix always builds with trimpath semantics.
+	add("-trimpath", "true")
+	if s.DefaultGODEBUG != "" {
+		add("DefaultGODEBUG", s.DefaultGODEBUG)
+	}
+	if s.CGOEnabled != "" {
+		add("CGO_ENABLED", s.CGOEnabled)
+	}
+	if s.GOARCH != "" {
+		add("GOARCH", s.GOARCH)
+		if key := archLevelVar[s.GOARCH]; key != "" && s.GOARCHLevel != "" {
+			add(key, s.GOARCHLevel)
+		}
+	}
+	if s.GOOS != "" {
+		add("GOOS", s.GOOS)
+	}
+	return out
+}
+
 // GenerateModinfo produces the modinfo importcfg line for the linker.
 //
 // moduleRoot is the path to the directory containing go.mod (and optionally
 // go.sum for checksums). goVersion is the full Go toolchain version string
 // (e.g., "go1.21.5"). deps lists all third-party module dependencies.
+// settings supplies the `build` section so debug.ReadBuildInfo() consumers
+// (govulncheck, prometheus go_build_info, SBOM tools) see the same metadata
+// as a `go build -trimpath` binary.
 //
 // Returns a string like: modinfo "..."
-func GenerateModinfo(moduleRoot, goVersion string, deps []ModDep) (string, error) {
+func GenerateModinfo(moduleRoot, goVersion string, deps []ModDep, settings BuildSettings) (string, error) {
 	// Parse go.mod for the main module path.
 	goModPath := filepath.Join(moduleRoot, "go.mod")
 	goModData, err := os.ReadFile(goModPath)
@@ -65,6 +134,7 @@ func GenerateModinfo(moduleRoot, goVersion string, deps []ModDep) (string, error
 			Path:    mf.Module.Mod.Path,
 			Version: "(devel)",
 		},
+		Settings: settings.toDebugSettings(),
 	}
 
 	// Sort deps for deterministic output.
