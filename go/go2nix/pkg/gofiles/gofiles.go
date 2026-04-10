@@ -152,8 +152,11 @@ func ListFiles(dir string, tags string, goVersion string) (PkgFiles, error) {
 // producing the JSON structure expected by go tool compile -embedcfg.
 //
 // Ported from cmd/go/internal/load.resolveEmbed, using os/filepath instead
-// of the internal fsys/str packages. We omit the GODEBUG embedfollowsymlinks
-// knob since it's a niche opt-in that doesn't affect Nix sandbox builds.
+// of the internal fsys/str packages. Upstream gates leaf-file symlink support
+// behind GODEBUG=embedfollowsymlinks=1 (golang/go#59924), added so build
+// systems that stage source via symlinks (rules_go) can embed; go2nix's own
+// testrunner does the same, so we follow leaf-file symlinks unconditionally.
+// Directory symlinks remain rejected, matching upstream.
 func ResolveEmbedCfg(dir string, patterns []string) (*EmbedCfg, error) {
 	cfg := &EmbedCfg{
 		Patterns: make(map[string][]string),
@@ -214,6 +217,19 @@ func ResolveEmbedCfg(dir string, patterns []string) (*EmbedCfg, error) {
 
 			switch {
 			case info.Mode().IsRegular():
+				if have[rel] != pid {
+					have[rel] = pid
+					list = append(list, rel)
+				}
+
+			case info.Mode()&fs.ModeType == fs.ModeSymlink:
+				info, err := os.Stat(file)
+				if err != nil {
+					return nil, fmt.Errorf("pattern %q: %w", pattern, err)
+				}
+				if !info.Mode().IsRegular() {
+					return nil, fmt.Errorf("cannot embed irregular file %s", rel)
+				}
 				if have[rel] != pid {
 					have[rel] = pid
 					list = append(list, rel)
