@@ -11,6 +11,12 @@
 # go2nix sets `-buildid ""` for reproducibility while `go build` uses a
 # content hash, so binaries are not expected to be byte-identical; the
 # checks above are the contract.
+#
+# One documented semantic difference: go2nix records the per-binary
+# import-closure of modules in `dep` lines, while `go build` records the
+# full `go list -m all` graph. Fixtures whose binaries link third-party
+# code use depCompare = "subset" so the assertion becomes
+# "go2nix deps ⊆ vanilla deps, line-for-line" instead of full equality.
 {
   flake,
   pkgs,
@@ -33,28 +39,37 @@ else
     nixpkgsPath = pkgs.path;
     go2nixSrc = flake;
 
-    # Only testify-basic has third-party deps; reuse the existing FOD so the
-    # hash stays in one place.
+    mkGoModCache =
+      name: src: hash:
+      pkgs.stdenvNoCC.mkDerivation {
+        name = "${name}-gomodcache";
+        outputHashMode = "recursive";
+        outputHashAlgo = "sha256";
+        outputHash = hash;
+        nativeBuildInputs = [
+          go
+          pkgs.cacert
+        ];
+        dontUnpack = true;
+        buildPhase = ''
+          export HOME=$TMPDIR
+          export GOMODCACHE=$out
+          cd ${go2nixSrc}/${src}
+          go mod download
+        '';
+        installPhase = "true";
+      };
+
     testifyGoModules =
       (import ../test-fixture-testify-basic/default.nix { inherit flake pkgs system; }).goModules
-        or (pkgs.stdenvNoCC.mkDerivation {
-          name = "testify-basic-gomodcache";
-          outputHashMode = "recursive";
-          outputHashAlgo = "sha256";
-          outputHash = "sha256-jfyOzY3bhiTD5GZKF9aIGAYL2Bequp76/LGLc0LFFGQ=";
-          nativeBuildInputs = [
-            go
-            pkgs.cacert
-          ];
-          dontUnpack = true;
-          buildPhase = ''
-            export HOME=$TMPDIR
-            export GOMODCACHE=$out
-            cd ${go2nixSrc}/tests/fixtures/testify-basic
-            go mod download
-          '';
-          installPhase = "true";
-        });
+        or (mkGoModCache "testify-basic" "tests/fixtures/testify-basic"
+          "sha256-jfyOzY3bhiTD5GZKF9aIGAYL2Bequp76/LGLc0LFFGQ="
+        );
+    appReplaceGoModules =
+      (import ../test-fixture-torture-app-replace/default.nix { inherit flake pkgs system; }).goModules
+        or (mkGoModCache "torture-app-replace" "tests/fixtures/torture-project/app-replace"
+          "sha256-0kSvZbvcdFZfA/2DrFqbt3zw14K0jrYSgXEBZkjv7Cs="
+        );
 
     # srcOverlay derivations for cgo-internal-test, mirroring its dag.nix.
     adderOverlay = pkgs.runCommand "adder-overlay" { } ''
@@ -115,36 +130,85 @@ else
           "internal/stamp" = stampOverlay;
         };
       }
+      {
+        name = "asm-basic";
+        bins = [
+          {
+            rel = ".";
+            out = "asm-basic";
+          }
+        ];
+      }
+      {
+        name = "build-tags";
+        bins = [
+          {
+            rel = ".";
+            out = "build-tags";
+          }
+        ];
+        tags = [ "mytag" ];
+      }
+      {
+        name = "cxx-pkgconfig";
+        bins = [
+          {
+            rel = ".";
+            out = "cxx-pkgconfig";
+          }
+        ];
+      }
+      {
+        name = "torture-app-replace";
+        dag = "torture-project/dag-app-replace.nix";
+        src = "torture-project/app-replace";
+        bins = [
+          {
+            rel = "./cmd/app-replace";
+            out = "app-replace";
+          }
+        ];
+        gomodcache = appReplaceGoModules;
+        depCompare = "subset";
+      }
     ];
 
-    fixtureScript = f: ''
-      echo
-      echo "########################################"
-      echo "# fixture: ${f.name}"
-      echo "########################################"
+    fixtureScript =
+      f:
+      let
+        dag = f.dag or "${f.name}/dag.nix";
+        src = f.src or f.name;
+        tagFlag = lib.optionalString (f ? tags) "-tags ${lib.concatStringsSep "," f.tags}";
+        cmpFn = if (f.depCompare or "identical") == "subset" then "compare_subset" else "compare";
+      in
+      ''
+        echo
+        echo "########################################"
+        echo "# fixture: ${f.name}"
+        echo "########################################"
 
-      ${lib.optionalString (f ? gomodcache) "export GOMODCACHE=${f.gomodcache}"}
+        ${lib.optionalString (f ? gomodcache) "export GOMODCACHE=${f.gomodcache}"}
 
-      echo "--- go2nix build ---"
-      go2nix_out=$(${
-        lib.optionalString (f ? gomodcache) "GOMODCACHE=${f.gomodcache} "
-      }nix-build ${go2nixSrc}/tests/fixtures/${f.name}/dag.nix \
-        -I nixpkgs=${nixpkgsPath} \
-        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
-        --no-out-link)
+        echo "--- go2nix build ---"
+        go2nix_out=$(${
+          lib.optionalString (f ? gomodcache) "GOMODCACHE=${f.gomodcache} "
+        }nix-build ${go2nixSrc}/tests/fixtures/${dag} \
+          -I nixpkgs=${nixpkgsPath} \
+          --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+          --no-out-link)
 
-      echo "--- vanilla go build ---"
-      work=$TMPDIR/work-${f.name}
-      cp -r ${go2nixSrc}/tests/fixtures/${f.name} $work
-      chmod -R u+w $work
-      ${lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (dir: ov: "cp -rL --no-preserve=mode ${ov}/. $work/${dir}/") (f.overlays or { })
-      )}
-      ${lib.concatMapStringsSep "\n" (b: ''
-        (cd $work && go build -trimpath -buildvcs=false -o $TMPDIR/vanilla-${f.name}-${b.out} ${b.rel})
-        compare ${f.name} ${b.out} $go2nix_out/bin/${b.out} $TMPDIR/vanilla-${f.name}-${b.out}
-      '') f.bins}
-    '';
+        echo "--- vanilla go build ---"
+        work=$TMPDIR/work-${f.name}
+        cp -r ${go2nixSrc}/tests/fixtures/${src} $work
+        chmod -R u+w $work
+        ${lib.concatStringsSep "\n" (
+          lib.mapAttrsToList (dir: ov: "cp -rL --no-preserve=mode ${ov}/. $work/${dir}/") (f.overlays or { })
+        )}
+        ${lib.concatMapStringsSep "\n" (b: ''
+          (cd $work && go build -trimpath -buildvcs=false ${tagFlag} -o $TMPDIR/vanilla-${f.name}-${b.out} ${b.rel})
+          ${cmpFn} ${f.name} ${b.out} $go2nix_out/bin/${b.out} $TMPDIR/vanilla-${f.name}-${b.out}
+        '') f.bins}
+      '';
   in
   pkgs.runCommand "test-golden-vs-gobuild"
     {
@@ -154,6 +218,8 @@ else
         pkgs.stdenv.cc
         pkgs.file
         pkgs.diffutils
+        pkgs.pkg-config
+        pkgs.snappy
       ];
       requiredSystemFeatures = [ "recursive-nix" ];
     }
@@ -205,6 +271,63 @@ else
           cat $TMPDIR/g.modinfo
           echo "  IDENTICAL"
         fi
+
+        echo "--- file ---"
+        if ! diff -u <(normfile "$v") <(normfile "$g"); then
+          echo "FAIL: $fixture/$bin file classification differs"; fail=1
+        else
+          normfile "$g"
+          echo "  IDENTICAL"
+        fi
+      }
+
+      # Like compare but for fixtures with linked third-party deps. Vanilla
+      # `go build` records the full `go list -m all` graph in dep lines;
+      # go2nix records the per-binary import closure. Both are valid
+      # debug.BuildInfo; the parity contract here is that go2nix's set is a
+      # line-for-line subset (every dep+=> line go2nix emits, including the
+      # h1: sum and replace rendering, also appears in vanilla's output).
+      compare_subset() {
+        local fixture=$1 bin=$2 g=$3 v=$4
+        echo
+        echo "=== compare (subset deps): $fixture/$bin ==="
+
+        echo "--- stdout ---"
+        if ! diff -u <("$v") <("$g"); then
+          echo "FAIL: $fixture/$bin stdout differs (vanilla vs go2nix)"; fail=1
+        else
+          echo "  IDENTICAL"
+        fi
+
+        normmodinfo "$v" > $TMPDIR/v.modinfo
+        normmodinfo "$g" > $TMPDIR/g.modinfo
+
+        echo "--- go version -m (path/mod/build) ---"
+        grep -vP '^\t(dep|=>)\t' $TMPDIR/v.modinfo > $TMPDIR/v.nondep
+        grep -vP '^\t(dep|=>)\t' $TMPDIR/g.modinfo > $TMPDIR/g.nondep
+        if ! diff -u $TMPDIR/v.nondep $TMPDIR/g.nondep; then
+          echo "FAIL: $fixture/$bin modinfo path/mod/build lines differ"; fail=1
+        else
+          cat $TMPDIR/g.nondep
+          echo "  IDENTICAL"
+        fi
+
+        echo "--- go version -m (deps: go2nix closure ⊆ vanilla graph) ---"
+        grep -P '^\t(dep|=>)\t' $TMPDIR/g.modinfo > $TMPDIR/g.deps || true
+        grep -P '^\t(dep|=>)\t' $TMPDIR/v.modinfo > $TMPDIR/v.deps || true
+        echo "go2nix dep lines ($(wc -l < $TMPDIR/g.deps)):"
+        cat $TMPDIR/g.deps
+        echo "vanilla dep lines ($(wc -l < $TMPDIR/v.deps)):"
+        cat $TMPDIR/v.deps
+        if [ ! -s $TMPDIR/g.deps ]; then
+          echo "FAIL: go2nix emitted 0 dep lines for $fixture/$bin"; fail=1
+        fi
+        while IFS= read -r line; do
+          if ! grep -qxF "$line" $TMPDIR/v.deps; then
+            echo "FAIL: go2nix dep line not in vanilla output: $line"; fail=1
+          fi
+        done < $TMPDIR/g.deps
+        echo "  SUBSET-OK"
 
         echo "--- file ---"
         if ! diff -u <(normfile "$v") <(normfile "$g"); then
