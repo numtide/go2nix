@@ -49,7 +49,7 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	// Resolve #cgo pkg-config: directives from source files.
 	// go tool cgo does not process pkg-config directives; that's done by cmd/go.
 	// We handle it here so packages with #cgo pkg-config: work correctly.
-	pkgCflags, pkgLdflags, err := resolvePkgConfig(opts.SrcDir, files.CgoFiles, opts.goos, opts.goarch, nil)
+	pkgCflags, pkgLdflags, err := resolvePkgConfig(opts.SrcDir, files.CgoFiles, opts.goos, opts.goarch, opts.Tags)
 	if err != nil {
 		return fmt.Errorf("pkg-config: %w", err)
 	}

@@ -87,6 +87,44 @@ func TestMatchesCgoConstraint(t *testing.T) {
 	}
 }
 
+// Regression: resolvePkgConfig was called with tags=nil after CompileManifest
+// dropped Tags, so // #cgo <customtag> pkg-config: directives were silently
+// skipped. This pins that the tags slice actually gates directive matching
+// end-to-end (not just inside matchesCgoConstraint).
+func TestResolvePkgConfigCustomTag(t *testing.T) {
+	srcDir := t.TempDir()
+	src := "package foo\n\n// #cgo mytag pkg-config: libfoo\nimport \"C\"\n"
+	if err := os.WriteFile(filepath.Join(srcDir, "a.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stub pkg-config so the test doesn't depend on the real binary or libfoo.
+	binDir := t.TempDir()
+	stub := "#!/bin/sh\ncase \"$1\" in --cflags) echo -I/stub;; --libs) echo -lstub;; esac\n"
+	if err := os.WriteFile(filepath.Join(binDir, "pkg-config"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// Without the tag, the constraint fails and pkg-config is not invoked.
+	cflags, ldflags, err := resolvePkgConfig(srcDir, []string{"a.go"}, "linux", "amd64", nil)
+	if err != nil || cflags != nil || ldflags != nil {
+		t.Fatalf("tags=nil: want (nil,nil,nil), got (%v,%v,%v)", cflags, ldflags, err)
+	}
+
+	// With the tag, the directive matches and pkg-config is invoked.
+	cflags, ldflags, err = resolvePkgConfig(srcDir, []string{"a.go"}, "linux", "amd64", []string{"mytag"})
+	if err != nil {
+		t.Fatalf("tags=[mytag]: %v", err)
+	}
+	if got, want := strings.Join(cflags, " "), "-I/stub"; got != want {
+		t.Errorf("cflags = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(ldflags, " "), "-lstub"; got != want {
+		t.Errorf("ldflags = %q, want %q", got, want)
+	}
+}
+
 func TestCgoPreamble(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -38,6 +38,13 @@ func (o Options) checkFlagsArgs() []string {
 	return o.CheckFlagsList
 }
 
+func (o Options) tagsList() []string {
+	if o.Tags == "" {
+		return nil
+	}
+	return strings.Split(o.Tags, ",")
+}
+
 // Run discovers testable packages and runs their tests.
 func Run(opts Options) error {
 	pkgs, err := localpkgs.ListLocalPackages(opts.ModuleRoot, opts.Tags, compile.ToolchainVersion())
@@ -247,6 +254,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			ImportCfg:   testCompileImportCfg,
 			TrimPath:    opts.TrimPath,
 			GCFlagsList: opts.GCFlagsList,
+			Tags:        opts.tagsList(),
 			Files:       &internalFiles,
 		}); err != nil {
 			return fmt.Errorf("compiling internal test: %w", err)
@@ -299,6 +307,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 				ImportCfg:   testCompileImportCfg,
 				TrimPath:    opts.TrimPath,
 				GCFlagsList: opts.GCFlagsList,
+				Tags:        opts.tagsList(),
 				Files:       &depPkg.PkgFiles,
 			}); err != nil {
 				return fmt.Errorf("recompiling %s for test: %w", depIP, err)
@@ -344,6 +353,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 			ImportCfg:   testCompileImportCfg,
 			TrimPath:    opts.TrimPath,
 			GCFlagsList: opts.GCFlagsList,
+			Tags:        opts.tagsList(),
 			Files:       &gofiles.PkgFiles{GoFiles: pkg.XTestGoFiles, EmbedCfg: pkg.XTestEmbedCfg},
 		}); err != nil {
 			return fmt.Errorf("compiling external test: %w", err)
@@ -388,6 +398,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 		ImportCfg:   testCompileImportCfg,
 		TrimPath:    opts.TrimPath,
 		GCFlagsList: opts.GCFlagsList,
+		Tags:        opts.tagsList(),
 		Files:       &gofiles.PkgFiles{GoFiles: []string{"_testmain.go"}},
 	}); err != nil {
 		return fmt.Errorf("compiling test main: %w", err)

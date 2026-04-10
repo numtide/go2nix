@@ -58,6 +58,7 @@ func runCompilePackageCmd(args []string) {
 		ImportCfg:   mergedCfg,
 		TrimPath:    *trimPath,
 		GCFlagsList: m.GCFlags,
+		Tags:        m.Tags,
 		GoVersion:   *goVersion,
 		PGOProfile:  pgo,
 	}
