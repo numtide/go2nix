@@ -1,15 +1,13 @@
 # go2nix/nix/dag/fetch-go-module.nix — fixed-output derivation to fetch a Go module.
 #
-# Two output modes controlled by `sourceOnly`:
-#
-#   sourceOnly = true (lockfile-free):
-#     Outputs only the extracted source tree. Cache metadata (.info, .zip,
-#     .ziphash, sumdb/) is excluded so the NAR hash depends solely on module
-#     content — matching the h1: hash from go.sum.
-#
-#   sourceOnly = false (lockfile, default):
-#     Outputs the full GOMODCACHE directory (backward-compatible with existing
-#     lockfile hashes).
+# Outputs the extracted module source tree (GOMODCACHE/<escapedPath>@<escapedVersion>/).
+# Cache metadata (cache/download/*.info, cache/vcs/ bare clones) is excluded so
+# the NAR hash is independent of GOPROXY — `direct` adds an Origin block to
+# .info and a full git clone under cache/vcs/, which would otherwise make
+# lockfile hashes non-reproducible across proxies. `go2nix generate` hashes the
+# same source tree (lockfilegen.hashModuleSource), and the lockfile-free path
+# (plugin moduleHashes from go.sum) covers the same bytes, so both modes share
+# one FOD per module@version.
 #
 # For private modules, set netrcFile in mk-go-env.nix to provide credentials.
 # GOPROXY and NETRC are inherited from the build environment via impureEnvVars
@@ -29,7 +27,6 @@ in
   hash,
   fetchPath,
   version,
-  sourceOnly ? false,
   # Explicit GOPROXY for the FOD's `go mod download`. When null, the
   # impureEnvVars path below still lets the build environment's GOPROXY
   # bleed through (matching nixpkgs buildGoModule). Set this for private
@@ -88,19 +85,11 @@ stdenvNoCC.mkDerivation {
           ""
       }
     ''
-    + (
-      if sourceOnly then
-        ''
-          export GOMODCACHE=$TMPDIR/modcache
-          go mod download "${fetchPath}@${version}"
-          cp -r "$TMPDIR/modcache/${dirSuffix}" "$out"
-        ''
-      else
-        ''
-          export GOMODCACHE=$out
-          go mod download "${fetchPath}@${version}"
-        ''
-    );
+    + ''
+      export GOMODCACHE=$TMPDIR/modcache
+      go mod download "${fetchPath}@${version}"
+      cp -r "$TMPDIR/modcache/${dirSuffix}" "$out"
+    '';
 
   # Skip other phases.
   dontInstall = true;

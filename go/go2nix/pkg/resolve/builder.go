@@ -14,12 +14,15 @@ func shellQuote(s string) string {
 }
 
 // fodScript generates the bash builder script for a module FOD.
-// Matches fetch-go-module.nix behavior.
-func fodScript(goStorePath, fetchPath, version, cacertPath, netrcFile string) string {
+// Matches fetch-go-module.nix: download into a temp GOMODCACHE then copy
+// only the extracted source tree to $out so the FOD hash is independent of
+// proxy-specific cache/ metadata.
+func fodScript(goStorePath, coreutilsDir, fetchPath, version, dirSuffix, cacertPath, netrcFile string) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
 	b.WriteString("export HOME=\"$TMPDIR\"\n")
-	b.WriteString("export GOMODCACHE=\"$out\"\n")
+	fmt.Fprintf(&b, "export PATH=%s/bin\n", shellQuote(coreutilsDir))
+	b.WriteString("export GOMODCACHE=\"$TMPDIR/modcache\"\n")
 	b.WriteString("export GOSUMDB=off\n")
 	b.WriteString("export GONOSUMCHECK='*'\n")
 	if cacertPath != "" {
@@ -30,6 +33,7 @@ func fodScript(goStorePath, fetchPath, version, cacertPath, netrcFile string) st
 		b.WriteString("chmod 600 \"$HOME/.netrc\"\n")
 	}
 	fmt.Fprintf(&b, "%s mod download %s\n", shellQuote(goStorePath), shellQuote(fetchPath+"@"+version))
+	fmt.Fprintf(&b, "cp -r \"$TMPDIR/modcache/\"%s \"$out\"\n", shellQuote(dirSuffix))
 	return b.String()
 }
 

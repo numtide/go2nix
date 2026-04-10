@@ -42,4 +42,13 @@ assert
 assert
   pkgs.lib.hasInfix "export GOPROXY=https://proxy.example/go" drvWithProxy.buildPhase
   || builtins.throw "goProxy not exported in buildPhase";
+# The FOD must hash only the extracted source tree (proxy-independent),
+# not the whole GOMODCACHE. Guard against a regression to the old
+# `export GOMODCACHE=$out` mode.
+assert
+  pkgs.lib.hasInfix ''cp -r "$TMPDIR/modcache/'' drv.buildPhase
+  || builtins.throw "buildPhase should copy the extracted source tree from $TMPDIR/modcache/";
+assert
+  !(pkgs.lib.hasInfix "GOMODCACHE=$out" drv.buildPhase)
+  || builtins.throw "buildPhase should not set GOMODCACHE=$out (full-tree mode is proxy-dependent)";
 true
