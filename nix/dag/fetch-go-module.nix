@@ -30,6 +30,13 @@ in
   fetchPath,
   version,
   sourceOnly ? false,
+  # Explicit GOPROXY for the FOD's `go mod download`. When null, the
+  # impureEnvVars path below still lets the build environment's GOPROXY
+  # bleed through (matching nixpkgs buildGoModule). Set this for private
+  # modules so the proxy is part of the derivation env rather than relying
+  # on the daemon's environment — under daemon nix or remote builders the
+  # impure path sees no GOPROXY and falls back to proxy.golang.org,direct.
+  goProxy ? null,
 }:
 let
   escapedPath = escapeModPath fetchPath;
@@ -60,33 +67,40 @@ stdenvNoCC.mkDerivation {
   # No source — we download in the build phase.
   dontUnpack = true;
 
-  buildPhase = ''
-    export HOME=$TMPDIR
-    export GOSUMDB=off
-    export GONOSUMCHECK='*'
-    ${
-      if netrcFile != null then
+  # When goProxy is null the prefix is "", so buildPhase is byte-identical
+  # and the FOD .drv path doesn't change. When set, the explicit export
+  # wins over whatever impureEnvVars let through from the builder env.
+  buildPhase =
+    lib.optionalString (goProxy != null) ''
+      export GOPROXY=${lib.escapeShellArg goProxy}
+    ''
+    + ''
+      export HOME=$TMPDIR
+      export GOSUMDB=off
+      export GONOSUMCHECK='*'
+      ${
+        if netrcFile != null then
+          ''
+            cp ${netrcFile} $HOME/.netrc
+            chmod 600 $HOME/.netrc
+          ''
+        else
+          ""
+      }
+    ''
+    + (
+      if sourceOnly then
         ''
-          cp ${netrcFile} $HOME/.netrc
-          chmod 600 $HOME/.netrc
+          export GOMODCACHE=$TMPDIR/modcache
+          go mod download "${fetchPath}@${version}"
+          cp -r "$TMPDIR/modcache/${dirSuffix}" "$out"
         ''
       else
-        ""
-    }
-  ''
-  + (
-    if sourceOnly then
-      ''
-        export GOMODCACHE=$TMPDIR/modcache
-        go mod download "${fetchPath}@${version}"
-        cp -r "$TMPDIR/modcache/${dirSuffix}" "$out"
-      ''
-    else
-      ''
-        export GOMODCACHE=$out
-        go mod download "${fetchPath}@${version}"
-      ''
-  );
+        ''
+          export GOMODCACHE=$out
+          go mod download "${fetchPath}@${version}"
+        ''
+    );
 
   # Skip other phases.
   dontInstall = true;

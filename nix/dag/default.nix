@@ -383,6 +383,7 @@ let
     let
       src = fetchers.fetchGoModule {
         inherit (mod) hash fetchPath version;
+        inherit goProxy;
         sourceOnly = !hasLockfile;
       };
     in
