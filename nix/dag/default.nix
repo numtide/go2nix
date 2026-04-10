@@ -295,7 +295,9 @@ let
   # modules from go.sum + GOMODCACHE, returned as moduleHashes.
   goPackagesResult = builtins.resolveGoPackages (
     {
-      go = "${go}/bin/go";
+      # `go` is intentionally omitted: the plugin uses the toolchain baked in
+      # at its own build time. Passing "${go}/bin/go" would carry derivation
+      # context, which the plugin rejects to keep this path IFD-free.
       inherit
         src
         tags

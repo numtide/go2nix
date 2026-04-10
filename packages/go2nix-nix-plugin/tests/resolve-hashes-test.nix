@@ -44,10 +44,10 @@ pkgs.runCommand "go2nix-nix-plugin-resolve-hashes-test"
     echo "=== Test 1: resolveHashes = true returns moduleHashes ==="
     result=$(nix-instantiate --eval --strict --json --read-write-mode \
       --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+      --option allow-import-from-derivation false \
       --expr "
         let
           r = builtins.resolveGoPackages {
-            go = \"${pkgs.go}/bin/go\";
             src = (toString $TMPDIR/torture-project);
             resolveHashes = true;
           };
@@ -124,10 +124,10 @@ pkgs.runCommand "go2nix-nix-plugin-resolve-hashes-test"
     echo "=== Test 3: resolveHashes = false (default) omits moduleHashes ==="
     result_no_hashes=$(nix-instantiate --eval --strict --json --read-write-mode \
       --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+      --option allow-import-from-derivation false \
       --expr "
         let
           r = builtins.resolveGoPackages {
-            go = \"${pkgs.go}/bin/go\";
             src = (toString $TMPDIR/torture-project);
           };
         in {

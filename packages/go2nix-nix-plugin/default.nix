@@ -10,6 +10,7 @@ let
     boost
     nlohmann_json
     nixVersions
+    go
     ;
   nixComponents = nixVersions.nix_2_34.libs;
 
@@ -19,6 +20,10 @@ let
     src = ./rust;
     cargoLock.lockFile = ./rust/Cargo.lock;
     doCheck = false;
+    # Baked into the binary via option_env!("GO2NIX_DEFAULT_GO") so the
+    # eval-time builtin never needs to realise a derivation for the Go
+    # toolchain — that would be IFD.
+    GO2NIX_DEFAULT_GO = "${go}/bin/go";
   };
 in
 stdenv.mkDerivation {
