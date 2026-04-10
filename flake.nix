@@ -147,6 +147,7 @@
           };
           golangci-lint-go2nix-testgen = callPkg ./packages/golangci-lint-go2nix-testgen/default.nix;
           check-godebug-table = callPkg ./packages/check-godebug-table/default.nix;
+          cross-platform-env = callPkgWith ./tests/nix/cross_platform_test.nix { inherit pkgs; };
           # The --help check just confirms the binary links and the CLI
           # surface is intact. The benchmark itself can't run in nix's
           # build sandbox (it spawns a nested daemon and fetches from
