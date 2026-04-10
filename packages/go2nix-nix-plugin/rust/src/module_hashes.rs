@@ -12,7 +12,8 @@
 use crate::nar;
 use crate::nar_cache::NarCache;
 use anyhow::{Context, Result};
-use std::collections::BTreeMap;
+use rayon::prelude::*;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Parsed go.sum entry (only the directory hash, not the /go.mod hash).
@@ -29,45 +30,61 @@ pub struct ModuleHash {
     pub nar_hash: String,
 }
 
-/// Parse go.sum and resolve NAR hashes for all modules.
+/// Parse go.sum and resolve NAR hashes for the modules in `wanted`.
 ///
 /// `go_sum_path`: path to go.sum
 /// `gomodcache`: GOMODCACHE directory (contains extracted source trees)
+/// `wanted`: when `Some`, only entries whose "path@version" is in this set
+///   are hashed. go.sum is a superset of the actual build list (it records
+///   every module MVS considered), so this prunes work that the Nix side
+///   would never look up.
+///
+/// Cache misses are NAR-hashed in parallel; the on-disk cache uses atomic
+/// per-entry files so concurrent writes are safe.
 pub fn resolve_module_hashes(
     go_sum_path: &Path,
     gomodcache: &Path,
+    wanted: Option<&BTreeSet<String>>,
 ) -> Result<BTreeMap<String, ModuleHash>> {
     let entries = parse_go_sum(go_sum_path)?;
     let cache = NarCache::open().context("opening NAR hash cache")?;
 
-    let mut result = BTreeMap::new();
+    entries
+        .par_iter()
+        .filter_map(|entry| {
+            let key = format!("{}@{}", entry.path, entry.version);
 
-    for entry in &entries {
-        let key = format!("{}@{}", entry.path, entry.version);
+            // Skip modules not in the build list.
+            if let Some(w) = wanted {
+                if !w.contains(&key) {
+                    return None;
+                }
+            }
 
-        // Check cache first.
-        if let Some(cached) = cache.get(&entry.h1) {
-            result.insert(key, ModuleHash { nar_hash: cached });
-            continue;
-        }
+            // Check cache first.
+            if let Some(cached) = cache.get(&entry.h1) {
+                return Some(Ok((key, ModuleHash { nar_hash: cached })));
+            }
 
-        // Compute NAR hash from extracted source tree in GOMODCACHE.
-        let source_dir = module_source_dir(gomodcache, &entry.path, &entry.version);
-        if !source_dir.exists() {
-            // Module not in local cache — skip. The lockfile won't have a
-            // hash, and the Nix builder will fail clearly when it can't find
-            // the FOD hash.
-            continue;
-        }
+            // Compute NAR hash from extracted source tree in GOMODCACHE.
+            let source_dir = module_source_dir(gomodcache, &entry.path, &entry.version);
+            if !source_dir.exists() {
+                // Module not in local cache — skip. The Nix builder will
+                // fail clearly when it can't find the FOD hash.
+                return None;
+            }
 
-        let nar_hash = nar::hash_path(&source_dir)
-            .with_context(|| format!("computing NAR hash of {}", source_dir.display()))?;
+            let nar_hash = match nar::hash_path(&source_dir)
+                .with_context(|| format!("computing NAR hash of {}", source_dir.display()))
+            {
+                Ok(h) => h,
+                Err(e) => return Some(Err(e)),
+            };
 
-        cache.put(&entry.h1, &nar_hash).ok(); // best-effort cache write
-        result.insert(key, ModuleHash { nar_hash });
-    }
-
-    Ok(result)
+            cache.put(&entry.h1, &nar_hash).ok(); // best-effort cache write
+            Some(Ok((key, ModuleHash { nar_hash })))
+        })
+        .collect()
 }
 
 /// Parse go.sum into directory-hash entries (skip /go.mod lines).
@@ -171,6 +188,39 @@ mod tests {
     }
 
     #[test]
+    fn resolve_filters_to_wanted_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let sum_path = dir.path().join("go.sum");
+        std::fs::write(
+            &sum_path,
+            "github.com/foo/bar v1.2.3 h1:abc123=\n\
+             github.com/baz/qux v0.1.0 h1:xyz789=\n",
+        )
+        .unwrap();
+
+        // Create a fake GOMODCACHE with only foo/bar present.
+        let gomodcache = dir.path().join("modcache");
+        let foo_dir = gomodcache.join("github.com/foo/bar@v1.2.3");
+        std::fs::create_dir_all(&foo_dir).unwrap();
+        std::fs::write(foo_dir.join("a.go"), "package bar\n").unwrap();
+        let baz_dir = gomodcache.join("github.com/baz/qux@v0.1.0");
+        std::fs::create_dir_all(&baz_dir).unwrap();
+        std::fs::write(baz_dir.join("a.go"), "package qux\n").unwrap();
+
+        // With no filter: both hashed.
+        let all = resolve_module_hashes(&sum_path, &gomodcache, None).unwrap();
+        assert_eq!(all.len(), 2);
+
+        // With filter: only the wanted key is hashed.
+        let mut wanted = BTreeSet::new();
+        wanted.insert("github.com/foo/bar@v1.2.3".to_owned());
+        let filtered = resolve_module_hashes(&sum_path, &gomodcache, Some(&wanted)).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("github.com/foo/bar@v1.2.3"));
+        assert!(!filtered.contains_key("github.com/baz/qux@v0.1.0"));
+    }
+
+    #[test]
     fn escape_mod_path_basic() {
         assert_eq!(escape_mod_path("github.com/BurntSushi/toml"), "github.com/!burnt!sushi/toml");
         assert_eq!(escape_mod_path("github.com/foo/bar"), "github.com/foo/bar");
@@ -196,7 +246,7 @@ mod integration_tests {
             return;
         }
 
-        let result = resolve_module_hashes(go_sum, gomodcache).unwrap();
+        let result = resolve_module_hashes(go_sum, gomodcache, None).unwrap();
         eprintln!("resolved {} module hashes:", result.len());
         for (key, hash) in &result {
             eprintln!("  {key} → {}", hash.nar_hash);
