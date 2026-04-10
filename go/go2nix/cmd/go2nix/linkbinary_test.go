@@ -104,6 +104,28 @@ func TestExpandLDFlags(t *testing.T) {
 	}
 }
 
+func TestHasExtld(t *testing.T) {
+	tests := []struct {
+		name    string
+		ldflags []string
+		want    bool
+	}{
+		{"absent", []string{"-s", "-w"}, false},
+		{"separate form", []string{"-s", "-extld", "/custom/ld"}, true},
+		{"equals form", []string{"-extld=/custom/ld"}, true},
+		{"extldflags is not extld", []string{"-extldflags", "-static"}, false},
+		{"extldflags equals form is not extld", []string{"-extldflags=-static"}, false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasExtld(tt.ldflags); got != tt.want {
+				t.Errorf("hasExtld(%v) = %v, want %v", tt.ldflags, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractModulePath(t *testing.T) {
 	dir := t.TempDir()
 	gomod := filepath.Join(dir, "go.mod")

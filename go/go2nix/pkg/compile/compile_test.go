@@ -8,6 +8,26 @@ import (
 	"github.com/numtide/go2nix/pkg/gofiles"
 )
 
+func TestBaseCompileArgs(t *testing.T) {
+	args := baseCompileArgs(Options{
+		ImportCfg:   "/tmp/importcfg",
+		PFlag:       "example.com/p",
+		trimRewrite: "/nix/store/abc=>",
+	})
+	want := []string{
+		"tool", "compile",
+		"-importcfg", "/tmp/importcfg",
+		"-p", "example.com/p",
+		"-buildid", "",
+		"-trimpath=/nix/store/abc=>",
+		"-nolocalimports",
+		"-pack",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("baseCompileArgs() = %v, want %v", args, want)
+	}
+}
+
 func TestOptions_outputFlags(t *testing.T) {
 	tests := []struct {
 		name string
