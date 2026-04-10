@@ -24,6 +24,13 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	}
 	defer os.RemoveAll(cgowork) //nolint:errcheck
 
+	// cgowork carries a random MkdirTemp suffix; prepend it to the
+	// -trimpath rewrite (first-match wins, cmd/internal/objabi/line.go:72)
+	// so it's stripped from go tool compile output before the broader
+	// TrimPath rule can leave the suffix behind. Mirrors cmd/go's
+	// `rewrite += objdir + "=>"` (cmd/go/internal/work/gc.go:323).
+	opts.trimRewrite = cgowork + "=>;" + opts.trimRewrite
+
 	cc := envOrDefault("CC", "gcc")
 	cxx := envOrDefault("CXX", "g++")
 
@@ -55,8 +62,18 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		}
 	}
 
-	// Ensure absolute build paths don't leak into debug info for reproducibility.
-	cgoCflags = append([]string{"-fdebug-prefix-map=" + opts.SrcDir + "=."}, cgoCflags...)
+	// Keep absolute build paths out of gcc/g++ object files. Mirrors
+	// cmd/go's compilerCmd (cmd/go/internal/work/exec.go:2484-2500): map
+	// the work dir to /tmp/go-build, and -gno-record-gcc-switches so the
+	// flag itself (which contains cgowork's random suffix) isn't recorded.
+	// Also map SrcDir so source-file debug info is store-path-free.
+	ccReproFlags := []string{
+		"-ffile-prefix-map=" + cgowork + "=/tmp/go-build",
+		"-ffile-prefix-map=" + opts.SrcDir + "=.",
+		"-gno-record-gcc-switches",
+	}
+	cgoCflags = append(slices.Clone(ccReproFlags), cgoCflags...)
+	cgoCxxflags = append(slices.Clone(ccReproFlags), cgoCxxflags...)
 
 	// Copy headers.
 	for _, h := range files.HFiles {
@@ -365,13 +382,15 @@ func cgoTestLinkAndDynimport(cc, linker, cgowork string, opts Options, uid strin
 		return fail, nil
 	}
 
+	// cmd/go passes -dynlinker only for runtime/cgo
+	// (cmd/go/internal/work/exec.go:3294-3296); user packages don't need
+	// the //go:cgo_dynamic_linker directive it emits.
 	pkgName := extractPackageName(filepath.Join(cgowork, "_cgo_gotypes.go"))
 	dynOut := filepath.Join(cgowork, "_cgo_import_"+uid+".go")
 	if err := runIn(opts.SrcDir, "go", "tool", "cgo",
 		"-dynimport", testLinkO,
 		"-dynout", dynOut,
-		"-dynpackage", pkgName,
-		"-dynlinker"); err != nil {
+		"-dynpackage", pkgName); err != nil {
 		return "", fmt.Errorf("cgo dynimport: %w", err)
 	}
 	return "", nil

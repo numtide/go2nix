@@ -63,5 +63,20 @@ else
       patchelf --print-needed $result/bin/cxx-pkgconfig | tee /dev/stderr | grep -q "^libsnappy" \
         || { echo "FAIL: cxx-pkgconfig should NEEDED libsnappy.so"; exit 1; }
 
+      # cgowork's MkdirTemp suffix used to leak into go tool compile output
+      # (the broader TrimPath rewrite left cgo_work_<uid>_<random>/ behind in
+      # __.PKGDEF and _go_.o). The cgowork-specific rewrite rule strips it to
+      # bare filenames, so the dir name must not appear in any compiled .a.
+      echo "=== Asserting cgowork temp dir does not leak into compiled archives ==="
+      drv=$(nix-instantiate ${go2nixSrc}/tests/fixtures/cxx-pkgconfig/dag.nix \
+        -I nixpkgs=${nixpkgsPath} \
+        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" 2>/dev/null)
+      for d in $(nix-store -q --references "$drv" | grep -- -golocal-); do
+        a=$(find "$(nix-store -q --outputs "$d")" -name '*.a')
+        if grep -aq cgo_work_ "$a"; then
+          echo "FAIL: $a embeds cgowork temp dir (non-reproducible)"; exit 1
+        fi
+      done
+
       echo "PASS: cxx-pkgconfig" > $out
     ''

@@ -67,5 +67,16 @@ else
         | grep -qE '^[[:space:]]*path[[:space:]]+example.com/cgo-internal-test$' \
         || { echo "FAIL: root binary BuildInfo.Path should be the module path"; exit 1; }
 
+      echo "=== Asserting cgowork temp dir does not leak into compiled archives ==="
+      drv=$(nix-instantiate ${go2nixSrc}/tests/fixtures/cgo-internal-test/dag.nix \
+        -I nixpkgs=${nixpkgsPath} \
+        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" 2>/dev/null)
+      for d in $(nix-store -q --references "$drv" | grep -- -golocal-); do
+        a=$(find "$(nix-store -q --outputs "$d")" -name '*.a')
+        if grep -aq cgo_work_ "$a"; then
+          echo "FAIL: $a embeds cgowork temp dir (non-reproducible)"; exit 1
+        fi
+      done
+
       echo "PASS: cgo-internal-test" > $out
     ''
