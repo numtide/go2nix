@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/gofiles"
@@ -549,19 +550,14 @@ func matchCgoGroup(group, goos, goarch string, tags []string) bool {
 
 // matchCgoTerm reports whether a single constraint term is satisfied.
 func matchCgoTerm(term, goos, goarch string, tags []string) bool {
-	switch {
-	case term == goos || term == goarch:
+	switch term {
+	case goos, goarch:
 		return true
-	case term == "unix":
+	case "unix":
 		return unixOS[goos]
-	case term == "cgo", term == "gc":
+	case "cgo", "gc":
 		// We are the gc toolchain compiling a cgo package.
 		return true
 	}
-	for _, t := range tags {
-		if t == term {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tags, term)
 }
