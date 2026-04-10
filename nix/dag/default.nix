@@ -527,6 +527,12 @@ let
     }) allLocalPkgInfo
   );
 
+  # Hoisted once for the per-entry rel-path computation in both the pkgSrc
+  # and mainSrc builtins.path filters (instead of toString src + "/" per
+  # filter callback per local package).
+  srcStr = toString src;
+  srcPrefix = srcStr + "/";
+
   # Main module's go directive (major.minor). Threaded explicitly to every
   # local-package compile because non-root pkgSrc filters exclude go.mod,
   # so the build-time go.mod walk would otherwise miss it and compile
@@ -575,16 +581,18 @@ let
       # go.mod, so they are never compiled and would only churn the store
       # path. The package's own root is never passed to the filter, so a
       # modRoot/replace-target package's go.mod doesn't self-exclude.
-      srcStr = toString src;
       pkgSrc = builtins.path {
         path = if isRoot then src else src + "/${relDir}";
         name = "golocal-${helpers.sanitizeName importPath}-src";
         filter =
           path: type:
-          let
-            rel = removePrefix (srcStr + "/") (toString path);
-          in
-          !(type == "directory" && (localPkgDirSet ? ${rel} || builtins.pathExists (path + "/go.mod")));
+          type != "directory"
+          || (
+            let
+              rel = removePrefix srcPrefix (toString path);
+            in
+            !(localPkgDirSet ? ${rel} || builtins.pathExists (path + "/go.mod"))
+          );
       };
 
       srcDir = "${pkgSrc}";
@@ -848,6 +856,37 @@ let
       # so the testrunner can walk them.
       allowedDirs = [ cleanModRoot ] ++ subPkgDirs ++ replaceDirs;
       allowedDirSet = genAttrs allowedDirs (_: true);
+      # Every allowedDir together with all of its strict ancestors. Lets the
+      # filter answer "is rel an allowedDir or an ancestor of one?" with a
+      # single attrset lookup instead of an O(|allowedDirs|) hasPrefix scan.
+      allowedAncestorSet = builtins.listToAttrs (
+        builtins.concatMap (
+          d:
+          let
+            walk =
+              r:
+              [
+                {
+                  name = r;
+                  value = true;
+                }
+              ]
+              ++ optionals (r != "." && r != "") (walk (builtins.dirOf r));
+          in
+          walk d
+        ) allowedDirs
+      );
+      # rel is at-or-under an allowedDir? O(depth) attrset lookups via dirOf
+      # instead of O(|allowedDirs|) hasPrefix string scans.
+      isUnderAllowed =
+        r:
+        allowedDirSet ? ${r}
+        || (
+          let
+            d = builtins.dirOf r;
+          in
+          d != "." && isUnderAllowed d
+        );
       # When modRoot is "." or any subPackage resolves to ".", the entire
       # source tree is needed — no prefix filtering required.
       includeAll = builtins.elem "." allowedDirs;
@@ -858,23 +897,16 @@ let
       filter =
         path: type:
         let
-          rel = removePrefix (toString src + "/") (toString path);
-          # A go.mod-bearing directory that isn't an allowed module root
-          # (modRoot, a subPackage dir, or a local-replace target) is a
-          # nested-module boundary; go list stopped there, so its files are
-          # never compiled or tested. Checked unconditionally so it also
-          # applies in the includeAll case.
-          isNestedModule =
-            type == "directory" && !(allowedDirSet ? ${rel}) && builtins.pathExists (path + "/go.mod");
+          rel = removePrefix srcPrefix (toString path);
         in
-        if isNestedModule then
-          false
-        else if includeAll then
-          true
-        else
-          path == toString src
-          || builtins.any (prefix: rel == prefix || hasPrefix (prefix + "/") rel) allowedDirs
-          || builtins.any (prefix: hasPrefix (rel + "/") prefix) allowedDirs;
+        # rel must be on the path to, at, or under an allowedDir. Checked
+        # before the nested-module pathExists so siblings the filter would
+        # reject anyway skip the syscall.
+        (includeAll || path == srcStr || allowedAncestorSet ? ${rel} || isUnderAllowed rel)
+        # A go.mod-bearing directory that isn't an allowed module root
+        # (modRoot, a subPackage dir, or a local-replace target) is a
+        # nested-module boundary; go list stopped there.
+        && !(type == "directory" && !(allowedDirSet ? ${rel}) && builtins.pathExists (path + "/go.mod"));
     };
 
   moduleRoot = if modRoot == "." then "${mainSrc}" else "${mainSrc}/${modRoot}";
