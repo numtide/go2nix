@@ -101,6 +101,9 @@
               {
                 inherit flake system;
               };
+          test-golden-vs-gobuild = callPkgWith ./packages/test-golden-vs-gobuild/default.nix {
+            inherit flake system;
+          };
 
           go2nix-testgen = callPkgWith ./packages/go2nix-testgen/default.nix {
             inherit flake system;
