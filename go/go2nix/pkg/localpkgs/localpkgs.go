@@ -81,8 +81,19 @@ func ListLocalPackages(root string, tags string, goVersion string) ([]*LocalPkg,
 				return nil
 			}
 			name := d.Name()
-			if name == "vendor" || name == "testdata" || name == ".git" || strings.HasPrefix(name, "_") {
+			if name == "vendor" || name == "testdata" || strings.HasPrefix(name, "_") {
 				return filepath.SkipDir
+			}
+			if path != dir {
+				// Match cmd/go's `./...` semantics: skip all dot-directories
+				// (.git, .idea, .direnv, ...) and stop at nested module
+				// boundaries.
+				if strings.HasPrefix(name, ".") {
+					return filepath.SkipDir
+				}
+				if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+					return filepath.SkipDir
+				}
 			}
 
 			pkg, importErr := ctx.ImportDir(path, build.IgnoreVendor)
