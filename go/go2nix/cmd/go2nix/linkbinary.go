@@ -179,12 +179,6 @@ func linkBinary(manifestPath, output string) error {
 	}
 
 	for _, sp := range m.SubPackages {
-		// compileCgo writes .has_cgo / .has_cxx into NIX_BUILD_TOP; clear any
-		// markers left by the previous subpackage so a pure-Go binary built
-		// after a cgo one doesn't inherit -extld / -linkmode external.
-		_ = os.Remove(filepath.Join(tmpDir, ".has_cgo"))
-		_ = os.Remove(filepath.Join(tmpDir, ".has_cxx"))
-
 		deps := make([]buildinfo.ModDep, 0, len(sp.Modules))
 		for _, mm := range sp.Modules {
 			dep := buildinfo.ModDep{Path: mm.Path, Version: mm.Version}
@@ -239,21 +233,19 @@ func linkBinary(manifestPath, output string) error {
 			return fmt.Errorf("compiling main %s: %w", importpath, err)
 		}
 
-		// Detect CGO from compilation.
-		hasCgo := fileExists(filepath.Join(tmpDir, ".has_cgo"))
-		hasCxx := fileExists(filepath.Join(tmpDir, ".has_cxx"))
-
-		// Compute link flags.
+		// Compute link flags. cmd/go always passes -extld (CXX if any
+		// transitive package has C++ sources, else CC) and lets cmd/link
+		// pick the link mode itself (cmd/link/internal/ld/lib.go:576 sets
+		// iscgo = LibraryByPkg["runtime/cgo"] != nil; config.go:208 picks
+		// external when iscgo && externalobj). Mirror that: pass -extld
+		// unconditionally, never force -linkmode.
 		var linkFlags []string
-		if hasCgo {
-			extld := os.Getenv("CC")
-			if hasCxx {
-				extld = os.Getenv("CXX")
-			}
-			if extld == "" {
-				return fmt.Errorf("cgo package requires CC (or CXX) but none is set")
-			}
-			linkFlags = append(linkFlags, "-extld", extld, "-linkmode", "external")
+		extld := os.Getenv("CC")
+		if sp.CXX {
+			extld = os.Getenv("CXX")
+		}
+		if extld != "" {
+			linkFlags = append(linkFlags, "-extld", extld)
 		}
 
 		// Propagate sanitizer flags from gcflags to linker.
@@ -328,11 +320,6 @@ func goToolchainVersion() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // expandLDFlags splits each ldflag element into separate exec arguments using

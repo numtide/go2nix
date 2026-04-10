@@ -947,6 +947,22 @@ let
                 lib.optional (p != null) p.modKey
               ) (closureOf ip)
             );
+          # cmd/go's gcToolchain.ld picks CXX over CC for -extld when any
+          # package in root.Deps has CXXFiles || SwigCXXFiles
+          # (cmd/go/internal/work/gc.go:591-595). The closure already
+          # includes the main package (start node), so this also covers the
+          # main-package-itself-has-cxx case without a side-channel marker.
+          hasCxx =
+            ip:
+            builtins.any (
+              item:
+              let
+                f =
+                  (goPackagesResult.localPackages.${item.key} or goPackagesResult.packages.${item.key} or { }).files
+                    or { };
+              in
+              (f.cxxFiles or [ ]) != [ ] || (f.swigCxxFiles or [ ]) != [ ]
+            ) (closureOf ip);
           toModule =
             modKey:
             let
@@ -961,11 +977,18 @@ let
               replaceVersion = if repl.version != "" then repl.version else m.version;
             };
         in
-        map (sp: {
-          path = sp;
-          files = goPackagesResult.localPackages.${spImportPath sp}.files or null;
-          modules = map toModule (modKeysOf (spImportPath sp));
-        }) normalizedSubPackages;
+        map (
+          sp:
+          let
+            ip = spImportPath sp;
+          in
+          {
+            path = sp;
+            files = goPackagesResult.localPackages.${ip}.files or null;
+            modules = map toModule (modKeysOf ip);
+            cxx = hasCxx ip;
+          }
+        ) normalizedSubPackages;
       inherit moduleRoot;
       lockfile =
         if goLock != null then
