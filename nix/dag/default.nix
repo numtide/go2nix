@@ -66,11 +66,10 @@
   # without CA can't cut off anything (the input-addressed .x path
   # changes whenever src does).
   contentAddressed ? false,
-  # Defaults to (modRoot == ".") for back-compat: enabling tests changes
-  # the link drv hash, and modRoot != "." callers historically built
-  # without checks. mainSrc now includes sibling-replace dirs, so passing
-  # doCheck = true works for monorepo layouts.
-  doCheck ? (modRoot == "."),
+  # Defaults to true now that mainSrc includes sibling-replace dirs and
+  # test-only local packages get their own compile drvs — the two reasons
+  # the old (modRoot == ".") default existed. Matches buildGoModule.
+  doCheck ? true,
   checkFlags ? [ ],
   ...
 }@args:
