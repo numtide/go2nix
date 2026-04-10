@@ -25,7 +25,10 @@ else
   in
   pkgs.runCommand "test-dag-fixture-cgo-internal-test"
     {
-      nativeBuildInputs = [ nix ];
+      nativeBuildInputs = [
+        nix
+        pkgs.file
+      ];
       requiredSystemFeatures = [ "recursive-nix" ];
     }
     ''
@@ -39,5 +42,13 @@ else
         --no-out-link)
 
       $result/bin/cgo-internal-test
+
+      echo "=== Asserting purebin (built after a cgo subPackage) is statically linked ==="
+      [ "$($result/bin/purebin)" = "pure" ] || { echo "FAIL: purebin output"; exit 1; }
+      file $result/bin/purebin | tee /dev/stderr | grep -q "statically linked" \
+        || { echo "FAIL: purebin should be statically linked (cgo marker leaked)"; exit 1; }
+      file $result/bin/cgo-internal-test | tee /dev/stderr | grep -q "dynamically linked" \
+        || { echo "FAIL: cgo-internal-test should be dynamically linked (uses cgo)"; exit 1; }
+
       echo "PASS: cgo-internal-test" > $out
     ''
