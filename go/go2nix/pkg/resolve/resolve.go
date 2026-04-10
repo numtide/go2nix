@@ -945,7 +945,7 @@ func buildLinkDrv(
 	}
 
 	// Add modinfo so go version -m shows module dependencies.
-	modinfoLine, err := generateModinfo(cfg, sorted, mainPkg.DefaultGODEBUG)
+	modinfoLine, err := generateModinfo(cfg, sorted, mainPkg.ImportPath, mainPkg.DefaultGODEBUG)
 	if err != nil {
 		slog.Warn("modinfo generation failed, skipping", "err", err)
 	} else {
@@ -1187,7 +1187,7 @@ func loadGoEnv(goBin string) map[string]string {
 }
 
 // generateModinfo constructs the modinfo importcfg line from the package graph.
-func generateModinfo(cfg Config, sorted []*ResolvedPkg, defaultGODEBUG string) (string, error) {
+func generateModinfo(cfg Config, sorted []*ResolvedPkg, mainPath, defaultGODEBUG string) (string, error) {
 	// Get Go toolchain version.
 	goVersion := cfg.goEnv["GOVERSION"]
 
@@ -1236,7 +1236,7 @@ func generateModinfo(cfg Config, sorted []*ResolvedPkg, defaultGODEBUG string) (
 		deps = append(deps, dep)
 	}
 
-	return buildinfo.GenerateModinfo(filepath.Join(cfg.Src, cfg.ModRoot), goVersion, deps, settings)
+	return buildinfo.GenerateModinfo(filepath.Join(cfg.Src, cfg.ModRoot), mainPath, goVersion, deps, settings)
 }
 
 // createFilteredPkgDir creates a temporary directory containing only the files

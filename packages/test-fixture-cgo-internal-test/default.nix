@@ -28,6 +28,7 @@ else
       nativeBuildInputs = [
         nix
         pkgs.file
+        pkgs.go
       ];
       requiredSystemFeatures = [ "recursive-nix" ];
     }
@@ -49,6 +50,14 @@ else
         || { echo "FAIL: purebin should be statically linked (cgo marker leaked)"; exit 1; }
       file $result/bin/cgo-internal-test | tee /dev/stderr | grep -q "dynamically linked" \
         || { echo "FAIL: cgo-internal-test should be dynamically linked (uses cgo)"; exit 1; }
+
+      echo "=== Asserting BuildInfo.Path is the per-binary main package path ==="
+      go version -m $result/bin/purebin | tee /dev/stderr \
+        | grep -qE '^[[:space:]]*path[[:space:]]+example.com/cgo-internal-test/cmd/purebin$' \
+        || { echo "FAIL: purebin BuildInfo.Path should be the main package import path"; exit 1; }
+      go version -m $result/bin/cgo-internal-test | tee /dev/stderr \
+        | grep -qE '^[[:space:]]*path[[:space:]]+example.com/cgo-internal-test$' \
+        || { echo "FAIL: root binary BuildInfo.Path should be the module path"; exit 1; }
 
       echo "PASS: cgo-internal-test" > $out
     ''
