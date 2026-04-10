@@ -46,9 +46,12 @@ type ManifestFiles struct {
 	SFiles        []string `json:"sFiles,omitempty"`
 	CFiles        []string `json:"cFiles,omitempty"`
 	CXXFiles      []string `json:"cxxFiles,omitempty"`
+	MFiles        []string `json:"mFiles,omitempty"`
 	FFiles        []string `json:"fFiles,omitempty"`
 	HFiles        []string `json:"hFiles,omitempty"`
 	SysoFiles     []string `json:"sysoFiles,omitempty"`
+	SwigFiles     []string `json:"swigFiles,omitempty"`
+	SwigCXXFiles  []string `json:"swigCxxFiles,omitempty"`
 	EmbedPatterns []string `json:"embedPatterns,omitempty"`
 }
 
@@ -58,14 +61,17 @@ type ManifestFiles struct {
 // paths.
 func (mf *ManifestFiles) ToPkgFiles(srcDir string) (*gofiles.PkgFiles, error) {
 	pf := &gofiles.PkgFiles{
-		GoFiles:   mf.GoFiles,
-		CgoFiles:  mf.CgoFiles,
-		SFiles:    mf.SFiles,
-		CFiles:    mf.CFiles,
-		CXXFiles:  mf.CXXFiles,
-		FFiles:    mf.FFiles,
-		HFiles:    mf.HFiles,
-		SysoFiles: mf.SysoFiles,
+		GoFiles:      mf.GoFiles,
+		CgoFiles:     mf.CgoFiles,
+		SFiles:       mf.SFiles,
+		CFiles:       mf.CFiles,
+		CXXFiles:     mf.CXXFiles,
+		MFiles:       mf.MFiles,
+		FFiles:       mf.FFiles,
+		HFiles:       mf.HFiles,
+		SysoFiles:    mf.SysoFiles,
+		SwigFiles:    mf.SwigFiles,
+		SwigCXXFiles: mf.SwigCXXFiles,
 	}
 	if len(mf.EmbedPatterns) > 0 {
 		cfg, err := gofiles.ResolveEmbedCfg(srcDir, mf.EmbedPatterns)

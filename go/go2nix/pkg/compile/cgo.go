@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/numtide/go2nix/pkg/gofiles"
@@ -48,7 +49,7 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	// Resolve #cgo pkg-config: directives from source files.
 	// go tool cgo does not process pkg-config directives; that's done by cmd/go.
 	// We handle it here so packages with #cgo pkg-config: work correctly.
-	pkgCflags, pkgLdflags, err := resolvePkgConfig(opts.SrcDir, files.CgoFiles, opts.goos, opts.goarch)
+	pkgCflags, pkgLdflags, err := resolvePkgConfig(opts.SrcDir, files.CgoFiles, opts.goos, opts.goarch, nil)
 	if err != nil {
 		return fmt.Errorf("pkg-config: %w", err)
 	}
@@ -402,7 +403,7 @@ func filterCppFlags(flags []string) []string {
 // runs pkg-config to resolve them, and returns the resulting CFLAGS and LDFLAGS.
 // This is necessary because go tool cgo does not process pkg-config directives;
 // that processing is normally done by cmd/go (go build).
-func resolvePkgConfig(srcDir string, cgoFiles []string, goos, goarch string) (cflags, ldflags []string, err error) {
+func resolvePkgConfig(srcDir string, cgoFiles []string, goos, goarch string, tags []string) (cflags, ldflags []string, err error) {
 	var pkgNames []string
 
 	for _, f := range cgoFiles {
@@ -418,7 +419,7 @@ func resolvePkgConfig(srcDir string, cgoFiles []string, goos, goarch string) (cf
 			// Check for platform constraint before "pkg-config:".
 			if idx := strings.Index(line, "pkg-config:"); idx >= 0 {
 				constraint := strings.TrimSpace(line[:idx])
-				if constraint != "" && !matchesCgoConstraint(constraint, goos, goarch) {
+				if constraint != "" && !matchesCgoConstraint(constraint, goos, goarch, tags) {
 					continue
 				}
 				pkgs := strings.TrimSpace(line[idx+len("pkg-config:"):])
@@ -490,22 +491,53 @@ func trimFileExt(name string) string {
 	return name
 }
 
-// matchesCgoConstraint checks if a #cgo constraint (e.g., "linux", "!windows",
-// "linux,amd64") matches the current build target.
-func matchesCgoConstraint(constraint, goos, goarch string) bool {
-	// Handle comma-separated AND constraints: "linux,amd64"
-	parts := strings.Split(constraint, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
+// unixOS is the set of GOOS values for which the build tag "unix" is
+// satisfied, mirroring go/build's unixOS map.
+var unixOS = map[string]bool{
+	"aix": true, "android": true, "darwin": true, "dragonfly": true,
+	"freebsd": true, "hurd": true, "illumos": true, "ios": true,
+	"linux": true, "netbsd": true, "openbsd": true, "solaris": true,
+}
+
+// matchesCgoConstraint checks if a #cgo constraint matches the current build
+// target. The syntax (per cmd/cgo and go/build.matchAuto) is a
+// space-separated OR of comma-separated AND terms; each term may be a GOOS,
+// GOARCH, "unix", "cgo", "gc"/"gccgo", or any active build tag, optionally
+// negated with a leading '!'. Examples:
+//
+//	"linux,amd64 darwin"  → (linux AND amd64) OR darwin
+//	"!windows"            → NOT windows
+//	"mytag"               → satisfied iff -tags=mytag is set
+func matchesCgoConstraint(constraint, goos, goarch string, tags []string) bool {
+	groups := strings.Fields(constraint)
+	if len(groups) == 0 {
+		return true
+	}
+	for _, group := range groups {
+		if matchCgoGroup(group, goos, goarch, tags) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchCgoGroup evaluates one comma-separated AND group.
+func matchCgoGroup(group, goos, goarch string, tags []string) bool {
+	for _, term := range strings.Split(group, ",") {
+		if term == "" {
+			// Empty term (e.g., trailing comma) makes the group fail,
+			// matching go/build.matchTag("").
+			return false
 		}
 		negate := false
-		if strings.HasPrefix(part, "!") {
+		if strings.HasPrefix(term, "!") {
 			negate = true
-			part = part[1:]
+			term = term[1:]
+			if term == "" {
+				return false // "!" alone is a syntax error → no match
+			}
 		}
-		match := part == goos || part == goarch
+		match := matchCgoTerm(term, goos, goarch, tags)
 		if negate {
 			match = !match
 		}
@@ -514,4 +546,18 @@ func matchesCgoConstraint(constraint, goos, goarch string) bool {
 		}
 	}
 	return true
+}
+
+// matchCgoTerm reports whether a single constraint term is satisfied.
+func matchCgoTerm(term, goos, goarch string, tags []string) bool {
+	switch term {
+	case goos, goarch:
+		return true
+	case "unix":
+		return unixOS[goos]
+	case "cgo", "gc":
+		// We are the gc toolchain compiling a cgo package.
+		return true
+	}
+	return slices.Contains(tags, term)
 }

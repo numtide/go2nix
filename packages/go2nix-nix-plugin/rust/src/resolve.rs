@@ -53,12 +53,18 @@ struct GoPackage {
     c_files: Vec<String>,
     #[serde(rename = "CXXFiles")]
     cxx_files: Vec<String>,
+    #[serde(rename = "MFiles")]
+    m_files: Vec<String>,
     #[serde(rename = "FFiles")]
     f_files: Vec<String>,
     #[serde(rename = "HFiles")]
     h_files: Vec<String>,
     #[serde(rename = "SysoFiles")]
     syso_files: Vec<String>,
+    #[serde(rename = "SwigFiles")]
+    swig_files: Vec<String>,
+    #[serde(rename = "SwigCXXFiles")]
+    swig_cxx_files: Vec<String>,
     #[serde(rename = "EmbedPatterns")]
     embed_patterns: Vec<String>,
     #[serde(rename = "CgoPkgConfig")]
@@ -123,11 +129,17 @@ pub(crate) struct PkgFiles {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     cxx_files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    m_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     f_files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     h_files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     syso_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    swig_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    swig_cxx_files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     embed_patterns: Vec<String>,
 }
@@ -139,9 +151,12 @@ impl PkgFiles {
             && self.s_files.is_empty()
             && self.c_files.is_empty()
             && self.cxx_files.is_empty()
+            && self.m_files.is_empty()
             && self.f_files.is_empty()
             && self.h_files.is_empty()
             && self.syso_files.is_empty()
+            && self.swig_files.is_empty()
+            && self.swig_cxx_files.is_empty()
             && self.embed_patterns.is_empty()
     }
 }
@@ -153,9 +168,12 @@ fn pkg_files_from(p: &GoPackage) -> PkgFiles {
         s_files: p.s_files.clone(),
         c_files: p.c_files.clone(),
         cxx_files: p.cxx_files.clone(),
+        m_files: p.m_files.clone(),
         f_files: p.f_files.clone(),
         h_files: p.h_files.clone(),
         syso_files: p.syso_files.clone(),
+        swig_files: p.swig_files.clone(),
+        swig_cxx_files: p.swig_cxx_files.clone(),
         embed_patterns: p.embed_patterns.clone(),
     }
 }
@@ -1173,7 +1191,7 @@ mod tests {
 
     #[test]
     fn parse_file_lists_round_trip_to_json() {
-        let input = r#"{"ImportPath":"github.com/f/p","Module":{"Path":"github.com/f/p","Version":"v1.0.0"},"Imports":[],"GoFiles":["a.go","b.go"],"CgoFiles":["c.go"],"SFiles":["asm.s"],"CFiles":["x.c"],"CXXFiles":["x.cc"],"FFiles":["x.f90"],"HFiles":["x.h"],"SysoFiles":["x.syso"],"EmbedPatterns":["data/*"]}"#;
+        let input = r#"{"ImportPath":"github.com/f/p","Module":{"Path":"github.com/f/p","Version":"v1.0.0"},"Imports":[],"GoFiles":["a.go","b.go"],"CgoFiles":["c.go"],"SFiles":["asm.s"],"CFiles":["x.c"],"CXXFiles":["x.cc"],"MFiles":["x.m"],"FFiles":["x.f90"],"HFiles":["x.h"],"SysoFiles":["x.syso"],"SwigFiles":["x.swig"],"SwigCXXFiles":["x.swigcxx"],"EmbedPatterns":["data/*"]}"#;
         let graph = parse_go_packages(input.as_bytes()).unwrap();
         let f = &graph.packages[0].files;
         assert_eq!(f.go_files, vec!["a.go", "b.go"]);
@@ -1181,9 +1199,12 @@ mod tests {
         assert_eq!(f.s_files, vec!["asm.s"]);
         assert_eq!(f.c_files, vec!["x.c"]);
         assert_eq!(f.cxx_files, vec!["x.cc"]);
+        assert_eq!(f.m_files, vec!["x.m"]);
         assert_eq!(f.f_files, vec!["x.f90"]);
         assert_eq!(f.h_files, vec!["x.h"]);
         assert_eq!(f.syso_files, vec!["x.syso"]);
+        assert_eq!(f.swig_files, vec!["x.swig"]);
+        assert_eq!(f.swig_cxx_files, vec!["x.swigcxx"]);
         assert_eq!(f.embed_patterns, vec!["data/*"]);
 
         let jp = pkg_data_to_json_pkg(&graph.packages[0], &|_| true);
@@ -1194,9 +1215,12 @@ mod tests {
         assert_eq!(files["sFiles"], serde_json::json!(["asm.s"]));
         assert_eq!(files["cFiles"], serde_json::json!(["x.c"]));
         assert_eq!(files["cxxFiles"], serde_json::json!(["x.cc"]));
+        assert_eq!(files["mFiles"], serde_json::json!(["x.m"]));
         assert_eq!(files["fFiles"], serde_json::json!(["x.f90"]));
         assert_eq!(files["hFiles"], serde_json::json!(["x.h"]));
         assert_eq!(files["sysoFiles"], serde_json::json!(["x.syso"]));
+        assert_eq!(files["swigFiles"], serde_json::json!(["x.swig"]));
+        assert_eq!(files["swigCxxFiles"], serde_json::json!(["x.swigcxx"]));
         assert_eq!(files["embedPatterns"], serde_json::json!(["data/*"]));
     }
 

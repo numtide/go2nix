@@ -24,6 +24,7 @@ type Pkg struct {
 	CgoFiles       []string `json:"CgoFiles"`
 	CFiles         []string `json:"CFiles"`
 	CXXFiles       []string `json:"CXXFiles"`
+	MFiles         []string `json:"MFiles"` // .m Objective-C source files
 	FFiles         []string `json:"FFiles"` // .f, .F, .for, .f90 Fortran source files
 	SFiles         []string `json:"SFiles"`
 	HFiles         []string `json:"HFiles"`
