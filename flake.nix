@@ -78,6 +78,11 @@
           test-fixture-xtest-local-dep = callPkgWith ./packages/test-fixture-xtest-local-dep/default.nix {
             inherit flake system;
           };
+          test-fixture-xtest-local-dep-ca =
+            callPkgWith ./packages/test-fixture-xtest-local-dep-ca/default.nix
+              {
+                inherit flake system;
+              };
           test-fixture-cgo-internal-test = callPkgWith ./packages/test-fixture-cgo-internal-test/default.nix {
             inherit flake system;
           };

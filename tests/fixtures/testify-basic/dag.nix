@@ -14,4 +14,7 @@ goEnv.buildGoApplication {
   src = ./.;
   goLock = ./go2nix.toml;
   doCheck = true;
+  # greeter_test.go has a TestSkipMe that always fails; this proves
+  # checkFlags reach the test binary.
+  checkFlags = [ "-test.run=^TestGreet$" ];
 }
