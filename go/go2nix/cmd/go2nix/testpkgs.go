@@ -103,6 +103,7 @@ func runTestPackagesCmd(args []string) {
 		Tags:             strings.Join(m.Tags, ","),
 		GCFlagsList:      m.GCFlags,
 		CheckFlagsList:   m.CheckFlags,
+		LocalArchives:    m.LocalArchives,
 	}
 
 	if err := testrunner.Run(opts); err != nil {

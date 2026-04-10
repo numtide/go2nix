@@ -32,6 +32,15 @@ type Options struct {
 	Tags             string   // comma-separated build tags
 	GCFlagsList      []string // extra compiler flags
 	CheckFlagsList   []string // flags to pass to test binaries
+	// LocalArchives bounds the test scope: only packages with an entry
+	// here are tested. ListLocalPackages walks the whole module tree
+	// (and after #75, sibling-replace targets too), but the eval-time
+	// resolver only computed importcfg entries for packages reachable
+	// from the subPackages closure (build + test-only locals). Packages
+	// outside that closure can't link their tests anyway, so testing
+	// them just produces a confusing "could not import" failure.
+	// Nil means no filter (test everything ListLocalPackages finds).
+	LocalArchives map[string]string
 }
 
 func (o Options) checkFlagsArgs() []string {
@@ -58,19 +67,29 @@ func Run(opts Options) error {
 		pkgMap[p.ImportPath] = p
 	}
 
-	// Filter to packages with test files
+	// Filter to packages with test files that are inside the build's
+	// resolved scope (see Options.LocalArchives).
 	var testable []*localpkgs.LocalPkg
+	skipped := 0
 	for _, p := range pkgs {
-		if len(p.TestGoFiles) > 0 || len(p.XTestGoFiles) > 0 {
-			testable = append(testable, p)
+		if len(p.TestGoFiles) == 0 && len(p.XTestGoFiles) == 0 {
+			continue
 		}
+		if opts.LocalArchives != nil {
+			if _, ok := opts.LocalArchives[p.ImportPath]; !ok {
+				slog.Debug("skipping testable package outside subPackages closure", "pkg", p.ImportPath)
+				skipped++
+				continue
+			}
+		}
+		testable = append(testable, p)
 	}
 
 	if len(testable) == 0 {
-		slog.Info("no testable packages found")
+		slog.Info("no testable packages found", "skipped", skipped)
 		return nil
 	}
-	slog.Info("testable packages", "count", len(testable))
+	slog.Info("testable packages", "count", len(testable), "skipped", skipped)
 
 	for _, p := range testable {
 		if err := runPackageTests(opts, p, pkgMap); err != nil {
