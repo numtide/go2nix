@@ -146,7 +146,8 @@ static RegisterPrimOp rp(PrimOp {
     Returns `moduleHashes` in the output (default: false)
 
   Returns: { packages, localPackages, modulePath, goVersion, replacements,
-    testPackages, moduleHashes (when resolveHashes=true) }
+    testPackages, testLocalPackages (when doCheck=true and non-empty),
+    moduleHashes (when resolveHashes=true) }
 )",
 #ifdef NIX_PRIMOP_HAS_IMPL
     .impl = prim_resolveGoPackages,
