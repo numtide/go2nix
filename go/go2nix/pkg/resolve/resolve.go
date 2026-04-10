@@ -25,6 +25,7 @@ import (
 	"github.com/numtide/go2nix/pkg/lockfile"
 	"github.com/numtide/go2nix/pkg/nixdrv"
 	"golang.org/x/mod/module"
+	"golang.org/x/mod/sumdb/dirhash"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -163,7 +164,7 @@ func Resolve(cfg Config) error {
 
 	// Step 4: Set up GOMODCACHE
 	t = time.Now()
-	gomodcache, err := setupGOMODCACHE(fodPaths)
+	gomodcache, err := setupGOMODCACHE(fodPaths, lock)
 	if err != nil {
 		return fmt.Errorf("setting up GOMODCACHE: %w", err)
 	}
@@ -491,26 +492,70 @@ func registerDerivationsParallel(
 	return nil
 }
 
-// setupGOMODCACHE creates a temporary GOMODCACHE by merging all FOD outputs
-// into a single directory tree using symlinks.
+// setupGOMODCACHE assembles a GOMODCACHE from per-module FOD outputs.
 //
-// Each FOD output is a GOMODCACHE subtree (GOMODCACHE=$out). Multiple FODs
-// share directory prefixes (e.g., cache/download/golang.org/) but never share
-// leaf files since each FOD downloads a unique module@version. We walk each
-// FOD in parallel, create real directories for intermediate paths, and symlink
-// leaf files. MkdirAll is safe to call concurrently (idempotent), and leaf
-// files are unique per FOD so symlinks won't collide.
-func setupGOMODCACHE(fodPaths map[string]*storepath.StorePath) (string, error) {
+// Each FOD output is the extracted module source tree only (see fodScript —
+// $out is the contents of $GOMODCACHE/<epath>@<eversion>/). We mirror each
+// tree to its <epath>@<eversion>/ location and synthesise the minimum
+// cache/download/ metadata go list checks before using the extracted dir
+// (cmd/go/internal/modfetch/fetch.go: download → DownloadDir).
+func setupGOMODCACHE(fodPaths map[string]*storepath.StorePath, lock *lockfile.Lockfile) (string, error) {
 	gomodcache, err := os.MkdirTemp("", "gomodcache-")
 	if err != nil {
 		return "", err
 	}
 	g := new(errgroup.Group)
 	g.SetLimit(max(runtime.NumCPU(), 8))
-	for _, fodPath := range fodPaths {
+	for modKey, fodPath := range fodPaths {
 		src := fodPath.Absolute()
+		modPath, version, _ := strings.Cut(modKey, "@")
+		fetchPath := modPath
+		if r, ok := lock.Replace[modKey]; ok {
+			fetchPath = r
+		}
+		ep, err := module.EscapePath(fetchPath)
+		if err != nil {
+			return "", err
+		}
+		ev, err := module.EscapeVersion(version)
+		if err != nil {
+			return "", err
+		}
 		g.Go(func() error {
-			return symlinkTree(src, gomodcache)
+			extracted := filepath.Join(gomodcache, ep+"@"+ev)
+			if err := os.MkdirAll(extracted, 0o755); err != nil {
+				return err
+			}
+			if err := symlinkTree(src, extracted); err != nil {
+				return err
+			}
+			dlDir := filepath.Join(gomodcache, "cache", "download", ep, "@v")
+			if err := os.MkdirAll(dlDir, 0o755); err != nil {
+				return err
+			}
+			gomod, err := os.ReadFile(filepath.Join(src, "go.mod"))
+			if err != nil {
+				// Modules without a go.mod get the minimal one go mod download writes.
+				gomod = []byte("module " + fetchPath + "\n")
+			}
+			if err := os.WriteFile(filepath.Join(dlDir, ev+".mod"), gomod, 0o644); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dlDir, ev+".info"), []byte(`{"Version":"`+version+`"}`), 0o644); err != nil {
+				return err
+			}
+			// checkMod reads .ziphash; an empty file falls through to
+			// rehashing the (absent) .zip. dirhash.HashDir over the
+			// extracted tree yields the same h1 as the zip, which is
+			// what go.sum records.
+			h1, err := dirhash.HashDir(src, fetchPath+"@"+version, dirhash.Hash1)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dlDir, ev+".ziphash"), []byte(h1), 0o644); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(dlDir, ev+".lock"), nil, 0o644)
 		})
 	}
 	if err := g.Wait(); err != nil {
@@ -678,6 +723,15 @@ func setupPkgOverrides(
 	drv.SetEnv("PATH", strings.Join(pathParts, ":"))
 	if len(inputs.PkgConfigDirs) > 0 {
 		drv.SetEnv("PKG_CONFIG_PATH", strings.Join(inputs.PkgConfigDirs, ":"))
+	}
+	// Synthesised drvs don't run stdenv's setup hook, so cc-wrapper won't
+	// pick up include dirs from nativeBuildInputs the way default mode
+	// does. Pass them via CGO_CFLAGS, which compile-package's cgo step
+	// reads directly. -L paths come from pkg-config; adding every lib/ via
+	// CGO_LDFLAGS bloats the recorded _cgo_flags and overflows the link
+	// argument list for GTK-sized closures.
+	if len(inputs.IncludeDirs) > 0 {
+		drv.SetEnv("CGO_CFLAGS", "-I"+strings.Join(inputs.IncludeDirs, " -I"))
 	}
 	return inputs
 }
@@ -1127,6 +1181,7 @@ func storeDirOf(path string) string {
 type InputPaths struct {
 	BinDirs       []string // directories containing executables (e.g., /nix/store/xxx/bin)
 	PkgConfigDirs []string // directories containing .pc files (e.g., /nix/store/xxx/lib/pkgconfig)
+	IncludeDirs   []string // directories containing headers (for CGO_CFLAGS)
 	All           []string // all store paths (including transitive propagated-build-inputs)
 }
 
@@ -1146,6 +1201,9 @@ func discoverInputPaths(storePaths []string) InputPaths {
 
 		if isDir(p + "/bin") {
 			result.BinDirs = append(result.BinDirs, p+"/bin")
+		}
+		if isDir(p + "/include") {
+			result.IncludeDirs = append(result.IncludeDirs, p+"/include")
 		}
 		if isDir(p + "/lib/pkgconfig") {
 			result.PkgConfigDirs = append(result.PkgConfigDirs, p+"/lib/pkgconfig")
