@@ -371,25 +371,23 @@ let
     mod
     // {
       inherit fetchPath version;
-      dirSuffix = "${helpers.escapeModPath fetchPath}@${helpers.escapeModPath version}";
     }
   ) allModules;
 
   # --- Third-party package set ---
-  # sourceOnly: lockfile-free hashes cover the extracted source tree only;
-  #             lockfile hashes cover the full GOMODCACHE output.
+  # fetchGoModule outputs the extracted source tree; both lockfile and
+  # lockfile-free hashes cover exactly that, so the FOD is shared.
   moduleInfo = builtins.mapAttrs (
     _: mod:
     let
       src = fetchers.fetchGoModule {
         inherit (mod) hash fetchPath version;
         inherit goProxy;
-        sourceOnly = !hasLockfile;
       };
     in
     mod
     // {
-      dir = if hasLockfile then "${src}/${mod.dirSuffix}" else "${src}";
+      dir = "${src}";
     }
   ) resolvedModules;
 

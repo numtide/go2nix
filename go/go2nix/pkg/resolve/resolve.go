@@ -312,8 +312,16 @@ func buildModuleFODs(cfg Config, lock *lockfile.Lockfile) (map[string]*storepath
 			fetchPath = r
 		}
 
+		escapedPath, err := module.EscapePath(fetchPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("escaping module path %s: %w", fetchPath, err)
+		}
+		escapedVersion, err := module.EscapeVersion(version)
+		if err != nil {
+			return nil, nil, fmt.Errorf("escaping module version %s: %w", version, err)
+		}
 		drvName := nixdrv.ModDrvName(modKey)
-		script := fodScript(cfg.GoBin, fetchPath, version, cfg.CACert, cfg.NetrcFile)
+		script := fodScript(cfg.GoBin, cfg.coreutilsDir, fetchPath, version, escapedPath+"@"+escapedVersion, cfg.CACert, cfg.NetrcFile)
 
 		drv := nixdrv.NewDerivation(drvName, cfg.System, bashStorePath+"/bin/bash")
 		drv.AddArg("-c")
@@ -323,10 +331,11 @@ func buildModuleFODs(cfg Config, lock *lockfile.Lockfile) (map[string]*storepath
 		// Set env.out to empty; Nix fills in the computed path for FODs.
 		drv.SetEnv("out", "")
 
-		// Input sources: builder (bash), go binary, cacert, netrc
+		// Input sources: builder (bash), go binary, coreutils (cp), cacert, netrc
 		drv.AddInputSrc(bashStorePath)
 		goStoreDir := storeDirOf(cfg.GoBin)
 		drv.AddInputSrc(goStoreDir)
+		drv.AddInputSrc(cfg.coreutilsDir)
 		if cfg.CACert != "" {
 			drv.AddInputSrc(storeDirOf(cfg.CACert))
 		}
@@ -691,17 +700,9 @@ func setupPkgSource(
 	}
 
 	drv.SetEnv("modSrc", pkg.FodPath.Absolute())
-	escapedPath, err := module.EscapePath(pkg.FetchPath)
-	if err != nil {
-		return fmt.Errorf("escaping module path %s: %w", pkg.FetchPath, err)
-	}
-	escapedVersion, err := module.EscapeVersion(pkg.Version)
-	if err != nil {
-		return fmt.Errorf("escaping module version %s: %w", pkg.Version, err)
-	}
-	relDir := escapedPath + "@" + escapedVersion
-	if pkg.Subdir != "" {
-		relDir += "/" + pkg.Subdir
+	relDir := pkg.Subdir
+	if relDir == "" {
+		relDir = "."
 	}
 	drv.SetEnv("relDir", relDir)
 	drv.AddInputSrc(pkg.FodPath.Absolute())

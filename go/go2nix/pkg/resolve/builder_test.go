@@ -17,14 +17,22 @@ import (
 func TestFodScript(t *testing.T) {
 	script := fodScript(
 		"/nix/store/xxx-go/bin/go",
+		"/nix/store/ccc-coreutils",
 		"golang.org/x/crypto",
 		"v0.17.0",
+		"golang.org/x/crypto@v0.17.0",
 		"/nix/store/yyy-cacert/etc/ssl/certs/ca-bundle.crt",
 		"",
 	)
 
-	if !strings.Contains(script, `GOMODCACHE="$out"`) {
-		t.Error("missing GOMODCACHE=\"$out\"")
+	if strings.Contains(script, `GOMODCACHE="$out"`) {
+		t.Error("GOMODCACHE=$out is the proxy-dependent full-tree mode; expected $TMPDIR/modcache")
+	}
+	if !strings.Contains(script, `GOMODCACHE="$TMPDIR/modcache"`) {
+		t.Error("missing GOMODCACHE=$TMPDIR/modcache")
+	}
+	if !strings.Contains(script, `cp -r "$TMPDIR/modcache/"'golang.org/x/crypto@v0.17.0' "$out"`) {
+		t.Errorf("missing source-tree cp to $out:\n%s", script)
 	}
 	if !strings.Contains(script, `mod download 'golang.org/x/crypto@v0.17.0'`) {
 		t.Error("missing go mod download command")
@@ -40,8 +48,10 @@ func TestFodScript(t *testing.T) {
 func TestFodScriptWithNetrc(t *testing.T) {
 	script := fodScript(
 		"/nix/store/xxx-go/bin/go",
+		"/nix/store/ccc-coreutils",
 		"golang.org/x/crypto",
 		"v0.17.0",
+		"golang.org/x/crypto@v0.17.0",
 		"",
 		"/nix/store/zzz-netrc/netrc",
 	)
@@ -57,8 +67,10 @@ func TestFodScriptWithNetrc(t *testing.T) {
 func TestFodScriptQuotesSpecialChars(t *testing.T) {
 	script := fodScript(
 		"/nix/store/xxx-go/bin/go",
+		"/nix/store/ccc-coreutils",
 		"example.com/foo's-bar",
 		"v1.0.0",
+		"example.com/foo's-bar@v1.0.0",
 		"",
 		"",
 	)

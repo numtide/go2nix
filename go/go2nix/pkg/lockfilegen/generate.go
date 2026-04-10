@@ -17,6 +17,7 @@ import (
 	"github.com/nix-community/go-nix/pkg/nar"
 	"github.com/numtide/go2nix/pkg/golist"
 	"github.com/numtide/go2nix/pkg/lockfile"
+	"golang.org/x/mod/module"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -115,7 +116,26 @@ func modCacheHash(fetchPath, version string) (string, error) {
 		return "", fmt.Errorf("go mod download %s@%s: %w\n%s", fetchPath, version, err, out)
 	}
 
-	return narHashPath(tmpdir)
+	return hashModuleSource(tmpdir, fetchPath, version)
+}
+
+// hashModuleSource NAR-hashes the extracted module source tree under
+// gomodcache (i.e. <escapedPath>@<escapedVersion>/), not the whole
+// GOMODCACHE. The cache/ subtree (download/*.info, vcs/ bare clones) is
+// proxy-specific — `direct` adds an Origin block to .info and a full git
+// clone under cache/vcs/ — so hashing it makes lockfiles non-reproducible
+// across GOPROXY values. The source tree alone is what fetchGoModule emits
+// and what the dag builder consumes, so the hash covers exactly that.
+func hashModuleSource(gomodcache, fetchPath, version string) (string, error) {
+	ep, err := module.EscapePath(fetchPath)
+	if err != nil {
+		return "", fmt.Errorf("escape path %q: %w", fetchPath, err)
+	}
+	ev, err := module.EscapeVersion(version)
+	if err != nil {
+		return "", fmt.Errorf("escape version %q: %w", version, err)
+	}
+	return narHashPath(filepath.Join(gomodcache, ep+"@"+ev))
 }
 
 func narHashPath(path string) (string, error) {
