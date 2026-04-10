@@ -1205,7 +1205,6 @@ func generateModinfo(cfg Config, sorted []*ResolvedPkg, mainPath, defaultGODEBUG
 	}
 	settings := buildinfo.BuildSettings{
 		BuildMode:      cfg.buildMode,
-		LDFlags:        cfg.LDFlags,
 		Tags:           cfg.Tags,
 		DefaultGODEBUG: defaultGODEBUG,
 		CGOEnabled:     cgoEnabled,
