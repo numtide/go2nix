@@ -73,11 +73,11 @@ else
           || { echo "FAIL: missing 'build $key' in go version -m output"; exit 1; }
       done
 
-      echo "=== Asserting modinfo contains dep lines (lockfile mode) ==="
+      echo "=== Asserting modinfo records only modules linked into THIS binary ==="
+      # main.go → internal/greeter; testify is imported only from
+      # greeter_test.go. `go build` would record zero deps here.
       ndeps=$(grep -cE '^[[:space:]]+dep[[:space:]]' buildinfo.txt || true)
-      [ "$ndeps" -ge 1 ] || { echo "FAIL: expected >= 1 dep lines, got $ndeps"; exit 1; }
-      grep -E '^[[:space:]]+dep[[:space:]]+github\.com/stretchr/testify[[:space:]]' buildinfo.txt \
-        || { echo "FAIL: expected dep github.com/stretchr/testify"; exit 1; }
+      [ "$ndeps" -eq 0 ] || { echo "FAIL: expected 0 dep lines (testify is test-only), got $ndeps"; exit 1; }
 
       echo "PASS: testify-basic" > $out
     ''

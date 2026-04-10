@@ -128,17 +128,13 @@ type LinkManifest struct {
 	SubPackages           []LinkSubPackage  `json:"subPackages"`
 	ModuleRoot            string            `json:"moduleRoot"`
 	Lockfile              *string           `json:"lockfile"`
-	// Modules is the resolved third-party module set, threaded straight
-	// from the Nix build graph so debug.BuildInfo.Deps is populated
-	// regardless of whether a lockfile is in use.
-	Modules    []ManifestModule `json:"modules,omitempty"`
-	Pname      string           `json:"pname"`
-	GOOS       *string          `json:"goos"`
-	GOARCH     *string          `json:"goarch"`
-	LDFlags    []string         `json:"ldflags"`
-	GCFlags    []string         `json:"gcflags"`
-	Tags       []string         `json:"tags"`
-	PGOProfile *string          `json:"pgoProfile"`
+	Pname                 string            `json:"pname"`
+	GOOS                  *string           `json:"goos"`
+	GOARCH                *string           `json:"goarch"`
+	LDFlags               []string          `json:"ldflags"`
+	GCFlags               []string          `json:"gcflags"`
+	Tags                  []string          `json:"tags"`
+	PGOProfile            *string           `json:"pgoProfile"`
 }
 
 // ManifestModule is one third-party module in a LinkManifest, used to
@@ -154,6 +150,10 @@ type ManifestModule struct {
 type LinkSubPackage struct {
 	Path  string         `json:"path"`
 	Files *ManifestFiles `json:"files,omitempty"`
+	// Modules is this binary's transitive third-party module closure,
+	// threaded from the Nix build graph so debug.BuildInfo.Deps records
+	// only modules actually linked into this binary (matching `go build`).
+	Modules []ManifestModule `json:"modules,omitempty"`
 }
 
 // LoadLinkManifest reads and validates a link manifest from path.
