@@ -121,6 +121,12 @@ func linkBinary(manifestPath, output string) error {
 		return fmt.Errorf("getting Go version: %w", err)
 	}
 
+	// GOFIPS140 reaches this drv via the scope-level goEnv merge into env
+	// (nix/dag), the same way it reaches stdlib's `go install std`. Read
+	// directly: when unset os.Getenv returns "" (Fips140Enabled = false),
+	// and the link drv's hash already varies with goEnv.
+	goFips140 := os.Getenv("GOFIPS140")
+
 	// DefaultGODEBUG depends on per-main-package //go:debug source
 	// directives, so it (and the BuildSettings that carry it) is computed
 	// inside the SubPackages loop. Everything else is invariant.
@@ -129,6 +135,7 @@ func linkBinary(manifestPath, output string) error {
 		Tags:       strings.Join(m.Tags, ","),
 		CGOEnabled: compile.GoEnvVar("CGO_ENABLED"),
 		GOARCH:     goarch,
+		GOFIPS140:  goFips140,
 		GOOS:       goos,
 	}
 	if key := buildinfo.ArchLevelVar(goarch); key != "" {
@@ -218,7 +225,7 @@ func linkBinary(manifestPath, output string) error {
 		}
 
 		srcDirectives := buildinfo.ParseSourceGodebugs(&bctx, srcdir)
-		godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot, srcDirectives)
+		godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot, srcDirectives, goFips140)
 		settings.DefaultGODEBUG = godebugDefault
 
 		slog.Info("compiling main", "pkg", importpath)
@@ -279,6 +286,13 @@ func linkBinary(manifestPath, output string) error {
 		// GODEBUG default.
 		if godebugDefault != "" {
 			linkFlags = append(linkFlags, "-X=runtime.godebugDefault="+godebugDefault)
+		}
+
+		// cmd/go passes -fipso so the linker writes a copy of the FIPS
+		// object file (cmd/go/internal/work/gc.go:607-609). The file is
+		// only used for `go build -work` inspection; we discard it.
+		if buildinfo.Fips140Enabled(goFips140) {
+			linkFlags = append(linkFlags, "-fipso", filepath.Join(tmpDir, "fips.o"))
 		}
 
 		// Per-binary modinfo: BuildInfo.Path must be the main package's

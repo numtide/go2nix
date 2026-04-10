@@ -108,6 +108,24 @@ func TestBuildSettingsMatchCmdGo(t *testing.T) {
 	if strings.Join(gotKeys, ",") != strings.Join(want, ",") {
 		t.Errorf("build setting keys diverge from cmd/go setBuildInfo (under -trimpath):\n  got:  %v\n  want: %v", gotKeys, want)
 	}
+
+	// With GOFIPS140 enabled it appears between GOARCH and GOOS
+	// (cmd/go/internal/load/pkg.go:2477); "off" or "" must omit it.
+	gotFips := BuildSettings{GOARCH: "amd64", GOFIPS140: "latest", GOOS: "linux"}.toDebugSettings()
+	var fipsKeys []string
+	for _, s := range gotFips {
+		fipsKeys = append(fipsKeys, s.Key)
+	}
+	if strings.Join(fipsKeys, ",") != "-compiler,-trimpath,GOARCH,GOFIPS140,GOOS" {
+		t.Errorf("GOFIPS140 position diverges from cmd/go: got %v", fipsKeys)
+	}
+	for _, v := range []string{"", "off"} {
+		for _, s := range (BuildSettings{GOFIPS140: v}).toDebugSettings() {
+			if s.Key == "GOFIPS140" {
+				t.Errorf("GOFIPS140=%q must be omitted from build settings", v)
+			}
+		}
+	}
 	// Upstream omits -ldflags/-gcflags/-asmflags under -trimpath
 	// (go.dev/issue/52372); never reintroduce.
 	for _, k := range gotKeys {

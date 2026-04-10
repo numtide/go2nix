@@ -128,8 +128,10 @@ var godebugTable = []godebugEntry{
 // are //go:debug directives parsed from the main package's source files
 // (see ParseSourceGodebugs); they are applied after go.mod's godebug lines
 // so a source-file directive overrides a go.mod one for the same key,
-// including default=.
-func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug) string {
+// including default=. goFips140 is the GOFIPS140 build setting; when
+// Fips140Enabled, fips140=on is added with lower precedence than go.mod
+// and source directives (cmd/go/internal/load/godebug.go:68).
+func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug, goFips140 string) string {
 	goModPath := filepath.Join(moduleRoot, "go.mod")
 	data, err := os.ReadFile(goModPath)
 	if err != nil {
@@ -185,6 +187,12 @@ func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug) string {
 		if minor < entry.Changed {
 			m[entry.Name] = entry.Old
 		}
+	}
+
+	// GOFIPS140 != off implies fips140=on, with lower precedence than go.mod
+	// and source directives (which are applied next), matching upstream.
+	if Fips140Enabled(goFips140) {
+		m["fips140"] = "on"
 	}
 
 	// Apply explicit non-default directives on top.
