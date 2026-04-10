@@ -114,6 +114,19 @@ struct LocalPkgData {
     files: PkgFiles,
 }
 
+/// Raw local package data collected during a parse pass; imports are
+/// classified into local vs third-party after the full set is known.
+struct RawLocalPkg {
+    import_path: String,
+    dir: String,
+    imports: Vec<String>,
+    cgo_pkg_config: Vec<String>,
+    cgo_cflags: Vec<String>,
+    cgo_ldflags: Vec<String>,
+    is_cgo: bool,
+    files: PkgFiles,
+}
+
 /// Per-package source file lists as reported by `go list`, threaded through
 /// to the compile manifest so build-time can skip its own discovery pass.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -353,7 +366,7 @@ fn run_go_list_test(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
     cmd.arg("-deps");
     cmd.arg("-test");
     cmd.arg("-e");
@@ -388,13 +401,21 @@ fn run_go_list_test(
     Ok(output.stdout)
 }
 
-pub(crate) fn parse_test_packages(
+struct TestPassResult {
+    test_packages: Vec<PkgData>,
+    test_local_packages: Vec<LocalPkgData>,
+}
+
+fn parse_test_packages(
     stdout: &[u8],
     third_party_paths: &BTreeSet<String>,
+    local_paths: &BTreeSet<String>,
     replacements: &mut BTreeMap<String, (String, String)>,
-) -> Result<Vec<PkgData>> {
+) -> Result<TestPassResult> {
     let mut test_packages = Vec::new();
     let mut test_only_paths = BTreeSet::new();
+    let mut test_local_paths = BTreeSet::new();
+    let mut raw_test_locals: Vec<RawLocalPkg> = Vec::new();
     let mut pkg_errors = Vec::new();
 
     for result in serde_json::Deserializer::from_slice(stdout).into_iter::<GoPackage>() {
@@ -422,9 +443,27 @@ pub(crate) fn parse_test_packages(
 
         let (replace_path, replace_version) = extract_replace(&module);
 
-        // Skip local packages (main module or local replaces).
+        // Local = main module or filesystem-path replace.
         let is_local = module.main || (!replace_path.is_empty() && replace_version.is_empty());
         if is_local {
+            // Skip locals already in the build graph; collect the rest as
+            // test-only locals (e.g. an internal/testutil only imported
+            // from *_test.go files).
+            if local_paths.contains(&jpkg.import_path)
+                || !test_local_paths.insert(jpkg.import_path.clone())
+            {
+                continue;
+            }
+            raw_test_locals.push(RawLocalPkg {
+                import_path: jpkg.import_path,
+                dir: jpkg.dir,
+                imports: jpkg.imports,
+                cgo_pkg_config: jpkg.cgo_pkg_config,
+                cgo_cflags: jpkg.cgo_cflags,
+                cgo_ldflags: jpkg.cgo_ldflags,
+                is_cgo: !jpkg.cgo_files.is_empty(),
+                files,
+            });
             continue;
         }
 
@@ -477,7 +516,38 @@ pub(crate) fn parse_test_packages(
         );
     }
 
-    Ok(test_packages)
+    // Classify test-only-local imports against the union of build-graph and
+    // test-pass package sets, mirroring parse_go_packages.
+    let test_local_packages: Vec<LocalPkgData> = raw_test_locals
+        .into_iter()
+        .map(|raw| {
+            let mut local_imports = Vec::new();
+            let mut third_party_imports = Vec::new();
+            for imp in &raw.imports {
+                if local_paths.contains(imp) || test_local_paths.contains(imp) {
+                    local_imports.push(imp.clone());
+                } else if third_party_paths.contains(imp) || test_only_paths.contains(imp) {
+                    third_party_imports.push(imp.clone());
+                }
+            }
+            LocalPkgData {
+                import_path: raw.import_path,
+                dir: raw.dir,
+                local_imports,
+                third_party_imports,
+                cgo_pkg_config: raw.cgo_pkg_config,
+                cgo_cflags: raw.cgo_cflags,
+                cgo_ldflags: raw.cgo_ldflags,
+                is_cgo: raw.is_cgo,
+                files: raw.files,
+            }
+        })
+        .collect();
+
+    Ok(TestPassResult {
+        test_packages,
+        test_local_packages,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +558,7 @@ pub(crate) struct PackageGraph {
     packages: Vec<PkgData>,
     local_packages: Vec<LocalPkgData>,
     third_party_paths: BTreeSet<String>,
+    local_paths: BTreeSet<String>,
     replacements: BTreeMap<String, (String, String)>,
     module_path: String,
     /// Main module's `go` directive (major.minor), threaded to local
@@ -495,6 +566,7 @@ pub(crate) struct PackageGraph {
     /// filtered srcDir lacks `go.mod` — match `go build` semantics.
     go_version: String,
     test_packages: Vec<PkgData>,
+    test_local_packages: Vec<LocalPkgData>,
     test_only_paths: BTreeSet<String>,
 }
 
@@ -532,19 +604,6 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
     let mut replacements: BTreeMap<String, (String, String)> = BTreeMap::new();
     let mut module_path = String::new();
     let mut go_version = String::new();
-
-    // Raw local package data collected during first pass; imports are
-    // classified into local vs third-party after the loop.
-    struct RawLocalPkg {
-        import_path: String,
-        dir: String,
-        imports: Vec<String>,
-        cgo_pkg_config: Vec<String>,
-        cgo_cflags: Vec<String>,
-        cgo_ldflags: Vec<String>,
-        is_cgo: bool,
-        files: PkgFiles,
-    }
     let mut raw_local_pkgs: Vec<RawLocalPkg> = Vec::new();
 
     for result in serde_json::Deserializer::from_slice(stdout).into_iter::<GoPackage>() {
@@ -666,10 +725,12 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         packages,
         local_packages,
         third_party_paths,
+        local_paths,
         replacements,
         module_path,
         go_version,
         test_packages: Vec::new(),
+        test_local_packages: Vec::new(),
         test_only_paths: BTreeSet::new(),
     })
 }
@@ -780,13 +841,19 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
 
         let test_stdout = run_go_list_test(go_bin, &input.src, &local_ips, &opts)?;
 
-        let test_pkgs = parse_test_packages(
+        let tp = parse_test_packages(
             &test_stdout,
             &graph.third_party_paths,
+            &graph.local_paths,
             &mut graph.replacements,
         )?;
-        graph.test_only_paths = test_pkgs.iter().map(|p| p.import_path.clone()).collect();
-        graph.test_packages = test_pkgs;
+        graph.test_only_paths = tp
+            .test_packages
+            .iter()
+            .map(|p| p.import_path.clone())
+            .collect();
+        graph.test_packages = tp.test_packages;
+        graph.test_local_packages = tp.test_local_packages;
     }
 
     Ok(graph)
@@ -823,6 +890,12 @@ struct JsonOutput {
     go_version: String,
     replacements: BTreeMap<String, JsonReplacement>,
     test_packages: BTreeMap<String, JsonPkg>,
+    /// Local packages reachable only from `*_test.go` imports. Same shape as
+    /// `local_packages`; the dag builder unions them in when `doCheck` so the
+    /// testrunner has `.a` archives for testutil-style helpers. Omitted when
+    /// empty so callers without test-only locals see an unchanged JSON shape.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    test_local_packages: BTreeMap<String, JsonLocalPkg>,
     /// NAR hashes for modules, keyed by "path@version".
     /// Only populated when resolveHashes is true.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -909,9 +982,7 @@ pub(crate) fn package_graph_to_json(
         })
         .collect();
 
-    // Build local_packages map.
-    let mut local_packages = BTreeMap::new();
-    for lp in &graph.local_packages {
+    let to_json_local = |lp: &LocalPkgData| -> Result<(String, JsonLocalPkg)> {
         let canon_dir = std::fs::canonicalize(&lp.dir)
             .with_context(|| format!("failed to canonicalize local package dir: {}", lp.dir))?;
         let rel = canon_dir.strip_prefix(&canon_src).with_context(|| {
@@ -927,7 +998,7 @@ pub(crate) fn package_graph_to_json(
         } else {
             rel_str.into_owned()
         };
-        local_packages.insert(
+        Ok((
             lp.import_path.clone(),
             JsonLocalPkg {
                 dir,
@@ -939,8 +1010,19 @@ pub(crate) fn package_graph_to_json(
                 cgo_ldflags: lp.cgo_ldflags.clone(),
                 files: lp.files.clone(),
             },
-        );
-    }
+        ))
+    };
+
+    let local_packages: BTreeMap<String, JsonLocalPkg> = graph
+        .local_packages
+        .iter()
+        .map(to_json_local)
+        .collect::<Result<_>>()?;
+    let test_local_packages: BTreeMap<String, JsonLocalPkg> = graph
+        .test_local_packages
+        .iter()
+        .map(to_json_local)
+        .collect::<Result<_>>()?;
 
     let replacements = graph
         .replacements
@@ -995,6 +1077,7 @@ pub(crate) fn package_graph_to_json(
         go_version: graph.go_version.clone(),
         replacements,
         test_packages,
+        test_local_packages,
         module_hashes,
     };
 
@@ -1274,6 +1357,11 @@ mod tests {
 
     // --- parse_test_packages ---
 
+    fn ptp(input: &str, third_party: &BTreeSet<String>, locals: &BTreeSet<String>) -> TestPassResult {
+        let mut replacements = BTreeMap::new();
+        parse_test_packages(input.as_bytes(), third_party, locals, &mut replacements).unwrap()
+    }
+
     #[test]
     fn test_parse_skips_build_graph_packages() {
         let mut third_party = BTreeSet::new();
@@ -1284,28 +1372,21 @@ mod tests {
             "github.com/already/known",
             "v1.0.0",
         );
-        let mut replacements = BTreeMap::new();
-        let result =
-            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
-        assert!(result.is_empty());
+        let r = ptp(&input, &third_party, &BTreeSet::new());
+        assert!(r.test_packages.is_empty());
+        assert!(r.test_local_packages.is_empty());
     }
 
     #[test]
     fn test_parse_collects_test_only() {
-        let third_party = BTreeSet::new(); // empty build graph
-
         let input = third_party_json("github.com/testify", "github.com/testify", "v1.9.0");
-        let mut replacements = BTreeMap::new();
-        let result =
-            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].import_path, "github.com/testify");
+        let r = ptp(&input, &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(r.test_packages.len(), 1);
+        assert_eq!(r.test_packages[0].import_path, "github.com/testify");
     }
 
     #[test]
     fn test_parse_skips_synthetic_packages() {
-        let third_party = BTreeSet::new();
-
         let input = [
             // Synthetic test main
             third_party_json("example.com/pkg.test", "example.com/pkg", ""),
@@ -1316,40 +1397,57 @@ mod tests {
         ]
         .join("\n");
 
-        let mut replacements = BTreeMap::new();
-        let result =
-            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].import_path, "github.com/testify");
+        let r = ptp(&input, &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(r.test_packages.len(), 1);
+        assert_eq!(r.test_packages[0].import_path, "github.com/testify");
+        assert!(r.test_local_packages.is_empty());
     }
 
     #[test]
-    fn test_parse_skips_local_packages() {
-        let third_party = BTreeSet::new();
-        let input = local_pkg_json("example.com/m/internal/x", "example.com/m", "/src/x", &[]);
-        let mut replacements = BTreeMap::new();
-        let result =
-            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
-        assert!(result.is_empty());
+    fn test_parse_collects_test_only_local() {
+        let mut locals = BTreeSet::new();
+        locals.insert("example.com/m/internal/app".to_owned());
+        let input = [
+            // Already in build graph: skipped.
+            local_pkg_json("example.com/m/internal/app", "example.com/m", "/src/app", &[]),
+            // Test-only local importing build-graph local + test-only third-party.
+            local_pkg_json(
+                "example.com/m/internal/testutil",
+                "example.com/m",
+                "/src/testutil",
+                &["example.com/m/internal/app", "github.com/testify", "fmt"],
+            ),
+            // Test-only third-party.
+            third_party_json("github.com/testify", "github.com/testify", "v1.9.0"),
+        ]
+        .join("\n");
+
+        let r = ptp(&input, &BTreeSet::new(), &locals);
+        assert_eq!(r.test_packages.len(), 1);
+        assert_eq!(r.test_local_packages.len(), 1);
+        let lp = &r.test_local_packages[0];
+        assert_eq!(lp.import_path, "example.com/m/internal/testutil");
+        assert_eq!(lp.dir, "/src/testutil");
+        assert_eq!(lp.local_imports, vec!["example.com/m/internal/app"]);
+        assert_eq!(lp.third_party_imports, vec!["github.com/testify"]);
     }
 
     #[test]
     fn test_parse_deduplicates() {
-        let third_party = BTreeSet::new();
         let input = [
             third_party_json("github.com/dup", "github.com/dup", "v1.0.0"),
             third_party_json("github.com/dup", "github.com/dup", "v1.0.0"),
+            local_pkg_json("example.com/m/x", "example.com/m", "/src/x", &[]),
+            local_pkg_json("example.com/m/x", "example.com/m", "/src/x", &[]),
         ]
         .join("\n");
-        let mut replacements = BTreeMap::new();
-        let result =
-            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
-        assert_eq!(result.len(), 1);
+        let r = ptp(&input, &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(r.test_packages.len(), 1);
+        assert_eq!(r.test_local_packages.len(), 1);
     }
 
     #[test]
     fn test_parse_collects_test_replacements() {
-        let third_party = BTreeSet::new();
         let input = replaced_json(
             "github.com/test/dep",
             "github.com/test/dep",
@@ -1358,9 +1456,14 @@ mod tests {
             "v1.1.0",
         );
         let mut replacements = BTreeMap::new();
-        let result =
-            parse_test_packages(input.as_bytes(), &third_party, &mut replacements).unwrap();
-        assert_eq!(result.len(), 1);
+        let r = parse_test_packages(
+            input.as_bytes(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &mut replacements,
+        )
+        .unwrap();
+        assert_eq!(r.test_packages.len(), 1);
         let (path, _) = &replacements["github.com/test/dep@v1.1.0"];
         assert_eq!(path, "github.com/fork/dep");
     }

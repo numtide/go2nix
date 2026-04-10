@@ -463,6 +463,16 @@ let
   #   - Cross-app sharing: same local package in two apps = same derivation
   #   - Fine-grained rebuilds: changing internal/db doesn't rebuild internal/web
 
+  # Union of build-graph local packages and (under doCheck) test-only local
+  # packages: helpers like internal/testutil that are only imported from
+  # *_test.go files. They share the same compile machinery so the testrunner
+  # has .a archives for them. testLocalPackages is omitted from the plugin
+  # output when empty, so this is a no-op (and hash-neutral) for projects
+  # without such packages.
+  allLocalPkgInfo =
+    goPackagesResult.localPackages
+    // lib.optionalAttrs doCheck (goPackagesResult.testLocalPackages or { });
+
   # O(1) "is this rel-dir a local package?" lookup, used to exclude
   # nested packages from a parent's pkgSrc — without this, touching
   # internal/store/ring.go invalidates the parent main package
@@ -474,7 +484,7 @@ let
     lib.mapAttrsToList (_: p: {
       name = p.dir;
       value = true;
-    }) goPackagesResult.localPackages
+    }) allLocalPkgInfo
   );
 
   # Main module's go directive (major.minor). Threaded explicitly to every
@@ -517,10 +527,12 @@ let
 
       srcDir = "${pkgSrc}";
 
-      # Dependencies: other local packages + third-party packages.
+      # Dependencies: other local packages + third-party packages. Test-only
+      # locals can import test-only third-party deps, hence the testPackages
+      # fallback.
       deps =
         map (imp: localPackages.${imp}) pkg.localImports
-        ++ map (imp: packages.${imp}) pkg.thirdPartyImports;
+        ++ map (imp: packages.${imp} or testPackages.${imp}) pkg.thirdPartyImports;
 
       # CGO handling: same pattern as third-party packages.
       isCgo = pkg.isCgo or false;
@@ -584,7 +596,7 @@ let
         goVersion = localGoVersion;
       };
     }
-  ) goPackagesResult.localPackages;
+  ) allLocalPkgInfo;
 
   # --- Importcfg bundle: aggregates all packages into one derivation ---
   # Instead of passing N packages as direct buildInputs to the link derivation,

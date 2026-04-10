@@ -1,8 +1,7 @@
-# Test: default mode with test-only local package (testutil helper).
-# NOTE: doCheck is disabled because test-only local packages are not yet
-# included in goLocalArchives/testDepsImportcfg. The build itself works;
-# enabling doCheck requires plugin + DAG builder changes to handle
-# local packages only reachable from test import graphs.
+# Test: default mode with a test-only local package (internal/testutil
+# is only imported from internal/app/app_test.go). doCheck exercises the
+# plugin's testLocalPackages output and the dag builder's union of those
+# into localPackages so the testrunner has an .a archive for the helper.
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -17,5 +16,5 @@ goEnv.buildGoApplication {
   version = "0.0.1";
   src = ./.;
   goLock = ./go2nix.toml;
-  doCheck = false; # TODO: enable once test-only local packages are supported
+  doCheck = true;
 }
