@@ -48,7 +48,14 @@ type BuildSettings struct {
 	CGOEnabled     string // "0" or "1"
 	GOARCH         string
 	GOARCHLevel    string // value of GO<ARCH> (e.g., "v1" for GOAMD64); key derived from GOARCH
+	GOFIPS140      string // emitted only when Fips140Enabled
 	GOOS           string
+}
+
+// Fips140Enabled reports whether v (a GOFIPS140 value) enables FIPS mode,
+// mirroring cmd/go/internal/fips140.Enabled: anything besides "" or "off".
+func Fips140Enabled(v string) bool {
+	return v != "" && v != "off"
 }
 
 // archLevelVar maps GOARCH to the GO<ARCH> environment variable name,
@@ -89,6 +96,9 @@ func (s BuildSettings) toDebugSettings() []debug.BuildSetting {
 	}
 	if s.GOARCH != "" {
 		add("GOARCH", s.GOARCH)
+	}
+	if Fips140Enabled(s.GOFIPS140) {
+		add("GOFIPS140", s.GOFIPS140)
 	}
 	if s.GOOS != "" {
 		add("GOOS", s.GOOS)

@@ -70,7 +70,8 @@ func runModinfoCmd(args []string) {
 		srcDir = moduleRoot
 	}
 	srcDirectives := buildinfo.ParseSourceGodebugs(nil, srcDir)
-	godebug := buildinfo.DefaultGODEBUG(moduleRoot, srcDirectives)
+	goFips140 := compile.GoEnvVar("GOFIPS140")
+	godebug := buildinfo.DefaultGODEBUG(moduleRoot, srcDirectives, goFips140)
 
 	goos := compile.GoEnvVar("GOOS")
 	goarch := compile.GoEnvVar("GOARCH")
@@ -79,6 +80,7 @@ func runModinfoCmd(args []string) {
 		DefaultGODEBUG: godebug,
 		CGOEnabled:     compile.GoEnvVar("CGO_ENABLED"),
 		GOARCH:         goarch,
+		GOFIPS140:      goFips140,
 		GOOS:           goos,
 	}
 	if key := buildinfo.ArchLevelVar(goarch); key != "" {

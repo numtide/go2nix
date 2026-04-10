@@ -105,6 +105,9 @@
           test-fixture-lang-loopvar = callPkgWith ./packages/test-fixture-lang-loopvar/default.nix {
             inherit flake system;
           };
+          test-fixture-fips140-latest = callPkgWith ./packages/test-fixture-fips140-latest/default.nix {
+            inherit flake system;
+          };
           test-fixture-testmain-badsig = callPkgWith ./tests/nix/testmain_badsig_test.nix {
             inherit flake system;
           };
