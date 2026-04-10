@@ -12,6 +12,7 @@ import (
 func runGenTestMainCmd(args []string) {
 	fs := flag.NewFlagSet("generate-test-main", flag.ExitOnError)
 	importPath := fs.String("import-path", "", "import path of the package under test")
+	modulePath := fs.String("module-path", "", "module path of the main module (for testdeps.ModulePath)")
 	testFiles := fs.String("test-files", "", "comma-separated absolute paths to internal _test.go files")
 	xtestFiles := fs.String("xtest-files", "", "comma-separated absolute paths to external _test.go files")
 	output := fs.String("output", "", "output file path (default: stdout)")
@@ -24,6 +25,7 @@ func runGenTestMainCmd(args []string) {
 
 	opts := testmain.Options{
 		ImportPath: *importPath,
+		ModulePath: *modulePath,
 	}
 	if *testFiles != "" {
 		opts.TestGoFiles = strings.Split(*testFiles, ",")

@@ -63,6 +63,11 @@ func (o Options) tagsList() []string {
 
 // Run discovers testable packages and runs their tests.
 func Run(opts Options) error {
+	modulePath, err := localpkgs.ModulePath(opts.ModuleRoot)
+	if err != nil {
+		return err
+	}
+
 	pkgs, err := localpkgs.ListLocalPackages(opts.ModuleRoot, opts.Tags, compile.ToolchainVersion())
 	if err != nil {
 		return fmt.Errorf("listing local packages: %w", err)
@@ -126,7 +131,7 @@ func Run(opts Options) error {
 	}
 
 	for _, p := range testable {
-		if err := runPackageTests(opts, p, pkgMap); err != nil {
+		if err := runPackageTests(opts, modulePath, p, pkgMap); err != nil {
 			return fmt.Errorf("testing %s: %w", p.ImportPath, err)
 		}
 	}
@@ -232,7 +237,7 @@ func affectedLocalDeps(targetPkg string, xtestLocalImports []string, pkgMap map[
 	})
 }
 
-func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*localpkgs.LocalPkg) error {
+func runPackageTests(opts Options, modulePath string, pkg *localpkgs.LocalPkg, pkgMap map[string]*localpkgs.LocalPkg) error {
 	slog.Info("testing", "pkg", pkg.ImportPath)
 
 	testDir := filepath.Join(opts.TrimPath, "test-"+sanitize(pkg.ImportPath))
@@ -450,6 +455,7 @@ func runPackageTests(opts Options, pkg *localpkgs.LocalPkg, pkgMap map[string]*l
 	}
 	src, err := testmain.Generate(testmain.Options{
 		ImportPath:   pkg.ImportPath,
+		ModulePath:   modulePath,
 		TestGoFiles:  testFiles,
 		XTestGoFiles: xtestFiles,
 	})

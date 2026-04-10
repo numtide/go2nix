@@ -81,6 +81,15 @@ func (p *LocalPkg) ResolveEmbeds() error {
 	return nil
 }
 
+// ModulePath returns the module path declared in root/go.mod.
+func ModulePath(root string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return "", fmt.Errorf("reading go.mod: %w", err)
+	}
+	return modfile.ModulePath(data), nil
+}
+
 // ListLocalPackages discovers all local packages under root (the directory
 // containing go.mod) and returns them in topological dependency order.
 //
