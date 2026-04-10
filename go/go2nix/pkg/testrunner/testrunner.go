@@ -67,6 +67,14 @@ func Run(opts Options) error {
 		pkgMap[p.ImportPath] = p
 	}
 
+	inScope := func(ip string) bool {
+		if opts.LocalArchives == nil {
+			return true
+		}
+		_, ok := opts.LocalArchives[ip]
+		return ok
+	}
+
 	// Filter to packages with test files that are inside the build's
 	// resolved scope (see Options.LocalArchives).
 	var testable []*localpkgs.LocalPkg
@@ -75,12 +83,10 @@ func Run(opts Options) error {
 		if len(p.TestGoFiles) == 0 && len(p.XTestGoFiles) == 0 {
 			continue
 		}
-		if opts.LocalArchives != nil {
-			if _, ok := opts.LocalArchives[p.ImportPath]; !ok {
-				slog.Debug("skipping testable package outside subPackages closure", "pkg", p.ImportPath)
-				skipped++
-				continue
-			}
+		if !inScope(p.ImportPath) {
+			slog.Debug("skipping testable package outside subPackages closure", "pkg", p.ImportPath)
+			skipped++
+			continue
 		}
 		testable = append(testable, p)
 	}
@@ -90,6 +96,22 @@ func Run(opts Options) error {
 		return nil
 	}
 	slog.Info("testable packages", "count", len(testable), "skipped", skipped)
+
+	// Resolve //go:embed patterns now, only for packages in scope. Doing this
+	// after the LocalArchives filter means an out-of-scope package whose
+	// embed targets are absent from mainSrc (e.g. supplied at build time
+	// via srcOverlay, or filtered from the source closure) cannot fail the
+	// run. The recompileForTest set is the intersection of an in-scope
+	// package's reverse-dep closure and an xtest's forward-dep closure, so
+	// it is itself a subset of LocalArchives.
+	for _, p := range pkgs {
+		if !inScope(p.ImportPath) {
+			continue
+		}
+		if err := p.ResolveEmbeds(); err != nil {
+			return fmt.Errorf("listing local packages: %w", err)
+		}
+	}
 
 	for _, p := range testable {
 		if err := runPackageTests(opts, p, pkgMap); err != nil {
