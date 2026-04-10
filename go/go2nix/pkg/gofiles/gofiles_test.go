@@ -3,6 +3,7 @@ package gofiles
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -189,6 +190,96 @@ func TestResolveEmbedCfg_NoMatches(t *testing.T) {
 	if !strings.Contains(err.Error(), "no matching files found") {
 		t.Errorf("expected 'no matching files found' in error, got: %v", err)
 	}
+}
+
+func TestMergeEmbedCfg(t *testing.T) {
+	a := &EmbedCfg{
+		Patterns: map[string][]string{"data.txt": {"data.txt"}},
+		Files:    map[string]string{"data.txt": "/src/data.txt"},
+	}
+	b := &EmbedCfg{
+		Patterns: map[string][]string{"testdata/*": {"testdata/x.txt"}},
+		Files:    map[string]string{"testdata/x.txt": "/src/testdata/x.txt"},
+	}
+
+	t.Run("both nil", func(t *testing.T) {
+		got, err := MergeEmbedCfg(nil, nil)
+		if err != nil || got != nil {
+			t.Fatalf("got (%v, %v), want (nil, nil)", got, err)
+		}
+	})
+
+	t.Run("a nil", func(t *testing.T) {
+		got, err := MergeEmbedCfg(nil, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, b) {
+			t.Errorf("got %+v, want %+v", got, b)
+		}
+	})
+
+	t.Run("b nil", func(t *testing.T) {
+		got, err := MergeEmbedCfg(a, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, a) {
+			t.Errorf("got %+v, want %+v", got, a)
+		}
+	})
+
+	t.Run("disjoint union", func(t *testing.T) {
+		got, err := MergeEmbedCfg(a, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := &EmbedCfg{
+			Patterns: map[string][]string{
+				"data.txt":   {"data.txt"},
+				"testdata/*": {"testdata/x.txt"},
+			},
+			Files: map[string]string{
+				"data.txt":       "/src/data.txt",
+				"testdata/x.txt": "/src/testdata/x.txt",
+			},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("same key same value ok", func(t *testing.T) {
+		got, err := MergeEmbedCfg(a, a)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !reflect.DeepEqual(got, a) {
+			t.Errorf("got %+v, want %+v", got, a)
+		}
+	})
+
+	t.Run("pattern conflict", func(t *testing.T) {
+		c := &EmbedCfg{
+			Patterns: map[string][]string{"data.txt": {"other.txt"}},
+			Files:    map[string]string{},
+		}
+		_, err := MergeEmbedCfg(a, c)
+		if err == nil || !strings.Contains(err.Error(), "resolves inconsistently") {
+			t.Fatalf("got err=%v, want 'resolves inconsistently'", err)
+		}
+	})
+
+	t.Run("file conflict", func(t *testing.T) {
+		c := &EmbedCfg{
+			Patterns: map[string][]string{},
+			Files:    map[string]string{"data.txt": "/elsewhere/data.txt"},
+		}
+		_, err := MergeEmbedCfg(a, c)
+		if err == nil || !strings.Contains(err.Error(), "maps to both") {
+			t.Fatalf("got err=%v, want 'maps to both'", err)
+		}
+	})
 }
 
 func TestListFiles_LibraryPackage(t *testing.T) {

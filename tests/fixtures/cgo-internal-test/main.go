@@ -8,4 +8,5 @@ import (
 
 func main() {
 	fmt.Println(adder.Add(2, 3))
+	fmt.Println(adder.Banner())
 }
