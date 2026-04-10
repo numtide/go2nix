@@ -50,6 +50,7 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
         in {
           inherit pkgCount localPkgCount testPkgCount;
           modulePath = r.modulePath;
+          goVersion = r.goVersion;
           hasReplMap = builtins.isAttrs r.replacements;
           hasDrvName = builtins.hasAttr \"drvName\" sample;
           hasImports = builtins.hasAttr \"imports\" sample;
@@ -71,6 +72,9 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
 
     modulePath=$(echo "$result" | jq -r .modulePath)
     [ -n "$modulePath" ] || { echo "FAIL: modulePath is empty"; exit 1; }
+
+    goVersion=$(echo "$result" | jq -r .goVersion)
+    [ "$goVersion" = "1.25" ] || { echo "FAIL: goVersion expected 1.25, got '$goVersion'"; exit 1; }
 
     for f in hasReplMap hasDrvName hasImports hasModKey hasSubdir hasLocalDir hasLocalImports hasThirdPartyImports; do
       val=$(echo "$result" | jq -r ".$f")
