@@ -189,8 +189,11 @@ func TestDiscoverInputPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// pkgC: bin only
+	// pkgC: bin + include
 	if err := os.MkdirAll(filepath.Join(pkgC, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(pkgC, "include"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -213,12 +216,46 @@ func TestDiscoverInputPaths(t *testing.T) {
 			pkgA+"/lib/pkgconfig", pkgB+"/lib/pkgconfig")
 	}
 
+	// IncludeDirs: pkgC/include only
+	if len(result.IncludeDirs) != 1 || result.IncludeDirs[0] != pkgC+"/include" {
+		t.Errorf("IncludeDirs = %v, want [%s]", result.IncludeDirs, pkgC+"/include")
+	}
+
+	// LibDirs: pkgA/lib, pkgB/lib (both have lib/ via lib/pkgconfig/)
+	if len(result.LibDirs) != 2 {
+		t.Fatalf("expected 2 LibDirs, got %d: %v", len(result.LibDirs), result.LibDirs)
+	}
+	if result.LibDirs[0] != pkgA+"/lib" || result.LibDirs[1] != pkgB+"/lib" {
+		t.Errorf("LibDirs = %v, want [%s %s]", result.LibDirs, pkgA+"/lib", pkgB+"/lib")
+	}
+
 	// All: pkgA, pkgB (transitive), pkgC — in walk order
 	if len(result.All) != 3 {
 		t.Fatalf("expected 3 All, got %d: %v", len(result.All), result.All)
 	}
 	if result.All[0] != pkgA || result.All[1] != pkgB || result.All[2] != pkgC {
 		t.Errorf("All = %v, want [%s %s %s]", result.All, pkgA, pkgB, pkgC)
+	}
+}
+
+func TestCCSuffixSalt(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "nix-support"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := `
+        0)
+            export NIX_CC_WRAPPER_TARGET_HOST_aarch64_unknown_linux_gnu=1
+            ;;
+`
+	if err := os.WriteFile(filepath.Join(dir, "nix-support", "setup-hook"), []byte(hook), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ccSuffixSalt(dir); got != "aarch64_unknown_linux_gnu" {
+		t.Errorf("ccSuffixSalt = %q, want aarch64_unknown_linux_gnu", got)
+	}
+	if got := ccSuffixSalt(t.TempDir()); got != "" {
+		t.Errorf("ccSuffixSalt(no setup-hook) = %q, want empty", got)
 	}
 }
 

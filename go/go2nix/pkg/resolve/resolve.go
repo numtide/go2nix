@@ -6,6 +6,7 @@ package resolve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -63,8 +65,15 @@ type Config struct {
 	ccPath string
 	// cxxPath is the full path to the C++ compiler (e.g., /nix/store/xxx/bin/c++).
 	cxxPath string
+	// ccSuffixSalt is the cc-wrapper suffixSalt (e.g. "x86_64_unknown_linux_gnu"),
+	// extracted from ccDir/nix-support/setup-hook so the link drv can set the
+	// salted NIX_LDFLAGS_<salt> directly without running stdenv's setup hook.
+	ccSuffixSalt string
 	// allOverridePaths collects all nativeBuildInputs store paths for the link derivation.
 	allOverridePaths []string
+	// allOverrideLibDirs collects lib/ directories from the transitive override
+	// closure for the link derivation's NIX_LDFLAGS (cgo external linking).
+	allOverrideLibDirs []string
 	// buildMode is "pie" or "exe", determined at Resolve() time from GOOS/GOARCH.
 	buildMode string
 	// goEnv caches the output of `go env -json` for the resolve run.
@@ -87,6 +96,7 @@ func (cfg *Config) prepare() {
 	if ccPath, err := exec.LookPath("cc"); err == nil {
 		cfg.ccPath = ccPath
 		cfg.ccDir = storeDirOf(filepath.Dir(ccPath))
+		cfg.ccSuffixSalt = ccSuffixSalt(cfg.ccDir)
 	}
 	if cxxPath, err := exec.LookPath("c++"); err == nil {
 		cfg.cxxPath = cxxPath
@@ -128,7 +138,9 @@ func Resolve(cfg Config) error {
 	for _, ov := range overrides {
 		allOverrideInputs = append(allOverrideInputs, ov.NativeBuildInputs...)
 	}
-	cfg.allOverridePaths = discoverInputPaths(allOverrideInputs).All
+	allOverrideDiscovered := discoverInputPaths(allOverrideInputs)
+	cfg.allOverridePaths = allOverrideDiscovered.All
+	cfg.allOverrideLibDirs = allOverrideDiscovered.LibDirs
 
 	resolveStart := time.Now()
 
@@ -534,9 +546,11 @@ func setupGOMODCACHE(fodPaths map[string]*storepath.StorePath, lock *lockfile.Lo
 				return err
 			}
 			gomod, err := os.ReadFile(filepath.Join(src, "go.mod"))
-			if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
 				// Modules without a go.mod get the minimal one go mod download writes.
 				gomod = []byte("module " + fetchPath + "\n")
+			} else if err != nil {
+				return err
 			}
 			if err := os.WriteFile(filepath.Join(dlDir, ev+".mod"), gomod, 0o644); err != nil {
 				return err
@@ -1047,6 +1061,16 @@ func buildLinkDrv(
 		if hasCgo {
 			pathParts = append(pathParts, cfg.ccDir+"/bin")
 			drv.AddInputSrc(cfg.ccDir)
+			// Synthesised drvs don't run stdenv's setup hook, so cc-wrapper
+			// never sees the propagated lib/ dirs the way default mode's
+			// stdenv.mkDerivation + overrideNativeBuildInputs does. Set the
+			// salted NIX_LDFLAGS directly — cc-wrapper reads
+			// NIX_LDFLAGS_<suffixSalt> unconditionally and adds each -L to
+			// the external linker invocation.
+			if cfg.ccSuffixSalt != "" && len(cfg.allOverrideLibDirs) > 0 {
+				drv.SetEnv("NIX_LDFLAGS_"+cfg.ccSuffixSalt,
+					"-L"+strings.Join(cfg.allOverrideLibDirs, " -L"))
+			}
 		}
 	}
 	drv.SetEnv("PATH", strings.Join(pathParts, ":"))
@@ -1182,6 +1206,7 @@ type InputPaths struct {
 	BinDirs       []string // directories containing executables (e.g., /nix/store/xxx/bin)
 	PkgConfigDirs []string // directories containing .pc files (e.g., /nix/store/xxx/lib/pkgconfig)
 	IncludeDirs   []string // directories containing headers (for CGO_CFLAGS)
+	LibDirs       []string // directories containing shared libraries (for NIX_LDFLAGS at link time)
 	All           []string // all store paths (including transitive propagated-build-inputs)
 }
 
@@ -1205,6 +1230,9 @@ func discoverInputPaths(storePaths []string) InputPaths {
 		if isDir(p + "/include") {
 			result.IncludeDirs = append(result.IncludeDirs, p+"/include")
 		}
+		if isDir(p + "/lib") {
+			result.LibDirs = append(result.LibDirs, p+"/lib")
+		}
 		if isDir(p + "/lib/pkgconfig") {
 			result.PkgConfigDirs = append(result.PkgConfigDirs, p+"/lib/pkgconfig")
 		}
@@ -1225,6 +1253,26 @@ func discoverInputPaths(storePaths []string) InputPaths {
 		walk(sp)
 	}
 	return result
+}
+
+// ccSuffixSaltRe extracts the cc-wrapper suffixSalt baked into its setup-hook
+// (e.g. NIX_CC_WRAPPER_TARGET_HOST_x86_64_unknown_linux_gnu=1). The salt is
+// targetPlatform.config with - → _, hardcoded at wrapper build time.
+var ccSuffixSaltRe = regexp.MustCompile(`NIX_CC_WRAPPER_TARGET_HOST_([0-9A-Za-z_]+)=1`)
+
+// ccSuffixSalt extracts the cc-wrapper suffixSalt from ccDir/nix-support/setup-hook.
+// Returns "" when the wrapper layout isn't recognised; callers fall back to
+// not setting NIX_LDFLAGS, which is safe (the link will fail loudly on a
+// missing -l rather than silently mis-linking).
+func ccSuffixSalt(ccDir string) string {
+	data, err := os.ReadFile(ccDir + "/nix-support/setup-hook")
+	if err != nil {
+		return ""
+	}
+	if m := ccSuffixSaltRe.FindSubmatch(data); m != nil {
+		return string(m[1])
+	}
+	return ""
 }
 
 // isDir returns true if path exists and is a directory.
