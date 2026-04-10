@@ -124,7 +124,6 @@ func linkBinary(manifestPath, output string) error {
 
 	settings := buildinfo.BuildSettings{
 		BuildMode:      buildMode,
-		LDFlags:        strings.Join(m.LDFlags, " "),
 		Tags:           strings.Join(m.Tags, ","),
 		DefaultGODEBUG: godebugDefault,
 		CGOEnabled:     compile.GoEnvVar("CGO_ENABLED"),

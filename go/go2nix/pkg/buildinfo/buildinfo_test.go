@@ -76,9 +76,44 @@ golang.org/x/crypto v0.17.0/go.mod h1:gCAAfMLgwOJRpTjQ2zCCt2OcSfYMTeZVSRtQlPC7Nq
 			t.Errorf("missing build setting %q in modinfo:\n%s", want, line)
 		}
 	}
-	// LDFlags/DefaultGODEBUG were empty — must be omitted.
-	if strings.Contains(line, "-ldflags") || strings.Contains(line, "DefaultGODEBUG") {
+	// DefaultGODEBUG was empty — must be omitted.
+	if strings.Contains(line, "DefaultGODEBUG") {
 		t.Errorf("empty optional settings should be omitted:\n%s", line)
+	}
+}
+
+// TestBuildSettingsMatchCmdGo locks the exact key set and order against
+// cmd/go/internal/load/pkg.go setBuildInfo for a `go build -trimpath`
+// invocation. Any future drift (extra keys, reordering, or reintroducing
+// -ldflags) fails this golden.
+func TestBuildSettingsMatchCmdGo(t *testing.T) {
+	got := BuildSettings{
+		BuildMode:      "exe",
+		Tags:           "netgo",
+		DefaultGODEBUG: "panicnil=1",
+		CGOEnabled:     "0",
+		GOARCH:         "amd64",
+		GOARCHLevel:    "v1",
+		GOOS:           "linux",
+	}.toDebugSettings()
+
+	want := []string{
+		"-buildmode", "-compiler", "-tags", "-trimpath",
+		"DefaultGODEBUG", "CGO_ENABLED", "GOARCH", "GOOS", "GOAMD64",
+	}
+	var gotKeys []string
+	for _, s := range got {
+		gotKeys = append(gotKeys, s.Key)
+	}
+	if strings.Join(gotKeys, ",") != strings.Join(want, ",") {
+		t.Errorf("build setting keys diverge from cmd/go setBuildInfo (under -trimpath):\n  got:  %v\n  want: %v", gotKeys, want)
+	}
+	// Upstream omits -ldflags/-gcflags/-asmflags under -trimpath
+	// (go.dev/issue/52372); never reintroduce.
+	for _, k := range gotKeys {
+		if k == "-ldflags" || k == "-gcflags" || k == "-asmflags" {
+			t.Errorf("%s must not be emitted: cmd/go omits it under -trimpath", k)
+		}
 	}
 }
 

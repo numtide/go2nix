@@ -36,9 +36,13 @@ type ModDep struct {
 // the binary's modinfo, matching the subset of cmd/go's setBuildInfo that
 // go2nix can determine. Empty string fields are omitted from the output
 // (except -compiler and -trimpath, which are always emitted).
+//
+// -ldflags / -gcflags / -asmflags / CGO_*FLAGS are deliberately absent:
+// go2nix always builds with trimpath semantics, and cmd/go omits these
+// settings under -trimpath because their values can leak system paths
+// (see go.dev/issue/52372 and cmd/go/internal/load/pkg.go setBuildInfo).
 type BuildSettings struct {
 	BuildMode      string // -buildmode (e.g., "exe", "pie")
-	LDFlags        string // -ldflags as a single space-joined string
 	Tags           string // -tags as a comma-separated list
 	DefaultGODEBUG string // from go.mod's go directive
 	CGOEnabled     string // "0" or "1"
@@ -72,9 +76,6 @@ func (s BuildSettings) toDebugSettings() []debug.BuildSetting {
 		add("-buildmode", s.BuildMode)
 	}
 	add("-compiler", "gc")
-	if s.LDFlags != "" {
-		add("-ldflags", s.LDFlags)
-	}
 	if s.Tags != "" {
 		add("-tags", s.Tags)
 	}
@@ -88,12 +89,12 @@ func (s BuildSettings) toDebugSettings() []debug.BuildSetting {
 	}
 	if s.GOARCH != "" {
 		add("GOARCH", s.GOARCH)
-		if key := archLevelVar[s.GOARCH]; key != "" && s.GOARCHLevel != "" {
-			add(key, s.GOARCHLevel)
-		}
 	}
 	if s.GOOS != "" {
 		add("GOOS", s.GOOS)
+	}
+	if key := archLevelVar[s.GOARCH]; key != "" && s.GOARCHLevel != "" {
+		add(key, s.GOARCHLevel)
 	}
 	return out
 }
