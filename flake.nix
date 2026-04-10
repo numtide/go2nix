@@ -130,6 +130,12 @@
           test-fixture-testmain-badsig = callPkgWith ./tests/nix/testmain_badsig_test.nix {
             inherit flake system;
           };
+          test-fixture-mainsrc-replace = callPkgWith ./tests/nix/mainsrc_replace_test.nix {
+            inherit flake system;
+          };
+          test-fixture-nested-module = callPkgWith ./tests/nix/nested_module_test.nix {
+            inherit flake system;
+          };
           test-fixture-torture-app-full = callPkgWith ./packages/test-fixture-torture-app-full/default.nix {
             inherit flake system;
           };
@@ -200,8 +206,6 @@
           golangci-lint-go2nix-testgen = callPkg ./packages/golangci-lint-go2nix-testgen/default.nix;
           check-godebug-table = callPkg ./packages/check-godebug-table/default.nix;
           cross-platform-env = callPkgWith ./tests/nix/cross_platform_test.nix { inherit pkgs; };
-          mainsrc-replace = callPkgWith ./tests/nix/mainsrc_replace_test.nix { inherit pkgs; };
-          nested-module = callPkgWith ./tests/nix/nested_module_test.nix { inherit pkgs; };
           # tests/nix/{helpers,fetch_go_module}_test.nix return `true` or
           # throw. seq forces them at eval time so a failure breaks the
           # check; the runCommand body is just the success marker.

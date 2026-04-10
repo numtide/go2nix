@@ -1101,7 +1101,7 @@ fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
         text.lines()
             .filter_map(|l| {
                 let i = l.find("=>")?;
-                let tgt = l[i + 2..].trim().split_whitespace().next()?;
+                let tgt = l[i + 2..].split_whitespace().next()?;
                 if tgt.starts_with("./") || tgt.starts_with("../") {
                     Some(tgt.to_owned())
                 } else {
@@ -1149,10 +1149,17 @@ fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
     out
 }
 
-/// Walk `src` for every directory containing a `go.mod`; return src-relative
-/// paths (`.` for src itself). Descent does NOT stop at boundaries — the
-/// dag-side filter decides which are nested vs allowed (modRoot/replace dirs).
-fn find_nested_module_roots(src: &Path) -> Vec<String> {
+/// Walk under each `start` directory (src-relative) for go.mod-bearing
+/// subdirectories; return all of them src-relative. Seeds are modRoot plus
+/// the local-replace targets — the only subtrees the dag-side `mainSrc` /
+/// `pkgSrc` filters ever descend into — so a monorepo `src` with
+/// `modRoot != "."` does no I/O outside the relevant module roots.
+///
+/// Descent stops at the first go.mod *strictly below* a seed (matches the
+/// `builtins.path` filter, which rejects a nested-module dir and so never
+/// recurses into it). Seeds themselves always have a go.mod and are
+/// included; the dag-side mainSrc filter exempts allowedDirs explicitly.
+fn find_nested_module_roots(src: &Path, starts: &[String]) -> Vec<String> {
     fn rel_of(src: &Path, p: &Path) -> String {
         let r = p.strip_prefix(src).unwrap_or(p);
         let mut s = String::new();
@@ -1171,11 +1178,22 @@ fn find_nested_module_roots(src: &Path) -> Vec<String> {
         }
     }
 
-    let mut out: Vec<String> = Vec::new();
-    let mut stack: Vec<PathBuf> = vec![src.to_path_buf()];
+    let seed_set: BTreeSet<PathBuf> = starts
+        .iter()
+        .map(|s| if s == "." { src.to_path_buf() } else { src.join(s) })
+        .collect();
+
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    let mut stack: Vec<PathBuf> = seed_set.iter().cloned().collect();
     while let Some(dir) = stack.pop() {
-        if dir.join("go.mod").is_file() {
-            out.push(rel_of(src, &dir));
+        let has_gomod = dir.join("go.mod").is_file();
+        if has_gomod {
+            out.insert(rel_of(src, &dir));
+            // Nested boundary below a seed: stop here, matching the
+            // builtins.path filter's no-descend-on-reject behaviour.
+            if !seed_set.contains(&dir) {
+                continue;
+            }
         }
         let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;
@@ -1194,8 +1212,7 @@ fn find_nested_module_roots(src: &Path) -> Vec<String> {
             stack.push(entry.path());
         }
     }
-    out.sort();
-    out
+    out.into_iter().collect()
 }
 
 /// Convert a `PackageGraph` to a JSON string.
@@ -1308,7 +1325,10 @@ pub(crate) fn package_graph_to_json(
 
     let sub_package_closures = compute_sub_package_closures(graph, &input.sub_packages);
     let local_replace_dirs = walk_local_replace_dirs(&canon_src, &input.mod_root);
-    let nested_module_roots = find_nested_module_roots(&canon_src);
+    let nested_starts: Vec<String> = std::iter::once(normalize_rel(&input.mod_root))
+        .chain(local_replace_dirs.iter().cloned())
+        .collect();
+    let nested_module_roots = find_nested_module_roots(&canon_src, &nested_starts);
 
     let output = JsonOutput {
         packages,
@@ -2081,17 +2101,26 @@ mod tests {
 
     #[test]
     fn test_nested_module_roots() {
+        // Monorepo layout: src/{app,sib,unrelated}/ each has go.mod;
+        // app/nested/ has go.mod; nested/under/ has go.mod (must NOT
+        // be reported — descent stops at app/nested).
         let src = tempfile::tempdir().unwrap();
-        std::fs::write(src.path().join("go.mod"), "module root\n").unwrap();
-        let nested = src.path().join("a/b/nested");
-        std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(nested.join("go.mod"), "module nested\n").unwrap();
-        // testdata is skipped
-        let td = src.path().join("testdata/x");
+        for d in ["app", "app/nested", "app/nested/under", "sib", "unrelated"] {
+            std::fs::create_dir_all(src.path().join(d)).unwrap();
+            std::fs::write(src.path().join(d).join("go.mod"), "module x\n").unwrap();
+        }
+        // testdata under a seed is skipped.
+        let td = src.path().join("app/testdata/x");
         std::fs::create_dir_all(&td).unwrap();
         std::fs::write(td.join("go.mod"), "module td\n").unwrap();
 
-        let roots = find_nested_module_roots(src.path());
-        assert_eq!(roots, vec![".", "a/b/nested"]);
+        // Seeds = modRoot + replaceDirs. unrelated/ is outside both → no I/O.
+        let roots =
+            find_nested_module_roots(src.path(), &["app".into(), "sib".into()]);
+        assert_eq!(roots, vec!["app", "app/nested", "sib"]);
+
+        // modRoot = "." walks the whole src.
+        let roots_all = find_nested_module_roots(src.path(), &[".".into()]);
+        assert_eq!(roots_all, vec!["app", "sib", "unrelated"]);
     }
 }

@@ -6,53 +6,50 @@
 # per-package pkgSrc filters must drop the whole subtree; otherwise touching
 # a nested-module file would invalidate the parent package's compile drv.
 #
-# Eval-only: mainSrc is computed from go.mod parsing alone and does not
-# force goPackagesResult, so this check does not need the plugin.
+# Plugin-wrapped: mainSrc reads goPackagesResult.nestedModuleRoots, so the
+# inner evaluation needs --option plugin-files.
 {
-  lib,
+  flake,
   pkgs,
-  runCommand,
+  system,
+  ...
 }:
-let
-  go2nix = import ../../packages/go2nix { inherit pkgs; };
-  scope = import ../../nix/mk-go-env.nix {
-    inherit (pkgs) go callPackage;
-    inherit go2nix;
-  };
-  app = scope.buildGoApplication {
-    pname = "nested-module-test";
-    version = "0.0.1";
-    src = ../fixtures/modroot-nested;
-    goLock = ../fixtures/modroot-nested/app/go2nix.toml;
-    modRoot = "app";
-  };
-  ms = app.passthru.mainSrc;
-
-  assertions = [
-    {
-      msg = "modRoot's own go.mod must be present";
-      ok = builtins.pathExists "${ms}/app/go.mod";
-    }
-    {
-      msg = "main.go must be present";
-      ok = builtins.pathExists "${ms}/app/main.go";
-    }
-    {
-      msg = "internal/util (a real local package) must be present";
-      ok = builtins.pathExists "${ms}/app/internal/util/util.go";
-    }
-    {
-      msg = "nested-module subtree must NOT be in mainSrc";
-      ok = !(builtins.pathExists "${ms}/app/nested-module");
-    }
-  ];
-
-  failures = lib.filter (a: !a.ok) assertions;
-in
-if failures != [ ] then
-  throw "nested-module-test: ${lib.concatMapStringsSep "; " (a: a.msg) failures}"
-else
-  runCommand "nested-module-test" { } ''
-    echo "nested-module-test: ${toString (lib.length assertions)} assertions passed"
-    touch $out
+if !(flake.packages.${system} ? go2nix-nix-plugin) then
+  pkgs.runCommand "nested-module-test-unsupported" { meta.platforms = pkgs.lib.platforms.linux; } ''
+    echo "nested-module-test requires go2nix-nix-plugin (Linux only)" >&2
+    exit 1
   ''
+else
+  let
+    plugin = flake.packages.${system}.go2nix-nix-plugin;
+    nix = pkgs.nixVersions.nix_2_34;
+    nixpkgsPath = pkgs.path;
+    go2nixSrc = flake;
+  in
+  pkgs.runCommand "nested-module-test"
+    {
+      nativeBuildInputs = [ nix ];
+      requiredSystemFeatures = [ "recursive-nix" ];
+    }
+    ''
+      export HOME=$(mktemp -d)
+      export NIX_CONFIG="extra-experimental-features = nix-command recursive-nix"
+      mkdir -p "$TMPDIR/empty-gmc"
+
+      ms=$(GOMODCACHE="$TMPDIR/empty-gmc" nix-instantiate --eval --read-write-mode --raw \
+        -I nixpkgs=${nixpkgsPath} \
+        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+        -A passthru.mainSrc \
+        ${go2nixSrc}/tests/fixtures/modroot-nested/dag.nix)
+
+      fail=0
+      check() { if ! eval "$1"; then echo "FAIL: $2"; fail=1; else echo "  ok: $2"; fi; }
+
+      check '[ -e "$ms/app/go.mod" ]'             "modRoot's own go.mod must be present"
+      check '[ -e "$ms/app/main.go" ]'            "main.go must be present"
+      check '[ -e "$ms/app/internal/util/util.go" ]' "internal/util (a real local package) must be present"
+      check '[ ! -e "$ms/app/nested-module" ]'    "nested-module subtree must NOT be in mainSrc"
+
+      [ "$fail" -eq 0 ] || exit 1
+      echo "nested-module-test: 4 assertions passed" > $out
+    ''
