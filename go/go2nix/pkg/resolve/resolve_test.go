@@ -1,9 +1,17 @@
 package resolve
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+
+	"github.com/nix-community/go-nix/pkg/storepath"
+	"github.com/numtide/go2nix/pkg/nixdrv"
 )
 
 func TestStoreDirOf(t *testing.T) {
@@ -239,6 +247,176 @@ func TestDiscoverInputPathsCyclic(t *testing.T) {
 	result := discoverInputPaths([]string{pkgX})
 	if len(result.All) != 2 {
 		t.Fatalf("expected 2 All (cycle handled), got %d: %v", len(result.All), result.All)
+	}
+}
+
+// TestLoadGoEnv verifies a single go env -json subprocess yields the keys
+// previously fetched one-by-one via queryGoEnv.
+func TestLoadGoEnv(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go binary not found")
+	}
+	env := loadGoEnv(goBin)
+	for _, k := range []string{"GOOS", "GOARCH", "GOROOT", "GOVERSION"} {
+		if env[k] == "" {
+			t.Errorf("loadGoEnv missing %s", k)
+		}
+	}
+}
+
+// TestTransitiveClosure verifies that only packages reachable from the root
+// are included and that the result is deterministically sorted.
+func TestTransitiveClosure(t *testing.T) {
+	graph := map[string]*ResolvedPkg{
+		"m/cmd/a":  {ImportPath: "m/cmd/a", Name: "main", Imports: []string{"m/lib/x", "fmt"}},
+		"m/cmd/b":  {ImportPath: "m/cmd/b", Name: "main", Imports: []string{"m/lib/y"}},
+		"m/lib/x":  {ImportPath: "m/lib/x", Imports: []string{"m/lib/z", "strings"}},
+		"m/lib/y":  {ImportPath: "m/lib/y", Imports: []string{"m/lib/z"}},
+		"m/lib/z":  {ImportPath: "m/lib/z", Imports: []string{"os"}},
+		"m/unused": {ImportPath: "m/unused", Imports: nil},
+	}
+
+	got := transitiveClosure(graph, graph["m/cmd/a"])
+	var paths []string
+	for _, p := range got {
+		paths = append(paths, p.ImportPath)
+	}
+	want := []string{"m/cmd/a", "m/lib/x", "m/lib/z"}
+	if strings.Join(paths, ",") != strings.Join(want, ",") {
+		t.Fatalf("closure(a) = %v, want %v", paths, want)
+	}
+
+	// cmd/b's closure must not pull in m/lib/x or m/unused.
+	got = transitiveClosure(graph, graph["m/cmd/b"])
+	paths = nil
+	for _, p := range got {
+		paths = append(paths, p.ImportPath)
+	}
+	want = []string{"m/cmd/b", "m/lib/y", "m/lib/z"}
+	if strings.Join(paths, ",") != strings.Join(want, ",") {
+		t.Fatalf("closure(b) = %v, want %v", paths, want)
+	}
+}
+
+// TestBuildLinkDrvClosureOnly is a regression test for finding #16: a link drv
+// must depend only on the main package's transitive closure, not every package
+// in the graph.
+func TestBuildLinkDrvClosureOnly(t *testing.T) {
+	mkDrv := func(hash string) *storepath.StorePath {
+		sp, err := storepath.FromAbsolutePath("/nix/store/" + hash + "-pkg.drv")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sp
+	}
+	graph := map[string]*ResolvedPkg{
+		"m/cmd/a": {
+			ImportPath: "m/cmd/a", Name: "main",
+			Imports: []string{"m/lib/x", "fmt"},
+			DrvPath: mkDrv("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		},
+		"m/lib/x": {
+			ImportPath: "m/lib/x", Imports: nil,
+			DrvPath: mkDrv("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"),
+		},
+		"m/lib/unrelated": {
+			ImportPath: "m/lib/unrelated", Imports: nil,
+			CgoFiles: []string{"c.go"}, // cgo in an unrelated pkg must not flip extld
+			DrvPath:  mkDrv("yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"),
+		},
+	}
+	cfg := Config{
+		PName:        "a",
+		System:       "x86_64-linux",
+		BashBin:      "/nix/store/00000000000000000000000000000000-bash/bin/bash",
+		CoreutilsBin: "/nix/store/00000000000000000000000000000000-coreutils/bin/mkdir",
+		GoBin:        "/nix/store/00000000000000000000000000000000-go/bin/go",
+		StdlibPath:   "/nix/store/00000000000000000000000000000000-stdlib",
+		ccPath:       "/nix/store/00000000000000000000000000000000-cc/bin/cc",
+		ccDir:        "/nix/store/00000000000000000000000000000000-cc",
+	}
+	cfg.coreutilsDir = storeDirOf(cfg.CoreutilsBin)
+
+	_, drv, err := buildLinkDrv(cfg, graph, graph["m/cmd/a"], 1, nil, "", "")
+	if err != nil {
+		t.Fatalf("buildLinkDrv: %v", err)
+	}
+	entries := drv.Env()["importcfg_entries"]
+	if !strings.Contains(entries, "packagefile m/lib/x=") {
+		t.Errorf("importcfg missing direct dep m/lib/x:\n%s", entries)
+	}
+	if strings.Contains(entries, "m/lib/unrelated") {
+		t.Errorf("importcfg references unrelated package:\n%s", entries)
+	}
+	if drv.Env()["extld"] != "" {
+		t.Errorf("extld set despite no cgo in closure: %q", drv.Env()["extld"])
+	}
+}
+
+// fakeStore is a minimal nixdrv.Store for unit-testing stageLocalSources.
+type fakeStore struct {
+	mu    sync.Mutex
+	calls int32
+	added map[string]string // name → source dir
+}
+
+func (s *fakeStore) DerivationAdd(*nixdrv.Derivation) (*storepath.StorePath, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeStore) Build(...string) ([]*storepath.StorePath, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeStore) StoreAdd(name, path string) (*storepath.StorePath, error) {
+	atomic.AddInt32(&s.calls, 1)
+	s.mu.Lock()
+	if s.added == nil {
+		s.added = map[string]string{}
+	}
+	s.added[name] = path
+	s.mu.Unlock()
+	hash := strings.Repeat("a", 32)
+	return storepath.FromAbsolutePath("/nix/store/" + hash + "-" + name)
+}
+
+// TestStageLocalSources verifies that local-package sources are staged in
+// parallel and that third-party packages are skipped.
+func TestStageLocalSources(t *testing.T) {
+	root := t.TempDir()
+	mkPkg := func(subdir string) {
+		writeTestFile(t, filepath.Join(root, subdir, "main.go"), "package p")
+	}
+	mkPkg("a")
+	mkPkg("b")
+	mkPkg("c")
+
+	pkgs := []*ResolvedPkg{
+		{ImportPath: "m/a", IsLocal: true, Subdir: "a", GoFiles: []string{"main.go"}},
+		{ImportPath: "m/b", IsLocal: true, Subdir: "b", GoFiles: []string{"main.go"}},
+		{ImportPath: "m/c", IsLocal: true, Subdir: "c", GoFiles: []string{"main.go"}},
+		{ImportPath: "ext/d", IsLocal: false},
+	}
+	fs := &fakeStore{}
+	cfg := Config{Src: root, NixJobs: 4}
+	n, err := stageLocalSources(cfg, fs, pkgs)
+	if err != nil {
+		t.Fatalf("stageLocalSources: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("staged count = %d, want 3", n)
+	}
+	if fs.calls != 3 {
+		t.Fatalf("StoreAdd calls = %d, want 3", fs.calls)
+	}
+	for _, p := range pkgs[:3] {
+		if p.SrcStorePath == nil {
+			t.Errorf("%s: SrcStorePath not set", p.ImportPath)
+		}
+	}
+	if pkgs[3].SrcStorePath != nil {
+		t.Error("third-party package should not be staged")
 	}
 }
 

@@ -66,6 +66,9 @@ type Config struct {
 	allOverridePaths []string
 	// buildMode is "pie" or "exe", determined at Resolve() time from GOOS/GOARCH.
 	buildMode string
+	// goEnv caches the output of `go env -json` for the resolve run.
+	// Populated once in prepare(); all subsequent lookups are map reads.
+	goEnv map[string]string
 }
 
 // PackageOverride holds per-package overrides from Nix eval time.
@@ -88,9 +91,13 @@ func (cfg *Config) prepare() {
 		cfg.cxxPath = cxxPath
 	}
 
+	// Cache `go env` once for the whole resolve run; downstream callers read
+	// cfg.goEnv instead of spawning a subprocess per lookup.
+	cfg.goEnv = loadGoEnv(cfg.GoBin)
+
 	// Determine default build mode (pie vs exe) from the Go toolchain,
 	// matching cmd/go's platform.DefaultPIE logic.
-	cfg.buildMode = resolveDefaultBuildMode(cfg.GoBin)
+	cfg.buildMode = compile.DefaultBuildMode(cfg.goEnv["GOOS"], cfg.goEnv["GOARCH"])
 	slog.Info("build mode", "mode", cfg.buildMode)
 
 	if cfg.NixJobs <= 0 {
@@ -220,22 +227,30 @@ func Resolve(cfg Config) error {
 	}
 	slog.Info("packages sorted", "count", len(sorted))
 
-	// Step 7a: Build package derivation specs in topo order.
+	// Step 7a: Stage local-package sources in the Nix store concurrently.
+	// StoreAdd is a daemon round-trip per package and depends only on the
+	// package's own files, so it has no ordering constraint and can be fully
+	// parallelised before the topo-ordered drv assembly below.
+	t = time.Now()
+	localCount, err := stageLocalSources(cfg, nix, sorted)
+	if err != nil {
+		return err
+	}
+	slog.Info("local sources staged", "count", localCount, "elapsed", time.Since(t))
+
+	// Step 7b: Build package derivation specs in topo order.
 	// .drv paths are computed in-process (microseconds per derivation)
 	// instead of shelling out to `nix derivation add` (~33ms each).
 	t = time.Now()
 	slog.Info("building package derivations")
 	pkgScript := compileScript(cfg.Go2NixBin)
 	var pkgDrvs []*nixdrv.Derivation
-	localCount := 0
 	thirdPartyCount := 0
 	for _, pkg := range sorted {
-		if pkg.IsLocal {
-			localCount++
-		} else {
+		if !pkg.IsLocal {
 			thirdPartyCount++
 		}
-		drv, err := buildPackageDrv(cfg, nix, graph, pkg, overrides, pkgScript)
+		drv, err := buildPackageDrv(cfg, graph, pkg, overrides, pkgScript)
 		if err != nil {
 			return fmt.Errorf("building derivation for %s: %w", pkg.ImportPath, err)
 		}
@@ -243,7 +258,7 @@ func Resolve(cfg Config) error {
 	}
 	slog.Info("package derivations built", "local", localCount, "thirdParty", thirdPartyCount, "elapsed", time.Since(t))
 
-	// Step 7b: Register package derivations with the store in parallel.
+	// Step 7c: Register package derivations with the store in parallel.
 	// Nix validates that input drvs exist during `nix derivation add`, so we
 	// can't blast all drvs concurrently. Instead, each drv waits for its
 	// dependency drvs to be registered first, then registers itself. This gives
@@ -527,10 +542,9 @@ func symlinkTree(src, dst string) error {
 
 // buildPackageDrv builds a CA derivation for a single package and computes its
 // .drv path in-process. The derivation is returned for later parallel registration.
-// For local packages, nix.StoreAdd is called to add filtered source to the store.
+// Local-package sources must already be staged via stageLocalSources.
 func buildPackageDrv(
 	cfg Config,
-	nix nixdrv.Store,
 	graph map[string]*ResolvedPkg,
 	pkg *ResolvedPkg,
 	overrides map[string]PackageOverride,
@@ -555,7 +569,7 @@ func buildPackageDrv(
 	inputs := setupPkgOverrides(cfg, drv, pkg, overrides, go2nixStorePath)
 
 	// Source location
-	if err := setupPkgSource(cfg, nix, drv, pkg); err != nil {
+	if err := setupPkgSource(drv, pkg); err != nil {
 		return nil, err
 	}
 
@@ -660,30 +674,19 @@ func setupPkgOverrides(
 }
 
 // setupPkgSource configures the source location (modSrc, relDir) on the derivation.
-// For local packages, creates a filtered store path with only compilation-relevant files.
+// For local packages, references the filtered store path staged by stageLocalSources.
 // For third-party packages, references the FOD output path.
 func setupPkgSource(
-	cfg Config,
-	nix nixdrv.Store,
 	drv *nixdrv.Derivation,
 	pkg *ResolvedPkg,
 ) error {
 	if pkg.IsLocal {
-		pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
-		filteredDir, err := createFilteredPkgDir(pkgDir, pkg)
-		if err != nil {
-			return fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
+		if pkg.SrcStorePath == nil {
+			return fmt.Errorf("local package %s has no staged source (stageLocalSources bug)", pkg.ImportPath)
 		}
-		defer os.RemoveAll(filteredDir) //nolint:errcheck
-
-		name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
-		pkgStorePath, err := nix.StoreAdd(name, filteredDir)
-		if err != nil {
-			return fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
-		}
-		drv.SetEnv("modSrc", pkgStorePath.Absolute())
+		drv.SetEnv("modSrc", pkg.SrcStorePath.Absolute())
 		drv.SetEnv("relDir", ".")
-		drv.AddInputSrc(pkgStorePath.Absolute())
+		drv.AddInputSrc(pkg.SrcStorePath.Absolute())
 		return nil
 	}
 
@@ -703,6 +706,71 @@ func setupPkgSource(
 	drv.SetEnv("relDir", relDir)
 	drv.AddInputSrc(pkg.FodPath.Absolute())
 	return nil
+}
+
+// stageLocalSources creates filtered source directories for every local package
+// and adds them to the Nix store concurrently. Each goroutine touches a distinct
+// *ResolvedPkg, so writing pkg.SrcStorePath is race-free. Returns the number of
+// local packages staged.
+func stageLocalSources(cfg Config, nix nixdrv.Store, pkgs []*ResolvedPkg) (int, error) {
+	g := new(errgroup.Group)
+	g.SetLimit(cfg.NixJobs)
+	count := 0
+	for _, pkg := range pkgs {
+		if !pkg.IsLocal {
+			continue
+		}
+		count++
+		g.Go(func() error {
+			pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
+			filteredDir, err := createFilteredPkgDir(pkgDir, pkg)
+			if err != nil {
+				return fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
+			}
+			defer os.RemoveAll(filteredDir) //nolint:errcheck
+
+			name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
+			sp, err := nix.StoreAdd(name, filteredDir)
+			if err != nil {
+				return fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
+			}
+			pkg.SrcStorePath = sp
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// transitiveClosure returns mainPkg plus every package reachable via Imports
+// edges that exists in graph (stdlib imports are absent from graph and thus
+// excluded). The result is sorted by ImportPath for deterministic drv hashing.
+func transitiveClosure(graph map[string]*ResolvedPkg, mainPkg *ResolvedPkg) []*ResolvedPkg {
+	seen := map[string]bool{mainPkg.ImportPath: true}
+	closure := []*ResolvedPkg{mainPkg}
+	queue := []*ResolvedPkg{mainPkg}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, imp := range cur.Imports {
+			if seen[imp] {
+				continue
+			}
+			dep, ok := graph[imp]
+			if !ok {
+				continue // stdlib or otherwise outside the graph
+			}
+			seen[imp] = true
+			closure = append(closure, dep)
+			queue = append(queue, dep)
+		}
+	}
+	sort.Slice(closure, func(i, j int) bool {
+		return closure[i].ImportPath < closure[j].ImportPath
+	})
+	return closure
 }
 
 // buildImportcfg builds importcfg entries for a package derivation, mapping each
@@ -761,13 +829,21 @@ func buildFinalDrv(
 		return nil, nil, err
 	}
 
+	// Modinfo and GOROOT are invariant across mains; compute once.
+	modinfoLine, err := generateModinfo(cfg, sorted)
+	if err != nil {
+		slog.Warn("modinfo generation failed, skipping", "err", err)
+		modinfoLine = ""
+	}
+	goroot := cfg.goEnv["GOROOT"]
+
 	// Build a link derivation for each main package
 	var linkDrvPaths []*storepath.StorePath
 	var linkPlaceholders []string
 	var drvs []*nixdrv.Derivation
 
 	for _, mainPkg := range mainPkgs {
-		drvPath, drv, err := buildLinkDrv(cfg, graph, sorted, mainPkg, len(mainPkgs), stdlibImports)
+		drvPath, drv, err := buildLinkDrv(cfg, graph, mainPkg, len(mainPkgs), stdlibImports, modinfoLine, goroot)
 		if err != nil {
 			return nil, nil, fmt.Errorf("building link for %s: %w", mainPkg.ImportPath, err)
 		}
@@ -795,13 +871,16 @@ func buildFinalDrv(
 
 // buildLinkDrv builds a link derivation for a main package.
 // Returns the .drv path and the Derivation for parallel registration.
+// Only the main package's transitive closure is added as inputDrvs/importcfg
+// entries so unrelated package changes don't invalidate the link drv.
 func buildLinkDrv(
 	cfg Config,
-	_ map[string]*ResolvedPkg,
-	sorted []*ResolvedPkg,
+	graph map[string]*ResolvedPkg,
 	mainPkg *ResolvedPkg,
 	numMains int,
 	stdlibImports []string,
+	modinfoLine string,
+	goroot string,
 ) (*storepath.StorePath, *nixdrv.Derivation, error) {
 	// For single binary, use pname. For multiple binaries, derive name from import path.
 	binName := cfg.PName
@@ -831,14 +910,19 @@ func buildLinkDrv(
 	drv.SetEnv("mainPkg", mainPlaceholder.Render())
 	drv.AddInputDrv(mainPkg.DrvPath.Absolute(), "out")
 
-	// Build importcfg with ALL transitive dependencies
-	var importcfgEntries []string
+	// Compute the main package's transitive dependency closure. Only these
+	// packages are linked into the binary, so only these need to appear as
+	// inputDrvs and importcfg entries.
+	closure := transitiveClosure(graph, mainPkg)
 
-	// Collect all transitive deps via the sorted list
-	for _, pkg := range sorted {
-		if pkg.Name == "main" && pkg != mainPkg {
-			continue // skip other main packages
-		}
+	// Track cgo/C++ usage across the closure — the linker needs CC for
+	// external linking regardless of whether packageOverrides were specified.
+	// Go's setextld uses CXX instead of CC when C++ files are present.
+	hasCgo := false
+	hasCxx := false
+
+	var importcfgEntries []string
+	for _, pkg := range closure {
 		if pkg.DrvPath == nil {
 			return nil, nil, fmt.Errorf("package %s has no derivation path", pkg.ImportPath)
 		}
@@ -849,6 +933,12 @@ func buildLinkDrv(
 		importcfgEntries = append(importcfgEntries,
 			fmt.Sprintf("packagefile %s=%s/pkg.a", pkg.ImportPath, placeholder.Render()))
 		drv.AddInputDrv(pkg.DrvPath.Absolute(), "out")
+		if len(pkg.CgoFiles) > 0 {
+			hasCgo = true
+		}
+		if len(pkg.CXXFiles) > 0 {
+			hasCxx = true
+		}
 	}
 
 	// Add all stdlib entries — the linker needs the full transitive closure.
@@ -858,10 +948,7 @@ func buildLinkDrv(
 	}
 
 	// Add modinfo so go version -m shows module dependencies.
-	modinfoLine, err := generateModinfo(cfg, sorted)
-	if err != nil {
-		slog.Warn("modinfo generation failed, skipping", "err", err)
-	} else {
+	if modinfoLine != "" {
 		importcfgEntries = append(importcfgEntries, modinfoLine)
 	}
 
@@ -876,7 +963,6 @@ func buildLinkDrv(
 
 	// Set GOROOT so the linker embeds runtime.defaultGOROOT,
 	// enabling runtime.GOROOT() in the resulting binary.
-	goroot := queryGoEnv(cfg.GoBin, "GOROOT")
 	if goroot != "" {
 		drv.SetEnv("goroot", goroot)
 	}
@@ -889,21 +975,6 @@ func buildLinkDrv(
 	}
 
 	drv.SetEnv("out", nixdrv.StandardOutput("out").Render())
-
-	// Check if any package in the graph uses cgo — the linker needs CC for
-	// external linking regardless of whether packageOverrides were specified.
-	// Also track C++ usage: Go's setextld uses CXX instead of CC when C++
-	// files are present (needed to link C++ standard libraries).
-	hasCgo := false
-	hasCxx := false
-	for _, pkg := range sorted {
-		if len(pkg.CgoFiles) > 0 {
-			hasCgo = true
-		}
-		if len(pkg.CXXFiles) > 0 {
-			hasCxx = true
-		}
-	}
 
 	// PATH: coreutils + CC for external linking (cgo)
 	pathParts := []string{cfg.coreutilsDir + "/bin"}
@@ -1098,31 +1169,27 @@ func isDir(path string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// resolveDefaultBuildMode queries the Go toolchain for GOOS/GOARCH and
-// returns the default build mode ("pie" or "exe"), matching cmd/go's
-// platform.DefaultPIE logic.
-func resolveDefaultBuildMode(goBin string) string {
-	goos := queryGoEnv(goBin, "GOOS")
-	goarch := queryGoEnv(goBin, "GOARCH")
-	return compile.DefaultBuildMode(goos, goarch)
-}
-
-// queryGoEnv runs `go env <key>` and returns the result.
-func queryGoEnv(goBin, key string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	out, err := exec.Command(goBin, "env", key).Output()
+// loadGoEnv runs `go env -json` once and returns the parsed key/value map.
+// On error, logs a warning and returns an empty map so callers degrade
+// gracefully (matching the previous queryGoEnv behaviour of returning "").
+func loadGoEnv(goBin string) map[string]string {
+	out, err := exec.Command(goBin, "env", "-json").Output()
 	if err != nil {
-		return ""
+		slog.Warn("go env -json failed", "err", err)
+		return map[string]string{}
 	}
-	return strings.TrimSpace(string(out))
+	var env map[string]string
+	if err := json.Unmarshal(out, &env); err != nil {
+		slog.Warn("parsing go env -json", "err", err)
+		return map[string]string{}
+	}
+	return env
 }
 
 // generateModinfo constructs the modinfo importcfg line from the package graph.
 func generateModinfo(cfg Config, sorted []*ResolvedPkg) (string, error) {
 	// Get Go toolchain version.
-	goVersion := queryGoEnv(cfg.GoBin, "GOVERSION")
+	goVersion := cfg.goEnv["GOVERSION"]
 
 	// Collect unique third-party modules from the graph.
 	seen := make(map[string]bool)
