@@ -114,6 +114,61 @@ func TestInternalTestPkgFiles(t *testing.T) {
 	}
 }
 
+func TestApplySrcOverlay(t *testing.T) {
+	srcDir := t.TempDir()
+	overlay := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(srcDir, "a.txt"), []byte("from-src"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "shared.txt"), []byte("from-src"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(overlay, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(overlay, "dist", "b.txt"), []byte("from-overlay"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(overlay, "shared.txt"), []byte("from-overlay"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &localpkgs.LocalPkg{ImportPath: "example.com/test", SrcDir: srcDir}
+	if err := applySrcOverlay(p, overlay); err != nil {
+		t.Fatal(err)
+	}
+
+	if p.SrcDir == srcDir {
+		t.Fatal("SrcDir not repointed")
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(p.SrcDir) })
+
+	mustRead := func(rel string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(p.SrcDir, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	if got := mustRead("a.txt"); got != "from-src" {
+		t.Errorf("a.txt = %q, want from-src (srcDir content preserved)", got)
+	}
+	if got := mustRead("dist/b.txt"); got != "from-overlay" {
+		t.Errorf("dist/b.txt = %q, want from-overlay (overlay content layered in)", got)
+	}
+	if got := mustRead("shared.txt"); got != "from-overlay" {
+		t.Errorf("shared.txt = %q, want from-overlay (overlay wins on conflict)", got)
+	}
+
+	// Result must be writable so the testrunner can drop generated files
+	// (xtest internal-test recompile writes alongside the source).
+	if err := os.WriteFile(filepath.Join(p.SrcDir, "a.txt"), []byte("mutated"), 0o644); err != nil {
+		t.Errorf("overlaid SrcDir not writable: %v", err)
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	tests := []struct {
 		input, want string
