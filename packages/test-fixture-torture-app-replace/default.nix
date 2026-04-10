@@ -46,7 +46,10 @@ else
   in
   pkgs.runCommand "test-dag-fixture-torture-app-replace"
     {
-      nativeBuildInputs = [ nix ];
+      nativeBuildInputs = [
+        nix
+        go
+      ];
       requiredSystemFeatures = [ "recursive-nix" ];
     }
     ''
@@ -62,5 +65,15 @@ else
 
       out_val=$($result/bin/app-replace)
       [ "$out_val" = "42" ] || { echo "FAIL: expected 42, got $out_val"; exit 1; }
+
+      echo "=== Asserting modinfo contains dep lines (lockfile-free mode) ==="
+      go version -m "$result/bin/app-replace" | tee buildinfo.txt
+      ndeps=$(grep -cE '^[[:space:]]+dep[[:space:]]' buildinfo.txt || true)
+      [ "$ndeps" -ge 1 ] || { echo "FAIL: expected >= 1 dep lines, got $ndeps"; exit 1; }
+      grep -E '^[[:space:]]+dep[[:space:]]+go\.uber\.org/atomic[[:space:]]+v1\.11\.0' buildinfo.txt \
+        || { echo "FAIL: expected dep go.uber.org/atomic v1.11.0"; exit 1; }
+      grep -E '^[[:space:]]+=>[[:space:]]+github\.com/uber-go/atomic[[:space:]]+v1\.11\.0' buildinfo.txt \
+        || { echo "FAIL: expected replace => github.com/uber-go/atomic v1.11.0"; exit 1; }
+
       echo "PASS: torture-app-replace" > $out
     ''

@@ -913,6 +913,34 @@ let
           }}"
         else
           null;
+      # Resolved third-party module set, threaded straight to link-binary
+      # so debug.BuildInfo.Deps is populated in lockfile-free mode too
+      # (link-binary previously read it from the lockfile only).
+      # allModules contains replacement targets as separate keys (so
+      # fetchGoModule can find their hash); filter those out so modinfo
+      # records `dep <orig> => <repl>` rather than a spurious second dep.
+      modules =
+        let
+          replTargets = lib.mapAttrs' (_: r: {
+            name = "${r.path}@${if r.version != "" then r.version else ""}";
+            value = true;
+          }) goPackagesResult.replacements;
+          isReplTarget =
+            _modKey: m: replTargets."${m.path}@${m.version}" or false || replTargets."${m.path}@" or false;
+        in
+        lib.mapAttrsToList (
+          modKey: m:
+          let
+            repl = goPackagesResult.replacements.${modKey} or null;
+          in
+          {
+            inherit (m) path version;
+          }
+          // lib.optionalAttrs (repl != null) {
+            replacePath = repl.path;
+            replaceVersion = if repl.version != "" then repl.version else m.version;
+          }
+        ) (lib.filterAttrs (k: v: !(isReplTarget k v)) allModules);
       inherit pname;
       goos = targetGoos;
       goarch = targetGoarch;
