@@ -54,7 +54,7 @@ fn dump_entry(w: &mut impl Write, path: &Path) -> Result<()> {
             .with_context(|| format!("reading dir entries of {}", path.display()))?;
 
         // NAR requires sorted entries.
-        entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+        entries.sort_by_key(|e| e.file_name());
 
         for entry in entries {
             write_str(w, "entry")?;

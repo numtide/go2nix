@@ -67,28 +67,22 @@ impl NarCache {
 mod tests {
     use super::*;
 
+    // Single test fn: both cases mutate XDG_CACHE_HOME and would race
+    // under cargo's parallel test harness if split.
     #[test]
-    fn round_trip() {
+    fn nar_cache_round_trip_and_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("XDG_CACHE_HOME", dir.path());
         let cache = NarCache::open().unwrap();
 
         let h1 = "h1:abc123+/=";
         assert!(cache.get(h1).is_none());
-
         cache.put(h1, "sha256-xyz789").unwrap();
         assert_eq!(cache.get(h1).unwrap(), "sha256-xyz789");
-    }
 
-    #[test]
-    fn idempotent_put() {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("XDG_CACHE_HOME", dir.path());
-        let cache = NarCache::open().unwrap();
-
-        let h1 = "h1:test";
-        cache.put(h1, "sha256-aaa").unwrap();
-        cache.put(h1, "sha256-aaa").unwrap();
-        assert_eq!(cache.get(h1).unwrap(), "sha256-aaa");
+        let h2 = "h1:test";
+        cache.put(h2, "sha256-aaa").unwrap();
+        cache.put(h2, "sha256-aaa").unwrap();
+        assert_eq!(cache.get(h2).unwrap(), "sha256-aaa");
     }
 }
