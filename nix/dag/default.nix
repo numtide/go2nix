@@ -74,6 +74,12 @@
   # the old (modRoot == ".") default existed. Matches buildGoModule.
   doCheck ? true,
   checkFlags ? [ ],
+  # Extra src-relative paths (files or directories) to include in mainSrc.
+  # The post-#110 mainSrc is precise (.go + resolved //go:embed + testdata/),
+  # so a test that does os.ReadFile("../config.yaml") at runtime won't find
+  # that file by default. Prefer the testdata/ convention; this is the
+  # escape hatch for paths that can't easily move.
+  extraMainSrcFiles ? [ ],
   ...
 }@args:
 
@@ -88,6 +94,7 @@ let
     optionalString
     optionals
     removePrefix
+    removeSuffix
     splitString
     ;
 
@@ -803,8 +810,9 @@ let
   #
   # Edge case: a test that does runtime reads outside testdata/ and outside
   # //go:embed (e.g. os.ReadFile("../config.yaml")) will not find that file.
-  # The supported convention is `testdata/`; anything else needs the caller
-  # to widen `src` or move the fixture under testdata/.
+  # The supported convention is `testdata/`; for paths that can't move, list
+  # them in `extraMainSrcFiles` (each entry is a src-relative file or
+  # directory; directories include their full subtree).
   mainSrc =
     let
       cleanModRoot = removePrefix "./" modRoot;
@@ -863,10 +871,19 @@ let
         }) relevantPkgs
       );
 
+      # extraMainSrcFiles entries match like testdata dirs: the path itself
+      # and (if a directory) everything under it. Trailing "/" is tolerated
+      # so "config/" and "config" behave the same.
+      extraSet = builtins.listToAttrs (
+        map (e: {
+          name = removeSuffix "/" (removePrefix "./" e);
+          value = true;
+        }) extraMainSrcFiles
+      );
+      prefixSet = testdataDirSet // extraSet;
+
       ancestorSet = builtins.listToAttrs (
-        builtins.concatMap walkAncestors (
-          builtins.attrNames mainSrcFileSet ++ builtins.attrNames testdataDirSet
-        )
+        builtins.concatMap walkAncestors (builtins.attrNames mainSrcFileSet ++ builtins.attrNames prefixSet)
       );
       walkAncestors =
         r:
@@ -878,14 +895,14 @@ let
         ]
         ++ optionals (r != "." && r != "") (walkAncestors (builtins.dirOf r));
 
-      underTestdata =
+      underPrefix =
         r:
-        testdataDirSet ? ${r}
+        prefixSet ? ${r}
         || (
           let
             d = builtins.dirOf r;
           in
-          d != "." && d != r && underTestdata d
+          d != "." && d != r && underPrefix d
         );
     in
     builtins.path {
@@ -897,9 +914,9 @@ let
           rel = removePrefix srcPrefix (toString path);
         in
         if type == "directory" then
-          ancestorSet ? ${rel} || underTestdata rel
+          ancestorSet ? ${rel} || underPrefix rel
         else
-          mainSrcFileSet ? ${rel} || underTestdata rel;
+          mainSrcFileSet ? ${rel} || underPrefix rel;
     };
 
   moduleRoot = if modRoot == "." then "${mainSrc}" else "${mainSrc}/${modRoot}";
@@ -932,6 +949,7 @@ let
     "packageOverrides"
     "doCheck"
     "checkFlags"
+    "extraMainSrcFiles"
     "contentAddressed"
   ];
 

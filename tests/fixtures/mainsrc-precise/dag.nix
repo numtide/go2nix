@@ -3,6 +3,8 @@
 #   - build-time //go:embed (schema.json) is in mainSrc
 #   - test-only //go:embed (testdata/golden.json) is in mainSrc
 #   - README.md and unrelated.yaml are NOT in mainSrc
+#   - adjacent.conf (runtime-read, non-testdata, non-embed) IS in mainSrc
+#     because it is listed in extraMainSrcFiles
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
@@ -19,4 +21,5 @@ goEnv.buildGoApplication {
   goLock = ./go2nix.toml;
   subPackages = [ "./cmd/app" ];
   doCheck = true;
+  extraMainSrcFiles = [ "internal/greet/adjacent.conf" ];
 }
