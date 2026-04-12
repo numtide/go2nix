@@ -875,10 +875,19 @@ let
       # and (if a directory) everything under it. Trailing "/" is tolerated
       # so "config/" and "config" behave the same.
       extraSet = builtins.listToAttrs (
-        map (e: {
-          name = removeSuffix "/" (removePrefix "./" e);
-          value = true;
-        }) extraMainSrcFiles
+        map (
+          e:
+          let
+            n = removeSuffix "/" (removePrefix "./" e);
+          in
+          if builtins.pathExists "${src}/${n}" then
+            {
+              name = n;
+              value = true;
+            }
+          else
+            throw "go2nix: extraMainSrcFiles entry '${e}' does not exist under src (${toString src})"
+        ) extraMainSrcFiles
       );
       prefixSet = testdataDirSet // extraSet;
 
