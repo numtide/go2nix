@@ -106,8 +106,23 @@ rec {
   # CR (CRLF-safe) and at the space before any trailing `// comment`.
   parseLocalReplaces =
     goModText:
-    builtins.concatMap (x: if builtins.isList x then x else [ ]) (
-      builtins.split "=>[[:space:]]+(\\.\\.?/[^[:space:]]*)" goModText
+    let
+      # Drop `// comment` line-suffixes so a commented-out replace
+      # directive doesn't match. builtins.split yields alternating
+      # string/list; the leading string is the text before the first //.
+      stripComment = l: builtins.head (builtins.split "//" l);
+      unquote =
+        s:
+        let
+          m = builtins.match "[\"`](.*)[\"`]" s;
+        in
+        if m == null then s else builtins.head m;
+      stripped = builtins.concatStringsSep "\n" (
+        map stripComment (builtins.filter builtins.isString (builtins.split "\n" goModText))
+      );
+    in
+    builtins.concatMap (x: if builtins.isList x then [ (unquote (builtins.head x)) ] else [ ]) (
+      builtins.split "=>[[:space:]]+(\"[^\"]*\"|`[^`]*`|\\.\\.?/[^[:space:]]*)" stripped
     );
 
   # Walk go.mod local replace directives transitively. Returns the list of
