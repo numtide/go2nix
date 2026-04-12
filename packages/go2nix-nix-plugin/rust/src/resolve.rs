@@ -85,6 +85,8 @@ struct GoPackage {
     cgo_cflags: Vec<String>,
     #[serde(rename = "CgoLDFLAGS")]
     cgo_ldflags: Vec<String>,
+    #[serde(rename = "ForTest")]
+    for_test: String,
     #[serde(rename = "Error")]
     error: Option<GoPackageError>,
 }
@@ -287,6 +289,14 @@ fn inherit_env(keys: &[&str]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Strip the recompiled-variant suffix `pkg [foo.test]` → `pkg`.
+fn strip_variant_suffix(ip: &str) -> &str {
+    match ip.find(" [") {
+        Some(i) => &ip[..i],
+        None => ip,
+    }
+}
+
 /// Extract replace path and version from a GoModule in one destructure.
 fn extract_replace(module: &GoModule) -> (String, String) {
     match &module.replace {
@@ -414,7 +424,7 @@ fn run_go_list_test(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,ForTest,Error");
     cmd.arg("-deps");
     cmd.arg("-test");
     cmd.arg("-e");
@@ -481,10 +491,21 @@ fn parse_test_packages(
             }
         }
 
-        // Skip synthetic test packages: test mains (foo.test) and
-        // recompiled variants (foo [foo.test]).
-        if jpkg.import_path.contains('[') || jpkg.import_path.ends_with(".test") {
-            continue;
+        // Normalise recompiled-variant entries `P [X.test]` → bare `P`. A
+        // test-only-local that imports the package-under-test only ever
+        // appears in this variant form (the dependency chain pulls it into
+        // the recompile set), so the previous "skip all `[...]`" rule
+        // dropped it entirely. The package-under-test itself and its
+        // synthetic xtest are still skipped via ForTest.
+        let import_path = strip_variant_suffix(&jpkg.import_path).to_owned();
+        if import_path.ends_with(".test") {
+            continue; // synthetic test main
+        }
+        if !jpkg.for_test.is_empty()
+            && (import_path == jpkg.for_test
+                || import_path == format!("{}_test", jpkg.for_test))
+        {
+            continue; // package-under-test variant or synthetic xtest
         }
 
         let files = pkg_files_from(&jpkg);
@@ -503,21 +524,28 @@ fn parse_test_packages(
             // For build-graph locals, harvest the {Test,XTest}EmbedFiles that
             // only resolve under -test; the rest are test-only locals
             // (e.g. an internal/testutil only imported from *_test.go files).
-            if local_paths.contains(&jpkg.import_path) {
+            if local_paths.contains(&import_path) {
                 if !jpkg.test_embed_files.is_empty() || !jpkg.x_test_embed_files.is_empty() {
                     let mut v = jpkg.test_embed_files.clone();
                     v.extend(jpkg.x_test_embed_files.clone());
-                    local_test_embed_files.insert(jpkg.import_path.clone(), v);
+                    local_test_embed_files.insert(import_path, v);
                 }
                 continue;
             }
-            if !test_local_paths.insert(jpkg.import_path.clone()) {
+            if !test_local_paths.insert(import_path.clone()) {
                 continue;
             }
+            // Variant-form entries also have variant-suffixed Imports;
+            // strip so import classification matches the canonical paths.
+            let imports = jpkg
+                .imports
+                .iter()
+                .map(|i| strip_variant_suffix(i).to_owned())
+                .collect();
             raw_test_locals.push(RawLocalPkg {
-                import_path: jpkg.import_path,
+                import_path,
                 dir: jpkg.dir,
-                imports: jpkg.imports,
+                imports,
                 cgo_pkg_config: jpkg.cgo_pkg_config,
                 cgo_cflags: jpkg.cgo_cflags,
                 cgo_ldflags: jpkg.cgo_ldflags,
@@ -529,12 +557,12 @@ fn parse_test_packages(
         }
 
         // Skip packages already in the build graph.
-        if third_party_paths.contains(&jpkg.import_path) {
+        if third_party_paths.contains(&import_path) {
             continue;
         }
 
         // Deduplicate within the test pass.
-        if !test_only_paths.insert(jpkg.import_path.clone()) {
+        if !test_only_paths.insert(import_path.clone()) {
             continue;
         }
 
@@ -552,11 +580,15 @@ fn parse_test_packages(
         }
 
         test_packages.push(PkgData {
-            import_path: jpkg.import_path,
+            import_path,
             mod_path: module.path,
             mod_version: module.version,
             replace_version,
-            imports: jpkg.imports,
+            imports: jpkg
+                .imports
+                .iter()
+                .map(|i| strip_variant_suffix(i).to_owned())
+                .collect(),
             cgo_pkg_config: jpkg.cgo_pkg_config,
             cgo_cflags: jpkg.cgo_cflags,
             cgo_ldflags: jpkg.cgo_ldflags,
@@ -1785,8 +1817,10 @@ mod tests {
         let input = [
             // Synthetic test main
             third_party_json("example.com/pkg.test", "example.com/pkg", ""),
-            // Recompiled variant
-            format!(r#"{{"ImportPath":"example.com/pkg [example.com/pkg.test]","Module":{{"Path":"example.com/pkg","Main":true}},"Imports":[]}}"#),
+            // Recompiled variant of the package-under-test (ForTest == bare path)
+            r#"{"ImportPath":"example.com/pkg [example.com/pkg.test]","ForTest":"example.com/pkg","Module":{"Path":"example.com/pkg","Main":true},"Imports":[]}"#.to_owned(),
+            // Synthetic xtest (ForTest+"_test" == bare path)
+            r#"{"ImportPath":"example.com/pkg_test [example.com/pkg.test]","ForTest":"example.com/pkg","Module":{"Path":"example.com/pkg","Main":true},"Imports":[]}"#.to_owned(),
             // Real test-only dep
             third_party_json("github.com/testify", "github.com/testify", "v1.9.0"),
         ]
@@ -2234,5 +2268,40 @@ mod tests {
         // modRoot = "." walks the whole src.
         let roots_all = find_nested_module_roots(src.path(), &[".".into()]);
         assert_eq!(roots_all, vec!["app", "sib", "unrelated"]);
+    }
+
+    #[test]
+    fn test_strip_variant_suffix() {
+        assert_eq!(strip_variant_suffix("a/b"), "a/b");
+        assert_eq!(strip_variant_suffix("a/b [a/b.test]"), "a/b");
+        assert_eq!(strip_variant_suffix("a/b/c [a/b.test]"), "a/b/c");
+        assert_eq!(strip_variant_suffix("a/b_test [a/b.test]"), "a/b_test");
+    }
+
+    #[test]
+    fn test_parse_test_packages_variant_only_local() {
+        // A test-only-local that imports the package-under-test only appears
+        // as a `[X.test]` variant. parse_test_packages must surface it under
+        // its bare path so mainSrc includes its source.
+        let stdout = br#"
+{"ImportPath":"example.com/sib","Dir":"/src/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"GoFiles":["helper.go"]}
+{"ImportPath":"example.com/sib [example.com/sib.test]","Dir":"/src/sib","ForTest":"example.com/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"GoFiles":["helper.go"],"TestGoFiles":["internal_test.go"]}
+{"ImportPath":"example.com/sib/testutil [example.com/sib.test]","Dir":"/src/sib/testutil","ForTest":"example.com/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"GoFiles":["testutil.go"],"Imports":["example.com/sib [example.com/sib.test]"]}
+{"ImportPath":"example.com/sib_test [example.com/sib.test]","Dir":"/src/sib","ForTest":"example.com/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"XTestGoFiles":["helper_test.go"]}
+{"ImportPath":"example.com/sib.test","Dir":"/src/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}}}
+"#;
+        let local_paths: BTreeSet<String> = ["example.com/sib".to_owned()].into();
+        let mut replacements = BTreeMap::new();
+        let tp = parse_test_packages(stdout, &BTreeSet::new(), &local_paths, &mut replacements)
+            .unwrap();
+        let got: Vec<_> = tp
+            .test_local_packages
+            .iter()
+            .map(|p| (p.import_path.as_str(), p.local_imports.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![("example.com/sib/testutil", vec!["example.com/sib".to_owned()])]
+        );
     }
 }
