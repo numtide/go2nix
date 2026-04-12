@@ -11,11 +11,13 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -134,9 +136,11 @@ func Resolve(cfg Config) error {
 	}
 	// Collect all override paths for the link derivation (cgo external linking).
 	// Use discoverInputPaths to follow propagated-build-inputs transitively.
+	// Iteration order must be deterministic so the salted NIX_LDFLAGS string —
+	// and therefore the link drv hash — is reproducible across evaluations.
 	var allOverrideInputs []string
-	for _, ov := range overrides {
-		allOverrideInputs = append(allOverrideInputs, ov.NativeBuildInputs...)
+	for _, k := range slices.Sorted(maps.Keys(overrides)) {
+		allOverrideInputs = append(allOverrideInputs, overrides[k].NativeBuildInputs...)
 	}
 	allOverrideDiscovered := discoverInputPaths(allOverrideInputs)
 	cfg.allOverridePaths = allOverrideDiscovered.All
