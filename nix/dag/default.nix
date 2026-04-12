@@ -791,66 +791,102 @@ let
     map (attrs: attrs.nativeBuildInputs or [ ]) (builtins.attrValues packageOverrides)
   );
 
-  # Source for the final link derivation. The link step itself only needs
-  # the main-package directories plus go.mod, but the testrunner re-walks
-  # go.mod from ${mainSrc}/${modRoot}, so any local `replace => ../sibling`
-  # target must also be present (otherwise doCheck fails with
-  # "local replace target ... does not exist").
+  # Source for the final link derivation. File-precise: only what `go list`
+  # actually reported per local package — every compiled source kind plus
+  # *_test.go and resolved //go:embed targets — together with each package's
+  # testdata/ subtree (the documented home for runtime test fixtures, see
+  # `go help test`) and go.mod/go.sum at modRoot and replace-target roots.
+  #
+  # This means a wide `src` (e.g. an entire monorepo directory) no longer
+  # makes README/CI-config edits re-link or re-test: only files Go would
+  # itself read enter mainSrc.
+  #
+  # Edge case: a test that does runtime reads outside testdata/ and outside
+  # //go:embed (e.g. os.ReadFile("../config.yaml")) will not find that file.
+  # The supported convention is `testdata/`; anything else needs the caller
+  # to widen `src` or move the fixture under testdata/.
   mainSrc =
     let
       cleanModRoot = removePrefix "./" modRoot;
-      subPkgDirs = map (
+      replaceDirs = goPackagesResult.localReplaceDirs;
+
+      # Under doCheck the testrunner walks every local package; otherwise
+      # only the main packages need source — the rest link from .a archives,
+      # so widening here would just add hash churn.
+      spImportPath =
         sp:
         let
           clean = removePrefix "./" sp;
         in
-        if modRoot == "." then clean else "${cleanModRoot}/${clean}"
-      ) normalizedSubPackages;
+        if sp == "." || clean == "" then
+          goPackagesResult.modulePath
+        else
+          "${goPackagesResult.modulePath}/${clean}";
+      relevantPkgs =
+        if doCheck then
+          builtins.attrValues allLocalPkgInfo
+        else
+          map (sp: allLocalPkgInfo.${spImportPath sp}) normalizedSubPackages;
 
-      # Local-replace target dirs (src-relative, transitive). Computed in
-      # the plugin from go.mod, so no readFile + regex walk here. Only used
-      # when tests run — keeps mainSrc (and so the link drv hash) unchanged
-      # for doCheck = false builds.
-      replaceDirs = optionals doCheck goPackagesResult.localReplaceDirs;
+      moduleRootDirs = [ cleanModRoot ] ++ optionals doCheck replaceDirs;
 
-      # Include modRoot for go.mod access plus sibling-replace module roots
-      # so the testrunner can walk them.
-      allowedDirs = [ cleanModRoot ] ++ subPkgDirs ++ replaceDirs;
-      allowedDirSet = genAttrs allowedDirs (_: true);
-      # Every allowedDir together with all of its strict ancestors. Lets the
-      # filter answer "is rel an allowedDir or an ancestor of one?" with a
-      # single attrset lookup instead of an O(|allowedDirs|) hasPrefix scan.
-      allowedAncestorSet = builtins.listToAttrs (
+      mainSrcFileSet = builtins.listToAttrs (
         builtins.concatMap (
+          p:
+          map (f: {
+            name = f;
+            value = true;
+          }) p.mainSrcFiles
+        ) relevantPkgs
+        ++ builtins.concatMap (
           d:
           let
-            walk =
-              r:
-              [
-                {
-                  name = r;
-                  value = true;
-                }
-              ]
-              ++ optionals (r != "." && r != "") (walk (builtins.dirOf r));
+            at = if d == "." then "" else "${d}/";
           in
-          walk d
-        ) allowedDirs
+          [
+            {
+              name = "${at}go.mod";
+              value = true;
+            }
+            {
+              name = "${at}go.sum";
+              value = true;
+            }
+          ]
+        ) moduleRootDirs
       );
-      # rel is at-or-under an allowedDir? O(depth) attrset lookups via dirOf
-      # instead of O(|allowedDirs|) hasPrefix string scans.
-      isUnderAllowed =
+
+      testdataDirSet = builtins.listToAttrs (
+        map (p: {
+          name = if p.dir == "." then "testdata" else "${p.dir}/testdata";
+          value = true;
+        }) relevantPkgs
+      );
+
+      ancestorSet = builtins.listToAttrs (
+        builtins.concatMap walkAncestors (
+          builtins.attrNames mainSrcFileSet ++ builtins.attrNames testdataDirSet
+        )
+      );
+      walkAncestors =
         r:
-        allowedDirSet ? ${r}
+        [
+          {
+            name = r;
+            value = true;
+          }
+        ]
+        ++ optionals (r != "." && r != "") (walkAncestors (builtins.dirOf r));
+
+      underTestdata =
+        r:
+        testdataDirSet ? ${r}
         || (
           let
             d = builtins.dirOf r;
           in
-          d != "." && isUnderAllowed d
+          d != "." && d != r && underTestdata d
         );
-      # When modRoot is "." or any subPackage resolves to ".", the entire
-      # source tree is needed — no prefix filtering required.
-      includeAll = builtins.elem "." allowedDirs;
     in
     builtins.path {
       path = src;
@@ -860,14 +896,10 @@ let
         let
           rel = removePrefix srcPrefix (toString path);
         in
-        # rel must be on the path to, at, or under an allowedDir. Checked
-        # before the nested-module pathExists so siblings the filter would
-        # reject anyway skip the syscall.
-        (includeAll || path == srcStr || allowedAncestorSet ? ${rel} || isUnderAllowed rel)
-        # A go.mod-bearing directory that isn't an allowed module root
-        # (modRoot, a subPackage dir, or a local-replace target) is a
-        # nested-module boundary; go list stopped there.
-        && !(type == "directory" && !(allowedDirSet ? ${rel}) && nestedModuleRootSet ? ${rel});
+        if type == "directory" then
+          ancestorSet ? ${rel} || underTestdata rel
+        else
+          mainSrcFileSet ? ${rel} || underTestdata rel;
     };
 
   moduleRoot = if modRoot == "." then "${mainSrc}" else "${mainSrc}/${modRoot}";
