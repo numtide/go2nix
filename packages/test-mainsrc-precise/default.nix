@@ -56,11 +56,13 @@ else
       assert_in  internal/embed/embed_test.go
       assert_in  internal/embed/schema.json
       assert_in  internal/embed/testdata/golden.json
+      # extraMainSrcFiles entry — runtime-read, not testdata/, not //go:embed
+      assert_in  internal/greet/adjacent.conf
       assert_out internal/greet/README.md
       assert_out internal/greet/unrelated.yaml
       assert_out go2nix.toml
       assert_out dag.nix
 
       [ "$fail" -eq 0 ] || exit 1
-      echo "mainsrc-precise-test: 13 assertions passed" > $out
+      echo "mainsrc-precise-test: 14 assertions passed" > $out
     ''
