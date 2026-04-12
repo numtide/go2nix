@@ -142,6 +142,9 @@
           test-fixture-sibling-testonly = callPkgWith ./packages/test-fixture-sibling-testonly/default.nix {
             inherit flake system;
           };
+          test-fixture-testonly-embed = callPkgWith ./packages/test-fixture-testonly-embed/default.nix {
+            inherit flake system;
+          };
           test-mainsrc-precise = callPkgWith ./packages/test-mainsrc-precise/default.nix {
             inherit flake system;
           };

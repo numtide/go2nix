@@ -134,7 +134,7 @@ static RegisterPrimOp rp(PrimOp {
     derivation-backed value (pkgs.fetchFromGitHub) is realised at eval
     time with a warning.
   - `tags` (optional): List of build tags
-  - `subPackages` (optional): List of package patterns (default: ["./..."])
+  - `subPackages` (optional): List of package patterns (default: ["."])
   - `modRoot` (optional): Subdirectory containing go.mod (default: ".")
   - `goos` / `goarch` (optional): Cross-compilation targets
   - `goProxy` (optional): GOPROXY override; when unset, inherits the environment

@@ -347,8 +347,7 @@ fn configure_go_env(cmd: &mut Command, src_dir: &str, opts: &GoListOpts) {
     cmd.env("GOWORK", "off");
 
     // When GOPROXY is not "off", the go toolchain needs network access.
-    let proxy_off = opts.go_proxy.map_or(false, |p| p == "off");
-    if !proxy_off {
+    if opts.go_proxy != Some("off") {
         for (k, v) in inherit_env(&[
             "PATH",
             "TMPDIR",
@@ -419,7 +418,7 @@ fn run_go_list(
 fn run_go_list_test(
     go_bin: &str,
     src_dir: &str,
-    local_import_paths: &[String],
+    patterns: &[String],
     opts: &GoListOpts,
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
@@ -436,8 +435,8 @@ fn run_go_list_test(
         cmd.arg("-tags");
         cmd.arg(opts.tags.join(","));
     }
-    for ip in local_import_paths {
-        cmd.arg(ip);
+    for p in patterns {
+        cmd.arg(p);
     }
 
     configure_go_env(&mut cmd, src_dir, opts);
@@ -486,7 +485,16 @@ fn parse_test_packages(
 
         if let Some(ref err) = jpkg.error {
             if !err.err.is_empty() {
-                pkg_errors.push(format!("{}: {}", jpkg.import_path, err.err));
+                // The `./...` patterns surface out-of-scope local packages
+                // (not in any subPackage's build closure). Their errors are
+                // not actionable here — only fail for packages already in
+                // the build graph or a test variant of one.
+                let bare = strip_variant_suffix(&jpkg.import_path);
+                if local_paths.contains(bare)
+                    || (!jpkg.for_test.is_empty() && local_paths.contains(&jpkg.for_test))
+                {
+                    pkg_errors.push(format!("{}: {}", jpkg.import_path, err.err));
+                }
                 continue;
             }
         }
@@ -533,6 +541,13 @@ fn parse_test_packages(
                 continue;
             }
             if !test_local_paths.insert(import_path.clone()) {
+                continue;
+            }
+            // Skip xtest-only packages (no compilable files; only an
+            // external `_test` package). The `./...` pattern surfaces these
+            // where the per-import-path argv did not, and the dag-side
+            // compile step has nothing to build for them.
+            if files.is_empty() {
                 continue;
             }
             // Variant-form entries also have variant-suffixed Imports;
@@ -655,6 +670,10 @@ pub(crate) struct PackageGraph {
     third_party_paths: BTreeSet<String>,
     local_paths: BTreeSet<String>,
     replacements: BTreeMap<String, (String, String)>,
+    /// Module paths of filesystem-replaced sibling modules (i.e. local
+    /// packages with `module.main == false`). Used to build `<mod>/...`
+    /// patterns for the `-test` pass.
+    local_replace_mod_paths: BTreeSet<String>,
     module_path: String,
     /// Main module's `go` directive (major.minor), threaded to local
     /// per-package compiles as `-lang` so non-root subpackages — whose
@@ -697,6 +716,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
     let mut third_party_paths = BTreeSet::new();
     let mut local_paths = BTreeSet::new();
     let mut replacements: BTreeMap<String, (String, String)> = BTreeMap::new();
+    let mut local_replace_mod_paths: BTreeSet<String> = BTreeSet::new();
     let mut module_path = String::new();
     let mut go_version = String::new();
     let mut raw_local_pkgs: Vec<RawLocalPkg> = Vec::new();
@@ -732,6 +752,9 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
             // Capture the main module's go directive (major.minor) for -lang.
             if module.main && go_version.is_empty() && !module.go_version.is_empty() {
                 go_version = lang_version(&module.go_version);
+            }
+            if !module.main {
+                local_replace_mod_paths.insert(module.path.clone());
             }
 
             local_paths.insert(jpkg.import_path.clone());
@@ -825,6 +848,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         third_party_paths,
         local_paths,
         replacements,
+        local_replace_mod_paths,
         module_path,
         go_version,
         test_packages: Vec::new(),
@@ -867,7 +891,7 @@ pub(crate) struct JsonInput {
 }
 
 fn default_sub_packages() -> Vec<String> {
-    vec!["./...".to_owned()]
+    vec![".".to_owned()]
 }
 fn default_dot() -> String {
     ".".to_owned()
@@ -931,13 +955,23 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
     let mut graph = parse_go_packages(&stdout)?;
 
     if input.do_check && !graph.local_packages.is_empty() {
-        let local_ips: Vec<String> = graph
-            .local_packages
-            .iter()
-            .map(|p| p.import_path.clone())
+        // Pass `./...` for the main module plus `<mod>/...` for each
+        // filesystem-replaced sibling module. This bounds argv by replace
+        // count (vs one arg per package, which can hit E2BIG on large
+        // modules) and — because every local package is now a PATTERN
+        // match rather than a `-deps` consequence — makes `go list -test`
+        // resolve TestEmbedFiles for test-only-locals too
+        // (cmd/go/internal/load/test.go:132 only does so for patterns).
+        let patterns: Vec<String> = std::iter::once("./...".to_owned())
+            .chain(
+                graph
+                    .local_replace_mod_paths
+                    .iter()
+                    .map(|m| format!("{m}/...")),
+            )
             .collect();
 
-        let test_stdout = run_go_list_test(go_bin, &input.src, &local_ips, &opts)?;
+        let test_stdout = run_go_list_test(go_bin, &input.src, &patterns, &opts)?;
 
         let tp = parse_test_packages(
             &test_stdout,
@@ -1134,7 +1168,6 @@ fn compute_sub_package_closures(
     let local_index: BTreeMap<&str, (&LocalPkgData, bool)> = graph
         .local_packages
         .iter()
-        .chain(graph.test_local_packages.iter())
         .map(|p| (p.import_path.as_str(), (p, has_cxx(&p.files))))
         .collect();
 
@@ -1206,11 +1239,26 @@ fn normalize_rel(p: &str) -> String {
 fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
     fn parse_local_replaces(text: &str) -> Vec<String> {
         // `=>` only appears in `replace` directives; a local target is one
-        // starting with `./` or `../`. Same condition as helpers.nix.
+        // starting with `./` or `../` (modfile.IsDirectoryPath). Strip
+        // `// comment` suffixes first so a commented-out replace doesn't
+        // match, and unwrap a single layer of `"` or `` ` `` quoting
+        // (modfile/read.go uses strconv.Unquote on the token).
+        fn rhs_token(rhs: &str) -> Option<&str> {
+            let rhs = rhs.trim_start();
+            let b = rhs.as_bytes();
+            if let Some(&q) = b.first() {
+                if q == b'"' || q == b'`' {
+                    let close = rhs[1..].find(q as char)?;
+                    return Some(&rhs[1..1 + close]);
+                }
+            }
+            rhs.split_whitespace().next()
+        }
         text.lines()
             .filter_map(|l| {
+                let l = l.split_once("//").map(|(h, _)| h).unwrap_or(l);
                 let i = l.find("=>")?;
-                let tgt = l[i + 2..].split_whitespace().next()?;
+                let tgt = rhs_token(&l[i + 2..])?;
                 if tgt.starts_with("./") || tgt.starts_with("../") {
                     Some(tgt.to_owned())
                 } else {
@@ -1268,7 +1316,7 @@ fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
 /// `builtins.path` filter, which rejects a nested-module dir and so never
 /// recurses into it). Seeds themselves always have a go.mod and are
 /// included; the dag-side mainSrc filter exempts allowedDirs explicitly.
-fn find_nested_module_roots(src: &Path, starts: &[String]) -> Vec<String> {
+fn find_nested_module_roots(src: &Path, starts: &[String]) -> Result<Vec<String>> {
     fn rel_of(src: &Path, p: &Path) -> String {
         let r = p.strip_prefix(src).unwrap_or(p);
         let mut s = String::new();
@@ -1287,14 +1335,25 @@ fn find_nested_module_roots(src: &Path, starts: &[String]) -> Vec<String> {
         }
     }
 
+    const WALK_CAP: usize = 100_000;
+
     let seed_set: BTreeSet<PathBuf> = starts
         .iter()
         .map(|s| if s == "." { src.to_path_buf() } else { src.join(s) })
         .collect();
 
     let mut out: BTreeSet<String> = BTreeSet::new();
+    let mut descended: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut walked: usize = 0;
     let mut stack: Vec<PathBuf> = seed_set.iter().cloned().collect();
     while let Some(dir) = stack.pop() {
+        walked += 1;
+        if walked > WALK_CAP {
+            bail!(
+                "find_nested_module_roots: walked >{WALK_CAP} directories under seeds {starts:?}; \
+                 if this is a legitimate Go module tree, file an issue"
+            );
+        }
         let has_gomod = dir.join("go.mod").is_file();
         if has_gomod {
             out.insert(rel_of(src, &dir));
@@ -1304,24 +1363,37 @@ fn find_nested_module_roots(src: &Path, starts: &[String]) -> Vec<String> {
                 continue;
             }
         }
+        // Only the descend step needs cycle protection: a symlink that
+        // points at an already-walked dir is fine to *record* (the dag
+        // filter sees both lexical paths) but must not be re-read.
+        let canon = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        if !descended.insert(canon) {
+            continue;
+        }
         let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in rd.flatten() {
-            let Ok(ft) = entry.file_type() else { continue };
-            if !ft.is_dir() {
+            let p = entry.path();
+            // Follow symlinked directories so a go.mod reachable through
+            // one is still recorded as a boundary; the visited set above
+            // breaks cycles.
+            if !p.is_dir() {
                 continue;
             }
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            // Skip hidden + Go-ignored testdata/vendor.
-            if name.starts_with('.') || name == "testdata" || name == "vendor" {
+            // Skip `.` and `_` prefixed dirs (`go help packages`). Unlike
+            // the pre-port skip list this does NOT exclude testdata/vendor:
+            // a go.mod under those is still a pkgSrc boundary the dag-side
+            // filter must respect, matching the original `pathExists go.mod`.
+            if name.starts_with('.') || name.starts_with('_') {
                 continue;
             }
-            stack.push(entry.path());
+            stack.push(p);
         }
     }
-    out.into_iter().collect()
+    Ok(out.into_iter().collect())
 }
 
 /// Convert a `PackageGraph` to a JSON string.
@@ -1443,7 +1515,7 @@ pub(crate) fn package_graph_to_json(
     let nested_starts: Vec<String> = std::iter::once(normalize_rel(&input.mod_root))
         .chain(local_replace_dirs.iter().cloned())
         .collect();
-    let nested_module_roots = find_nested_module_roots(&canon_src, &nested_starts);
+    let nested_module_roots = find_nested_module_roots(&canon_src, &nested_starts)?;
 
     let output = JsonOutput {
         packages,
@@ -1510,7 +1582,7 @@ mod tests {
     fn local_pkg_json(import_path: &str, mod_path: &str, dir: &str, imports: &[&str]) -> String {
         let imp_json: Vec<String> = imports.iter().map(|i| format!("\"{i}\"")).collect();
         format!(
-            r#"{{"ImportPath":"{import_path}","Dir":"{dir}","Module":{{"Path":"{mod_path}","Main":true}},"Imports":[{}]}}"#,
+            r#"{{"ImportPath":"{import_path}","Dir":"{dir}","Module":{{"Path":"{mod_path}","Main":true}},"Imports":[{}],"GoFiles":["a.go"]}}"#,
             imp_json.join(",")
         )
     }
@@ -2213,6 +2285,28 @@ mod tests {
     }
 
     #[test]
+    fn test_sub_package_closures_tp_reaches_local_replace() {
+        // Regression: a third-party package that imports a path which is
+        // local-replaced (`replace github.com/x/B => ./forks/B`). The BFS
+        // walks raw third-party imports, so it reaches forks/B and pulls
+        // in forks/B's own deps + cxx. This matches cmd/go's root.Deps
+        // walk (gc.go:590-595); the deleted Nix-side closure stopped at
+        // tp/a because it walked filtered third_party_imports only.
+        let fork_b = r#"{"ImportPath":"github.com/x/B","Dir":"/src/forks/B","Module":{"Path":"github.com/x/B","Replace":{"Path":"./forks/B"}},"Imports":["tp/c/pkg"],"CXXFiles":["b.cc"]}"#;
+        let stdout = format!(
+            "{}\n{}\n{fork_b}\n{}\n",
+            local_pkg_json("m/cmd/a", "m", "/src/cmd/a", &["tp/a/pkg"]),
+            tp_with_imports("tp/a/pkg", "tp/a", "v1.0.0", &["github.com/x/B"], false),
+            tp_with_imports("tp/c/pkg", "tp/c", "v3.0.0", &[], false),
+        );
+        let graph = parse_go_packages(stdout.as_bytes()).unwrap();
+        let closures = compute_sub_package_closures(&graph, &["./cmd/a".into()]);
+        let c = &closures["m/cmd/a"];
+        assert_eq!(c.mod_keys, vec!["tp/a@v1.0.0", "tp/c@v3.0.0"]);
+        assert!(c.cxx, "cxx must propagate from local-replaced fork via tp");
+    }
+
+    #[test]
     fn test_normalize_rel() {
         assert_eq!(normalize_rel("a/b/../c"), "a/c");
         assert_eq!(normalize_rel("./a/./b"), "a/b");
@@ -2246,6 +2340,28 @@ mod tests {
     }
 
     #[test]
+    fn test_walk_local_replace_dirs_comments_and_quotes() {
+        let src = tempfile::tempdir().unwrap();
+        let app = src.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(src.path().join("quoted")).unwrap();
+        std::fs::create_dir_all(src.path().join("has space")).unwrap();
+        std::fs::write(
+            app.join("go.mod"),
+            concat!(
+                "module app\n",
+                "// replace dead => ./commented\n",
+                "replace q => \"../quoted\"\n",
+                "replace s => `../has space`\n",
+                "replace t => ../tail // trailing comment\n",
+            ),
+        )
+        .unwrap();
+        let dirs = walk_local_replace_dirs(src.path(), "app");
+        assert_eq!(dirs, vec!["has space", "quoted", "tail"]);
+    }
+
+    #[test]
     fn test_nested_module_roots() {
         // Monorepo layout: src/{app,sib,unrelated}/ each has go.mod;
         // app/nested/ has go.mod; nested/under/ has go.mod (must NOT
@@ -2255,19 +2371,53 @@ mod tests {
             std::fs::create_dir_all(src.path().join(d)).unwrap();
             std::fs::write(src.path().join(d).join("go.mod"), "module x\n").unwrap();
         }
-        // testdata under a seed is skipped.
+        // go.mod under testdata IS a boundary (the dag-side pkgSrc filter
+        // would otherwise pull the whole fixture module into the input).
         let td = src.path().join("app/testdata/x");
         std::fs::create_dir_all(&td).unwrap();
         std::fs::write(td.join("go.mod"), "module td\n").unwrap();
+        // `_`-prefixed dirs are Go-ignored; don't descend.
+        let us = src.path().join("app/_ignored/y");
+        std::fs::create_dir_all(&us).unwrap();
+        std::fs::write(us.join("go.mod"), "module us\n").unwrap();
 
         // Seeds = modRoot + replaceDirs. unrelated/ is outside both → no I/O.
         let roots =
-            find_nested_module_roots(src.path(), &["app".into(), "sib".into()]);
-        assert_eq!(roots, vec!["app", "app/nested", "sib"]);
+            find_nested_module_roots(src.path(), &["app".into(), "sib".into()]).unwrap();
+        assert_eq!(roots, vec!["app", "app/nested", "app/testdata/x", "sib"]);
 
         // modRoot = "." walks the whole src.
-        let roots_all = find_nested_module_roots(src.path(), &[".".into()]);
+        let roots_all = find_nested_module_roots(src.path(), &[".".into()]).unwrap();
         assert_eq!(roots_all, vec!["app", "sib", "unrelated"]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_nested_module_roots_symlink() {
+        let src = tempfile::tempdir().unwrap();
+        let real = src.path().join("app/real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(src.path().join("app/go.mod"), "module app\n").unwrap();
+        std::fs::write(real.join("go.mod"), "module real\n").unwrap();
+        std::os::unix::fs::symlink(&real, src.path().join("app/link")).unwrap();
+        // Symlink loop: app/loop -> app
+        std::os::unix::fs::symlink(src.path().join("app"), src.path().join("app/loop")).unwrap();
+
+        let roots = find_nested_module_roots(src.path(), &["app".into()]).unwrap();
+        // Symlinked dir is followed; the boundary is recorded under both
+        // lexical paths (the dag-side filter sees both). app/loop also has
+        // a go.mod (it's app's) so it is recorded but not re-descended.
+        assert_eq!(roots, vec!["app", "app/link", "app/loop", "app/real"]);
+
+        // A symlink loop that does NOT pass through a go.mod must still
+        // terminate via the descended-set cycle break.
+        let src2 = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(src2.path().join("m/sub")).unwrap();
+        std::fs::write(src2.path().join("m/go.mod"), "module m\n").unwrap();
+        std::os::unix::fs::symlink(src2.path().join("m/sub"), src2.path().join("m/sub/loop"))
+            .unwrap();
+        let roots2 = find_nested_module_roots(src2.path(), &["m".into()]).unwrap();
+        assert_eq!(roots2, vec!["m"]);
     }
 
     #[test]
