@@ -1,7 +1,7 @@
 # Regression fixture for the file-precise mainSrc filter:
 #   - testdata/ reaches the testrunner (greet_test.go reads it via os.ReadFile)
 #   - build-time //go:embed (schema.json) is in mainSrc
-#   - test-only //go:embed (testdata/golden.json) is in mainSrc
+#   - test-only //go:embed (schema_test.json, NOT under testdata/) is in mainSrc
 #   - README.md and unrelated.yaml are NOT in mainSrc
 #   - adjacent.conf (runtime-read, non-testdata, non-embed) IS in mainSrc
 #     because it is listed in extraMainSrcFiles

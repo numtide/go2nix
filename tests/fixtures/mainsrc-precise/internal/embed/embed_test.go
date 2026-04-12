@@ -5,7 +5,11 @@ import (
 	"testing"
 )
 
-//go:embed testdata/golden.json
+// schema_test.json is NOT under testdata/ so its presence in mainSrc
+// proves the local_test_embed_files merge from the -test pass works,
+// not just the testdata-dir prefix rule.
+//
+//go:embed schema_test.json
 var golden string
 
 func TestSchemaMatchesGolden(t *testing.T) {

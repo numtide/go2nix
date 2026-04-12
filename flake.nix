@@ -142,6 +142,9 @@
           test-fixture-sibling-testonly = callPkgWith ./packages/test-fixture-sibling-testonly/default.nix {
             inherit flake system;
           };
+          test-fixture-testonly-embed = callPkgWith ./packages/test-fixture-testonly-embed/default.nix {
+            inherit flake system;
+          };
           test-mainsrc-precise = callPkgWith ./packages/test-mainsrc-precise/default.nix {
             inherit flake system;
           };
@@ -213,6 +216,7 @@
             go2nix = callPkg ./packages/go2nix/default.nix;
           };
           golangci-lint-go2nix-testgen = callPkg ./packages/golangci-lint-go2nix-testgen/default.nix;
+          cargo-clippy-go2nix-nix-plugin = callPkg ./packages/cargo-clippy-go2nix-nix-plugin/default.nix;
           check-godebug-table = callPkg ./packages/check-godebug-table/default.nix;
           cross-platform-env = callPkgWith ./tests/nix/cross_platform_test.nix { inherit pkgs; };
           # tests/nix/{helpers,fetch_go_module}_test.nix return `true` or

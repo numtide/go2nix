@@ -1,10 +1,6 @@
 package main
 
-import (
-	"os"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestExpandLDFlags(t *testing.T) {
 	tests := []struct {
@@ -123,38 +119,6 @@ func TestHasExtld(t *testing.T) {
 				t.Errorf("hasExtld(%v) = %v, want %v", tt.ldflags, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestExtractModulePath(t *testing.T) {
-	dir := t.TempDir()
-	gomod := filepath.Join(dir, "go.mod")
-
-	if err := os.WriteFile(gomod, []byte("module example.com/myapp\n\ngo 1.21\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := extractModulePath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "example.com/myapp" {
-		t.Errorf("got %q, want %q", got, "example.com/myapp")
-	}
-
-	// Missing go.mod returns error.
-	_, err = extractModulePath(t.TempDir())
-	if err == nil {
-		t.Error("expected error for missing go.mod")
-	}
-
-	// go.mod without module directive returns error.
-	nomod := filepath.Join(t.TempDir(), "go.mod")
-	if err = os.WriteFile(nomod, []byte("go 1.21\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, err = extractModulePath(filepath.Dir(nomod))
-	if err == nil {
-		t.Error("expected error for go.mod without module directive")
 	}
 }
 

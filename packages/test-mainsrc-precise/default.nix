@@ -55,7 +55,9 @@ else
       assert_in  internal/embed/embed.go
       assert_in  internal/embed/embed_test.go
       assert_in  internal/embed/schema.json
-      assert_in  internal/embed/testdata/golden.json
+      # Test-only //go:embed target NOT under testdata/ — proves the
+      # local_test_embed_files merge from the -test pass works.
+      assert_in  internal/embed/schema_test.json
       # extraMainSrcFiles entry — runtime-read, not testdata/, not //go:embed
       assert_in  internal/greet/adjacent.conf
       assert_out internal/greet/README.md

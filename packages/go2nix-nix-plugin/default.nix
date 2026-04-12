@@ -19,7 +19,13 @@ let
     version = "0.1.0";
     src = ./rust;
     cargoLock.lockFile = ./rust/Cargo.lock;
-    doCheck = false;
+    doCheck = true;
+    # run_go_list_surfaces_mfiles_and_swig invokes the baked-in go binary,
+    # which needs a writable GOCACHE/HOME in the sandbox.
+    preCheck = ''
+      export HOME=$TMPDIR
+      export GOCACHE=$TMPDIR/gocache
+    '';
     # Baked into the binary via option_env!("GO2NIX_DEFAULT_GO") so the
     # eval-time builtin never needs to realise a derivation for the Go
     # toolchain — that would be IFD.

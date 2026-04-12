@@ -50,6 +50,16 @@ else
       check '[ -e "$ms/app/internal/util/util.go" ]' "internal/util (a real local package) must be present"
       check '[ ! -e "$ms/app/nested-module" ]'    "nested-module subtree must NOT be in mainSrc"
 
+      # Per-package pkgSrc check: a go.mod-bearing dir under testdata/ is
+      # a nested-module boundary the pkgSrc filter must drop (mainSrc
+      # includes testdata/ wholesale, so check pkgSrc separately).
+      pkgSrc=$(GOMODCACHE="$TMPDIR/empty-gmc" nix-instantiate --eval --read-write-mode --raw \
+        -I nixpkgs=${nixpkgsPath} \
+        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+        -E '(import ${go2nixSrc}/tests/fixtures/modroot-nested/dag.nix).passthru.localPackages."example.com/modroot-nested/internal/util".goPackageSrcDir')
+      check '[ -e "$pkgSrc/util.go" ]'            "pkgSrc(util) must include util.go"
+      check '[ ! -e "$pkgSrc/testdata/mod" ]'     "pkgSrc(util) must NOT include testdata/mod (nested go.mod boundary)"
+
       [ "$fail" -eq 0 ] || exit 1
-      echo "nested-module-test: 4 assertions passed" > $out
+      echo "nested-module-test: 6 assertions passed" > $out
     ''

@@ -12,6 +12,7 @@ import (
 
 	"github.com/numtide/go2nix/pkg/buildinfo"
 	"github.com/numtide/go2nix/pkg/compile"
+	"github.com/numtide/go2nix/pkg/localpkgs"
 	"github.com/numtide/go2nix/pkg/mvscheck"
 )
 
@@ -51,9 +52,12 @@ func linkBinary(manifestPath, output string) error {
 	}
 
 	// Step 2: Extract module path from go.mod.
-	modulePath, err := extractModulePath(m.ModuleRoot)
+	modulePath, err := localpkgs.ModulePath(m.ModuleRoot)
 	if err != nil {
 		return err
+	}
+	if modulePath == "" {
+		return fmt.Errorf("no module directive in %s/go.mod", m.ModuleRoot)
 	}
 
 	// Step 3: Merge importcfg parts.
@@ -328,20 +332,6 @@ func linkBinary(manifestPath, output string) error {
 	}
 
 	return nil
-}
-
-func extractModulePath(moduleRoot string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(moduleRoot, "go.mod"))
-	if err != nil {
-		return "", fmt.Errorf("reading go.mod: %w", err)
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
-		}
-	}
-	return "", fmt.Errorf("could not extract module path from %s/go.mod", moduleRoot)
 }
 
 func goToolchainVersion() (string, error) {
