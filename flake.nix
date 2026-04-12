@@ -216,6 +216,7 @@
             go2nix = callPkg ./packages/go2nix/default.nix;
           };
           golangci-lint-go2nix-testgen = callPkg ./packages/golangci-lint-go2nix-testgen/default.nix;
+          cargo-clippy-go2nix-nix-plugin = callPkg ./packages/cargo-clippy-go2nix-nix-plugin/default.nix;
           check-godebug-table = callPkg ./packages/check-godebug-table/default.nix;
           cross-platform-env = callPkgWith ./tests/nix/cross_platform_test.nix { inherit pkgs; };
           # tests/nix/{helpers,fetch_go_module}_test.nix return `true` or
