@@ -69,6 +69,16 @@ struct GoPackage {
     swig_cxx_files: Vec<String>,
     #[serde(rename = "EmbedPatterns")]
     embed_patterns: Vec<String>,
+    #[serde(rename = "EmbedFiles")]
+    embed_files: Vec<String>,
+    #[serde(rename = "TestGoFiles")]
+    test_go_files: Vec<String>,
+    #[serde(rename = "XTestGoFiles")]
+    x_test_go_files: Vec<String>,
+    #[serde(rename = "TestEmbedFiles")]
+    test_embed_files: Vec<String>,
+    #[serde(rename = "XTestEmbedFiles")]
+    x_test_embed_files: Vec<String>,
     #[serde(rename = "CgoPkgConfig")]
     cgo_pkg_config: Vec<String>,
     #[serde(rename = "CgoCFLAGS")]
@@ -113,6 +123,11 @@ struct LocalPkgData {
     cgo_ldflags: Vec<String>,
     is_cgo: bool,
     files: PkgFiles,
+    /// Dir-relative paths the precise mainSrc filter must include for this
+    /// package: every compiled source kind plus resolved //go:embed targets
+    /// (build, test, and xtest). The test-embed entries are merged in from
+    /// the `-test` pass since `go list` only resolves them under `-test`.
+    main_src_files: Vec<String>,
 }
 
 /// Raw local package data collected during a parse pass; imports are
@@ -126,6 +141,7 @@ struct RawLocalPkg {
     cgo_ldflags: Vec<String>,
     is_cgo: bool,
     files: PkgFiles,
+    main_src_files: Vec<String>,
 }
 
 /// Per-package source file lists as reported by `go list`, threaded through
@@ -191,6 +207,37 @@ fn pkg_files_from(p: &GoPackage) -> PkgFiles {
         swig_cxx_files: p.swig_cxx_files.clone(),
         embed_patterns: p.embed_patterns.clone(),
     }
+}
+
+/// Dir-relative paths the precise mainSrc filter must include for this
+/// package. Covers every source kind `go/build.ImportDir` reads (so the
+/// testrunner walk sees exactly what `go list` did) plus resolved
+/// //go:embed targets. {Test,XTest}EmbedFiles are only populated under
+/// `go list -test`; the build pass leaves them empty and the test pass
+/// merges them in for build-graph locals.
+fn main_src_files_from(p: &GoPackage) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    for v in [
+        &p.go_files,
+        &p.cgo_files,
+        &p.s_files,
+        &p.c_files,
+        &p.cxx_files,
+        &p.m_files,
+        &p.f_files,
+        &p.h_files,
+        &p.syso_files,
+        &p.swig_files,
+        &p.swig_cxx_files,
+        &p.embed_files,
+        &p.test_go_files,
+        &p.x_test_go_files,
+        &p.test_embed_files,
+        &p.x_test_embed_files,
+    ] {
+        out.extend(v.iter().cloned());
+    }
+    out.into_iter().collect()
 }
 
 /// Cap on the sanitized component so the full derivation name (prefix +
@@ -323,7 +370,7 @@ fn run_go_list(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
     cmd.arg("-deps");
     cmd.arg("-e");
     cmd.arg("-buildvcs=false");
@@ -367,7 +414,7 @@ fn run_go_list_test(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
     cmd.arg("-deps");
     cmd.arg("-test");
     cmd.arg("-e");
@@ -405,6 +452,10 @@ fn run_go_list_test(
 struct TestPassResult {
     test_packages: Vec<PkgData>,
     test_local_packages: Vec<LocalPkgData>,
+    /// importPath → {Test,XTest}EmbedFiles for build-graph locals. `go list`
+    /// only resolves test embed files under `-test`, so the build pass left
+    /// these empty; merged into local_packages[].main_src_files by the caller.
+    local_test_embed_files: BTreeMap<String, Vec<String>>,
 }
 
 fn parse_test_packages(
@@ -417,6 +468,7 @@ fn parse_test_packages(
     let mut test_only_paths = BTreeSet::new();
     let mut test_local_paths = BTreeSet::new();
     let mut raw_test_locals: Vec<RawLocalPkg> = Vec::new();
+    let mut local_test_embed_files: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut pkg_errors = Vec::new();
 
     for result in serde_json::Deserializer::from_slice(stdout).into_iter::<GoPackage>() {
@@ -436,6 +488,7 @@ fn parse_test_packages(
         }
 
         let files = pkg_files_from(&jpkg);
+        let main_src_files = main_src_files_from(&jpkg);
 
         // Skip stdlib (no module).
         let Some(module) = jpkg.module else {
@@ -447,12 +500,18 @@ fn parse_test_packages(
         // Local = main module or filesystem-path replace.
         let is_local = module.main || (!replace_path.is_empty() && replace_version.is_empty());
         if is_local {
-            // Skip locals already in the build graph; collect the rest as
-            // test-only locals (e.g. an internal/testutil only imported
-            // from *_test.go files).
-            if local_paths.contains(&jpkg.import_path)
-                || !test_local_paths.insert(jpkg.import_path.clone())
-            {
+            // For build-graph locals, harvest the {Test,XTest}EmbedFiles that
+            // only resolve under -test; the rest are test-only locals
+            // (e.g. an internal/testutil only imported from *_test.go files).
+            if local_paths.contains(&jpkg.import_path) {
+                if !jpkg.test_embed_files.is_empty() || !jpkg.x_test_embed_files.is_empty() {
+                    let mut v = jpkg.test_embed_files.clone();
+                    v.extend(jpkg.x_test_embed_files.clone());
+                    local_test_embed_files.insert(jpkg.import_path.clone(), v);
+                }
+                continue;
+            }
+            if !test_local_paths.insert(jpkg.import_path.clone()) {
                 continue;
             }
             raw_test_locals.push(RawLocalPkg {
@@ -464,6 +523,7 @@ fn parse_test_packages(
                 cgo_ldflags: jpkg.cgo_ldflags,
                 is_cgo: !jpkg.cgo_files.is_empty(),
                 files,
+                main_src_files,
             });
             continue;
         }
@@ -541,6 +601,7 @@ fn parse_test_packages(
                 cgo_ldflags: raw.cgo_ldflags,
                 is_cgo: raw.is_cgo,
                 files: raw.files,
+                main_src_files: raw.main_src_files,
             }
         })
         .collect();
@@ -548,6 +609,7 @@ fn parse_test_packages(
     Ok(TestPassResult {
         test_packages,
         test_local_packages,
+        local_test_embed_files,
     })
 }
 
@@ -618,6 +680,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         }
 
         let files = pkg_files_from(&jpkg);
+        let main_src_files = main_src_files_from(&jpkg);
 
         // stdlib packages have no module
         let Some(module) = jpkg.module else {
@@ -650,6 +713,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
                 cgo_ldflags: jpkg.cgo_ldflags,
                 is_cgo: !jpkg.cgo_files.is_empty(),
                 files,
+                main_src_files,
             });
 
             continue;
@@ -718,6 +782,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
                 cgo_ldflags: raw.cgo_ldflags,
                 is_cgo: raw.is_cgo,
                 files: raw.files,
+                main_src_files: raw.main_src_files,
             }
         })
         .collect();
@@ -855,6 +920,13 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
             .collect();
         graph.test_packages = tp.test_packages;
         graph.test_local_packages = tp.test_local_packages;
+        for lp in &mut graph.local_packages {
+            if let Some(extra) = tp.local_test_embed_files.get(&lp.import_path) {
+                lp.main_src_files.extend(extra.iter().cloned());
+                lp.main_src_files.sort();
+                lp.main_src_files.dedup();
+            }
+        }
     }
 
     Ok(graph)
@@ -880,6 +952,11 @@ struct JsonLocalPkg {
     cgo_ldflags: Vec<String>,
     #[serde(skip_serializing_if = "PkgFiles::is_empty")]
     files: PkgFiles,
+    /// Src-relative paths the precise mainSrc filter must include for this
+    /// package: every compiled source kind, *_test.go, and resolved
+    /// //go:embed targets (build + test + xtest). Dir-prefixed here so the
+    /// Nix-side filter can union these into one attrset across all packages.
+    main_src_files: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1251,6 +1328,11 @@ pub(crate) fn package_graph_to_json(
         } else {
             rel_str.into_owned()
         };
+        let main_src_files = lp
+            .main_src_files
+            .iter()
+            .map(|f| if dir == "." { f.clone() } else { format!("{dir}/{f}") })
+            .collect();
         Ok((
             lp.import_path.clone(),
             JsonLocalPkg {
@@ -1262,6 +1344,7 @@ pub(crate) fn package_graph_to_json(
                 cgo_cflags: lp.cgo_cflags.clone(),
                 cgo_ldflags: lp.cgo_ldflags.clone(),
                 files: lp.files.clone(),
+                main_src_files,
             },
         ))
     };
@@ -1354,6 +1437,35 @@ pub(crate) fn package_graph_to_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_main_src_files_from() {
+        let p = GoPackage {
+            go_files: vec!["a.go".into()],
+            cgo_files: vec!["c.go".into()],
+            h_files: vec!["c.h".into()],
+            embed_files: vec!["templates/index.html".into()],
+            test_go_files: vec!["a_test.go".into()],
+            x_test_go_files: vec!["x_test.go".into()],
+            test_embed_files: vec!["fixture.bin".into()],
+            // patterns are NOT included — only resolved files matter for mainSrc
+            embed_patterns: vec!["templates/*".into()],
+            ..Default::default()
+        };
+        let got = main_src_files_from(&p);
+        assert_eq!(
+            got,
+            vec![
+                "a.go",
+                "a_test.go",
+                "c.go",
+                "c.h",
+                "fixture.bin",
+                "templates/index.html",
+                "x_test.go",
+            ]
+        );
+    }
 
     /// Minimal go list JSON for a third-party package.
     fn third_party_json(import_path: &str, mod_path: &str, version: &str) -> String {
