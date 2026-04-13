@@ -60,7 +60,7 @@ time and emits an IFD warning.
 | `pgoProfile` | path or `null` | `null` | both | Path to a pprof CPU profile for profile-guided optimization. The profile is passed to every `go tool compile` invocation, so changing it invalidates all package derivations. See [Go's PGO docs](https://go.dev/doc/pgo) for producing a profile. |
 | `nativeBuildInputs` | list | `[]` | both | Extra build inputs for the final derivation. |
 | `packageOverrides` | attrset | `{}` | both | Per-package customization (see below). |
-| `doCheck` | bool | `modRoot == "."` | default only | Run tests. Defaults to `false` when `modRoot` is set, because test discovery may not find local replace targets outside the module root. See [Test Support](test-support.md). |
+| `doCheck` | bool | `true` | default only | Run tests. Matches `buildGoModule`'s default. See [Test Support](test-support.md). |
 | `checkFlags` | list of strings | `[]` | default only | Flags passed to the compiled test binary (e.g., `-v`, `-count=1`). See [Test Support](test-support.md). |
 | `goProxy` | string or `null` | `null` | default only | Custom GOPROXY URL. |
 | `allowGoReference` | bool | `false` | default only | Allow the output to reference the Go toolchain. |
@@ -86,10 +86,9 @@ goEnv.buildGoApplication {
 
 This is necessary when the module uses `replace` directives pointing to sibling
 directories outside `modRoot`. The builder needs access to the full `src` tree,
-with `modRoot` telling it where `go.mod` lives.
-
-When `modRoot != "."`, `doCheck` defaults to `false` — see
-[Test Support](test-support.md#enabling-tests) for why and when to override.
+with `modRoot` telling it where `go.mod` lives. The filtered `mainSrc` for the
+final derivation unions in those sibling replace directories, so `doCheck`
+works regardless of `modRoot`.
 
 ## `subPackages`
 

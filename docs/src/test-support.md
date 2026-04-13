@@ -18,13 +18,11 @@ goEnv.buildGoApplication {
 }
 ```
 
-`doCheck` defaults to `true` when `modRoot == "."` and `false` otherwise.
-When `modRoot` points to a subdirectory, the source tree filtered for the
-final derivation may not include local replace targets outside the module
-root, causing test discovery to fail. Override with `doCheck = true` if your
-layout doesn't use out-of-tree replaces. See the
-[Builder API](builder-api.md) table for these and the other `buildGoApplication`
-defaults.
+`doCheck` defaults to `true` (matching `buildGoModule`). The filtered
+`mainSrc` for the final derivation includes local replace targets outside
+`modRoot`, so test discovery works for sibling-replace layouts without
+overrides. See the [Builder API](builder-api.md) table for the other
+`buildGoApplication` defaults.
 
 ## What gets tested
 
@@ -109,8 +107,6 @@ These map to the standard `testing` package flags (`-v`, `-run`, `-count`,
 ## Limitations
 
 - **Default mode only.** The experimental builder does not run tests.
-- **`modRoot != "."`** disables tests by default. The source filter for the
-  final derivation may exclude sibling modules needed by tests.
 - **No per-package test caching.** All local tests re-run whenever the final
   app derivation rebuilds; go2nix does not skip individual test packages
   whose inputs are unchanged (unlike `go test`'s cache).
