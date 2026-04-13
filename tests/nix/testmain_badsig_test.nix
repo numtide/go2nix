@@ -59,22 +59,26 @@ else
       func TestBadSig(x int) {}
       EOF
 
-      set +e
-      nix-build $TMPDIR/fixture/dag.nix \
+      drv=$(nix-instantiate $TMPDIR/fixture/dag.nix \
         -I nixpkgs=${nixpkgsPath} \
-        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
-        --no-out-link 2> $TMPDIR/stderr
+        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so")
+
+      set +e
+      nix-build "$drv" --no-out-link
       rc=$?
       set -e
-
-      cat $TMPDIR/stderr
 
       if [ "$rc" -eq 0 ]; then
         echo "FAIL: build unexpectedly succeeded; bad-signature test function was silently skipped" >&2
         exit 1
       fi
-      if ! grep -q "wrong signature for TestBadSig" $TMPDIR/stderr; then
-        echo "FAIL: build failed but stderr lacks 'wrong signature for TestBadSig'" >&2
+      # Under recursive-nix the inner build's stdout/stderr is written to the
+      # daemon's per-drv log, not to the wrapping nix-build's stderr (which only
+      # carries "Cannot build …"). Read the recorded log to assert on content.
+      nix-store --read-log "$drv" > $TMPDIR/buildlog
+      cat $TMPDIR/buildlog
+      if ! grep -q "wrong signature for TestBadSig" $TMPDIR/buildlog; then
+        echo "FAIL: build failed but log lacks 'wrong signature for TestBadSig'" >&2
         exit 1
       fi
 
