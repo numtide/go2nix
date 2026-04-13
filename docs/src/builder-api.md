@@ -138,7 +138,7 @@ goEnv = go2nix.lib.mkGoEnv {
 | `go2nix` | derivation | required | go2nix CLI binary. |
 | `callPackage` | function | required | `pkgs.callPackage`. |
 | `tags` | list of strings | `[]` | Build tags applied to all builds in this scope. |
-| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and every `go tool` invocation in this scope (e.g. `GOEXPERIMENT`). Scope-level because the stdlib derivation is shared by every build in the scope. |
+| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and every `go tool` invocation in this scope (e.g. `GOEXPERIMENT`, `GOFIPS140`). Scope-level because the stdlib derivation is shared by every build in the scope. |
 | `netrcFile` | path or `null` | `null` | `.netrc` file for private module authentication (see below). |
 | `nixPackage` | derivation or `null` | `null` | Nix binary. Required for `buildGoApplicationExperimental`. |
 
@@ -150,6 +150,25 @@ driven the standard nixpkgs way — pass a cross `pkgs` (e.g.
 resulting scope produces binaries for that target. The
 [Nix plugin](nix-plugin.md) is told the target `goos`/`goarch` so build-tag
 evaluation matches the host platform.
+
+## FIPS 140 mode (`GOFIPS140`)
+
+Set `GOFIPS140` via the scope-level `goEnv` to build against the Go FIPS 140
+crypto module, equivalent to `GOFIPS140=latest go build`:
+
+```nix
+goEnv = go2nix.lib.mkGoEnv {
+  inherit (pkgs) go callPackage;
+  go2nix = go2nix.packages.${system}.go2nix;
+  goEnv = { GOFIPS140 = "latest"; };
+};
+```
+
+The variable reaches both `go install std` (so the FIPS-aware stdlib is
+compiled) and the link step, where go2nix emits the matching
+`build GOFIPS140=` modinfo line and folds `fips140=on` into
+`DefaultGODEBUG` — `go version -m` output is identical to a vanilla
+`GOFIPS140=latest go build -trimpath`.
 
 ## Private modules (`netrcFile`)
 
