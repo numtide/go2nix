@@ -218,6 +218,7 @@ type nixTool struct {
 	exprPath    string
 	extraOpts   []string
 	storeRoot   string // local store root (NIX_REMOTE=local?root=...)
+	stderrTail  int    // bytes of stderr to keep in error messages
 }
 
 type buildResult struct {
@@ -251,8 +252,8 @@ func (t *nixTool) build(srcPath string) (buildResult, error) {
 	evalElapsed, evalOut, evalErr, err := runCommand("nix-instantiate", evalArgs, env)
 	if err != nil {
 		tail := evalErr
-		if len(tail) > 500 {
-			tail = tail[len(tail)-500:]
+		if len(tail) > t.stderrTail {
+			tail = tail[len(tail)-t.stderrTail:]
 		}
 		return buildResult{}, fmt.Errorf("nix-instantiate failed: %w\n%s", err, tail)
 	}
@@ -269,8 +270,8 @@ func (t *nixTool) build(srcPath string) (buildResult, error) {
 	buildElapsed, buildOut, buildErr, err := runCommand("nix-store", realiseArgs, env)
 	if err != nil {
 		tail := buildErr
-		if len(tail) > 500 {
-			tail = tail[len(tail)-500:]
+		if len(tail) > t.stderrTail {
+			tail = tail[len(tail)-t.stderrTail:]
 		}
 		return buildResult{}, fmt.Errorf("nix-store --realise failed: %w\n%s", err, tail)
 	}
@@ -613,6 +614,8 @@ func main() {
 	jsonOut := flag.String("json", "", "export results as JSON to this path")
 	assertCascade := flag.Int("assert-cascade", -1,
 		"fail if any tool builds more than N drvs on a touch scenario")
+	stderrTail := flag.Int("stderr-tail", 500,
+		"bytes of stderr to keep in error messages")
 	flag.Parse()
 
 	fc, ok := fixtures[*fixtureName]
@@ -694,20 +697,22 @@ func main() {
 		"nix": {
 			name: "nix", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprNix, storeRoot: storeRoot,
+			stderrTail: *stderrTail,
 		},
 		"nix-ca": {
 			name: "nix-ca", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprCA, storeRoot: storeRoot,
-			extraOpts: caOpts,
+			extraOpts: caOpts, stderrTail: *stderrTail,
 		},
 		"nix-nocgo": {
 			name: "nix-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprNoCgo, storeRoot: storeRoot,
+			stderrTail: *stderrTail,
 		},
 		"nix-ca-nocgo": {
 			name: "nix-ca-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprCANoCgo, storeRoot: storeRoot,
-			extraOpts: caOpts,
+			extraOpts: caOpts, stderrTail: *stderrTail,
 		},
 	}
 
