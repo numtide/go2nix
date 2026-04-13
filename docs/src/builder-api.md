@@ -60,8 +60,9 @@ time and emits an IFD warning.
 | `pgoProfile` | path or `null` | `null` | both | Path to a pprof CPU profile for profile-guided optimization. The profile is passed to every `go tool compile` invocation, so changing it invalidates all package derivations. See [Go's PGO docs](https://go.dev/doc/pgo) for producing a profile. |
 | `nativeBuildInputs` | list | `[]` | both | Extra build inputs for the final derivation. |
 | `packageOverrides` | attrset | `{}` | both | Per-package customization (see below). |
-| `doCheck` | bool | `modRoot == "."` | default only | Run tests. Defaults to `false` when `modRoot` is set, because test discovery may not find local replace targets outside the module root. See [Test Support](test-support.md). |
+| `doCheck` | bool | `true` | default only | Run tests. Matches `buildGoModule`'s default. See [Test Support](test-support.md). |
 | `checkFlags` | list of strings | `[]` | default only | Flags passed to the compiled test binary (e.g., `-v`, `-count=1`). See [Test Support](test-support.md). |
+| `extraMainSrcFiles` | list of strings | `[]` | default only | Extra `src`-relative paths (files or directories) kept in the filtered test source tree. Escape hatch for tests that read runtime files outside `testdata/` and `//go:embed`. See [Test Support](test-support.md#extramainsrcfiles). |
 | `goProxy` | string or `null` | `null` | default only | Custom GOPROXY URL. |
 | `allowGoReference` | bool | `false` | default only | Allow the output to reference the Go toolchain. |
 | `meta` | attrset | `{}` | default only | Nix meta attributes. |
@@ -86,10 +87,9 @@ goEnv.buildGoApplication {
 
 This is necessary when the module uses `replace` directives pointing to sibling
 directories outside `modRoot`. The builder needs access to the full `src` tree,
-with `modRoot` telling it where `go.mod` lives.
-
-When `modRoot != "."`, `doCheck` defaults to `false` — see
-[Test Support](test-support.md#enabling-tests) for why and when to override.
+with `modRoot` telling it where `go.mod` lives. The filtered `mainSrc` for the
+final derivation unions in those sibling replace directories, so `doCheck`
+works regardless of `modRoot`.
 
 ## `subPackages`
 
@@ -138,7 +138,7 @@ goEnv = go2nix.lib.mkGoEnv {
 | `go2nix` | derivation | required | go2nix CLI binary. |
 | `callPackage` | function | required | `pkgs.callPackage`. |
 | `tags` | list of strings | `[]` | Build tags applied to all builds in this scope. |
-| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and every `go tool` invocation in this scope (e.g. `GOEXPERIMENT`). Scope-level because the stdlib derivation is shared by every build in the scope. |
+| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and every `go tool` invocation in this scope (e.g. `GOEXPERIMENT`, `GOFIPS140`). Scope-level because the stdlib derivation is shared by every build in the scope. |
 | `netrcFile` | path or `null` | `null` | `.netrc` file for private module authentication (see below). |
 | `nixPackage` | derivation or `null` | `null` | Nix binary. Required for `buildGoApplicationExperimental`. |
 
@@ -150,6 +150,25 @@ driven the standard nixpkgs way — pass a cross `pkgs` (e.g.
 resulting scope produces binaries for that target. The
 [Nix plugin](nix-plugin.md) is told the target `goos`/`goarch` so build-tag
 evaluation matches the host platform.
+
+## FIPS 140 mode (`GOFIPS140`)
+
+Set `GOFIPS140` via the scope-level `goEnv` to build against the Go FIPS 140
+crypto module, equivalent to `GOFIPS140=latest go build`:
+
+```nix
+goEnv = go2nix.lib.mkGoEnv {
+  inherit (pkgs) go callPackage;
+  go2nix = go2nix.packages.${system}.go2nix;
+  goEnv = { GOFIPS140 = "latest"; };
+};
+```
+
+The variable reaches both `go install std` (so the FIPS-aware stdlib is
+compiled) and the link step, where go2nix emits the matching
+`build GOFIPS140=` modinfo line and folds `fips140=on` into
+`DefaultGODEBUG` — `go version -m` output is identical to a vanilla
+`GOFIPS140=latest go build -trimpath`.
 
 ## Private modules (`netrcFile`)
 
