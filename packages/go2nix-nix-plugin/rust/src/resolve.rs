@@ -118,6 +118,11 @@ pub(crate) struct PkgData {
 struct LocalPkgData {
     import_path: String,
     dir: String,
+    /// `Module.Path` of the module owning this package. Equals
+    /// `PackageGraph.module_path` for main-module packages, or the sibling
+    /// module's path for filesystem-replace targets — drives per-package
+    /// `-lang`/`-trimpath` (cmd/go gc.go:271).
+    mod_path: String,
     local_imports: Vec<String>,
     third_party_imports: Vec<String>,
     cgo_pkg_config: Vec<String>,
@@ -132,11 +137,34 @@ struct LocalPkgData {
     main_src_files: Vec<String>,
 }
 
+/// A filesystem-replaced sibling module (`replace foo => ./sib`). cmd/go
+/// treats these as distinct modules with their own `go` directive,
+/// `Module.Version` (the require-line version, used for `-trimpath`'s
+/// `module@version` rewrite — gc.go:271-276), and modinfo `dep`/`=>` lines
+/// (load/pkg.go:2334-2371). go2nix previously folded them into the main
+/// module, dropping all three.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SiblingModule {
+    /// Module path from the sibling's own go.mod (== the require LHS).
+    path: String,
+    /// Version from the main module's `require` line; empty if absent. cmd/go
+    /// emits `module@version` trimpath only when non-empty (gc.go:271).
+    version: String,
+    /// Sibling's own `go` directive (major.minor) for per-package `-lang`.
+    go_version: String,
+    /// The literal replace-target string from go.mod (`./sib`, `../x`); this
+    /// is what cmd/go records as the `=>` line's path
+    /// (modload/build.go:424-427).
+    replace_dir: String,
+}
+
 /// Raw local package data collected during a parse pass; imports are
 /// classified into local vs third-party after the full set is known.
 struct RawLocalPkg {
     import_path: String,
     dir: String,
+    mod_path: String,
     imports: Vec<String>,
     cgo_pkg_config: Vec<String>,
     cgo_cflags: Vec<String>,
@@ -560,6 +588,7 @@ fn parse_test_packages(
             raw_test_locals.push(RawLocalPkg {
                 import_path,
                 dir: jpkg.dir,
+                mod_path: module.path.clone(),
                 imports,
                 cgo_pkg_config: jpkg.cgo_pkg_config,
                 cgo_cflags: jpkg.cgo_cflags,
@@ -641,6 +670,7 @@ fn parse_test_packages(
             LocalPkgData {
                 import_path: raw.import_path,
                 dir: raw.dir,
+                mod_path: raw.mod_path,
                 local_imports,
                 third_party_imports,
                 cgo_pkg_config: raw.cgo_pkg_config,
@@ -674,6 +704,9 @@ pub(crate) struct PackageGraph {
     /// packages with `module.main == false`). Used to build `<mod>/...`
     /// patterns for the `-test` pass.
     local_replace_mod_paths: BTreeSet<String>,
+    /// Per-sibling module identity (path, require-version, go directive,
+    /// replace dir) so each sibling compiles/links like cmd/go would.
+    sibling_modules: BTreeMap<String, SiblingModule>,
     module_path: String,
     /// Main module's `go` directive (major.minor), threaded to local
     /// per-package compiles as `-lang` so non-root subpackages — whose
@@ -717,6 +750,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
     let mut local_paths = BTreeSet::new();
     let mut replacements: BTreeMap<String, (String, String)> = BTreeMap::new();
     let mut local_replace_mod_paths: BTreeSet<String> = BTreeSet::new();
+    let mut sibling_modules: BTreeMap<String, SiblingModule> = BTreeMap::new();
     let mut module_path = String::new();
     let mut go_version = String::new();
     let mut raw_local_pkgs: Vec<RawLocalPkg> = Vec::new();
@@ -755,6 +789,17 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
             }
             if !module.main {
                 local_replace_mod_paths.insert(module.path.clone());
+                // go list reports the *require-line* version on Module.Version
+                // and the literal `./dir` directive on Module.Replace.Path for
+                // a filesystem replace; capture both once per sibling.
+                sibling_modules
+                    .entry(module.path.clone())
+                    .or_insert_with(|| SiblingModule {
+                        path: module.path.clone(),
+                        version: module.version.clone(),
+                        go_version: lang_version(&module.go_version),
+                        replace_dir: replace_path.clone(),
+                    });
             }
 
             local_paths.insert(jpkg.import_path.clone());
@@ -762,6 +807,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
             raw_local_pkgs.push(RawLocalPkg {
                 import_path: jpkg.import_path,
                 dir: jpkg.dir,
+                mod_path: module.path.clone(),
                 imports: jpkg.imports,
                 cgo_pkg_config: jpkg.cgo_pkg_config,
                 cgo_cflags: jpkg.cgo_cflags,
@@ -830,6 +876,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
             LocalPkgData {
                 import_path: raw.import_path,
                 dir: raw.dir,
+                mod_path: raw.mod_path,
                 local_imports,
                 third_party_imports,
                 cgo_pkg_config: raw.cgo_pkg_config,
@@ -849,6 +896,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
         local_paths,
         replacements,
         local_replace_mod_paths,
+        sibling_modules,
         module_path,
         go_version,
         test_packages: Vec::new(),
@@ -1006,6 +1054,10 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
 #[serde(rename_all = "camelCase")]
 struct JsonLocalPkg {
     dir: String,
+    /// `Module.Path` of the module owning this package — equals
+    /// `goPackagesResult.modulePath` for main-module packages, or a key into
+    /// `siblingModules` for filesystem-replace targets.
+    mod_path: String,
     local_imports: Vec<String>,
     third_party_imports: Vec<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1047,6 +1099,12 @@ struct JsonOutput {
     /// Precomputed per-subPackage import closure (modKeys + cxx).
     /// Replaces the Nix-side `genericClosure` walk.
     sub_package_closures: BTreeMap<String, JsonClosure>,
+    /// Per-sibling module identity (require version, go directive, replace
+    /// dir) keyed by module path. Threaded to per-package compile drvs for
+    /// `-lang`/`-trimpath` parity and to the link drv for modinfo `dep`/`=>`
+    /// lines.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    sibling_modules: BTreeMap<String, SiblingModule>,
     /// Transitive local-replace target dirs (src-relative, normalized).
     /// Replaces the Nix-side go.mod readFile + regex walk.
     local_replace_dirs: Vec<String>,
@@ -1087,6 +1145,12 @@ struct JsonReplacement {
 #[serde(rename_all = "camelCase")]
 struct JsonClosure {
     mod_keys: Vec<String>,
+    /// Sibling-module paths whose packages this binary actually links — keys
+    /// into `siblingModules`. Separate from `mod_keys` because the dag emits
+    /// these as `dep`/`=>` modinfo lines (load/pkg.go:2370), not `dep` lines
+    /// keyed on go.sum.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    sibling_mod_paths: Vec<String>,
     cxx: bool,
 }
 
@@ -1177,6 +1241,7 @@ fn compute_sub_package_closures(
         let mut visited: BTreeSet<&str> = BTreeSet::new();
         let mut queue: VecDeque<&str> = VecDeque::new();
         let mut mod_keys: BTreeSet<String> = BTreeSet::new();
+        let mut sibling_mod_paths: BTreeSet<String> = BTreeSet::new();
         let mut cxx = false;
 
         queue.push_back(root.as_str());
@@ -1186,6 +1251,12 @@ fn compute_sub_package_closures(
             }
             if let Some((lp, lcxx)) = local_index.get(ip) {
                 cxx |= lcxx;
+                // Sibling-module locals contribute a modinfo `dep` line just
+                // like third-party deps (load/pkg.go:2370 — only the *main*
+                // module's path is excluded).
+                if lp.mod_path != graph.module_path {
+                    sibling_mod_paths.insert(lp.mod_path.clone());
+                }
                 for imp in lp.local_imports.iter().chain(lp.third_party_imports.iter()) {
                     queue.push_back(imp.as_str());
                 }
@@ -1202,6 +1273,7 @@ fn compute_sub_package_closures(
             root,
             JsonClosure {
                 mod_keys: mod_keys.into_iter().collect(),
+                sibling_mod_paths: sibling_mod_paths.into_iter().collect(),
                 cxx,
             },
         );
@@ -1441,6 +1513,7 @@ pub(crate) fn package_graph_to_json(
             lp.import_path.clone(),
             JsonLocalPkg {
                 dir,
+                mod_path: lp.mod_path.clone(),
                 local_imports: lp.local_imports.clone(),
                 third_party_imports: lp.third_party_imports.clone(),
                 is_cgo: lp.is_cgo,
@@ -1527,6 +1600,7 @@ pub(crate) fn package_graph_to_json(
         test_local_packages,
         module_hashes,
         sub_package_closures,
+        sibling_modules: graph.sibling_modules.clone(),
         local_replace_dirs,
         nested_module_roots,
     };
@@ -2282,6 +2356,75 @@ mod tests {
         // root "." → "m"; m has no local pkg in graph → empty closure
         assert_eq!(closures2["m"].mod_keys, Vec::<String>::new());
         assert!(!closures2["m"].cxx);
+    }
+
+    /// go list JSON for a package owned by a filesystem-replaced sibling
+    /// module (`replace <mod_path> => <dir>` in the main go.mod).
+    fn sibling_pkg_json(
+        import_path: &str,
+        mod_path: &str,
+        version: &str,
+        go_ver: &str,
+        replace_dir: &str,
+        dir: &str,
+        imports: &[&str],
+    ) -> String {
+        let imp: Vec<String> = imports.iter().map(|i| format!("\"{i}\"")).collect();
+        format!(
+            r#"{{"ImportPath":"{import_path}","Dir":"{dir}","Module":{{"Path":"{mod_path}","Version":"{version}","GoVersion":"{go_ver}","Replace":{{"Path":"{replace_dir}"}}}},"Imports":[{}],"GoFiles":["a.go"]}}"#,
+            imp.join(",")
+        )
+    }
+
+    #[test]
+    fn test_sibling_module_captured() {
+        // m/cmd/a → example.com/sib/util (sibling: replace example.com/sib => ./sib)
+        // sibling has require version v0.1.0 and go 1.22 (≠ main's go 1.23).
+        let main = r#"{"ImportPath":"m/cmd/a","Dir":"/src/cmd/a","Module":{"Path":"m","Main":true,"GoVersion":"1.23.5"},"Imports":["example.com/sib/util"],"GoFiles":["a.go"]}"#;
+        let sib = sibling_pkg_json(
+            "example.com/sib/util",
+            "example.com/sib",
+            "v0.1.0",
+            "1.22.1",
+            "./sib",
+            "/src/sib/util",
+            &["tp/a/pkg"],
+        );
+        let stdout = format!(
+            "{main}\n{sib}\n{}\n",
+            tp_with_imports("tp/a/pkg", "tp/a", "v1.0.0", &[], false),
+        );
+        let graph = parse_go_packages(stdout.as_bytes()).unwrap();
+
+        // SiblingModule captured with require-version + sibling go-directive.
+        assert_eq!(
+            graph.sibling_modules.get("example.com/sib"),
+            Some(&SiblingModule {
+                path: "example.com/sib".into(),
+                version: "v0.1.0".into(),
+                go_version: "1.22".into(),
+                replace_dir: "./sib".into(),
+            })
+        );
+        // Per-package mod_path distinguishes main vs sibling.
+        let lp_main = graph
+            .local_packages
+            .iter()
+            .find(|p| p.import_path == "m/cmd/a")
+            .unwrap();
+        assert_eq!(lp_main.mod_path, "m");
+        let lp_sib = graph
+            .local_packages
+            .iter()
+            .find(|p| p.import_path == "example.com/sib/util")
+            .unwrap();
+        assert_eq!(lp_sib.mod_path, "example.com/sib");
+
+        // Closure: sibling shows up in siblingModPaths, not modKeys.
+        let closures = compute_sub_package_closures(&graph, &["./cmd/a".into()]);
+        let c = &closures["m/cmd/a"];
+        assert_eq!(c.mod_keys, vec!["tp/a@v1.0.0"]);
+        assert_eq!(c.sibling_mod_paths, vec!["example.com/sib"]);
     }
 
     #[test]
