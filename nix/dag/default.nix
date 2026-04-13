@@ -216,6 +216,8 @@ let
         --import-path "$goPackagePath" \
         --src-dir "$goPackageSrcDir" \
         --go-version "$goLangVersion" \
+        --module-path "$goModulePath" \
+        --module-version "$goModuleVersion" \
         --output "$out/$goPackagePath.a" \
         --iface-output "$iface/$goPackagePath.x" \
         --trim-path "$TMPDIR" \
@@ -227,6 +229,8 @@ let
         --import-path "$goPackagePath" \
         --src-dir "$goPackageSrcDir" \
         --go-version "$goLangVersion" \
+        --module-path "$goModulePath" \
+        --module-version "$goModuleVersion" \
         --output "$out/$goPackagePath.a" \
         --trim-path "$TMPDIR" \
         --importcfg-output "$out/importcfg"
@@ -326,6 +330,11 @@ let
       # findGoVersion fallback returns ""). Empty string falls through to
       # findGoVersion in compile-package, which works for third-party modules.
       goVersion ? "",
+      # Owning module's path/version for the -trimpath rewrite target. With
+      # version set, sources rewrite to "<path>@<version>/…" (matching cmd/go
+      # for non-main modules); empty version falls through to ImportPath.
+      modulePath ? "",
+      moduleVersion ? "",
     }:
     goEnv
     // extraEnv
@@ -333,6 +342,8 @@ let
       goPackagePath = importPath;
       goPackageSrcDir = srcDir;
       goLangVersion = goVersion;
+      goModulePath = modulePath;
+      goModuleVersion = moduleVersion;
       compileManifestJSON = mkCompileManifestJSON { inherit deps files; };
     }
     # Only emitted when set so drv hashes for packages without an overlay are
@@ -505,6 +516,8 @@ let
           srcOverlay
           ;
         files = pkg.files or null;
+        modulePath = minfo.path;
+        moduleVersion = minfo.version;
       };
     }
   ) goPackagesResult.packages;
@@ -549,6 +562,13 @@ let
   # so the build-time go.mod walk would otherwise miss it and compile
   # without -lang (silently flipping loopvar semantics for pre-1.22 modules).
   localGoVersion = goPackagesResult.goVersion or "";
+
+  # Filesystem-replaced sibling modules (`replace foo => ./sib`) keyed by
+  # module path. cmd/go treats them as distinct modules: their own
+  # go-directive drives `-lang`, the require-line version drives the
+  # `-trimpath` rewrite (gc.go:271-276), and they get a `dep`/`=>` modinfo
+  # line (load/pkg.go:2370). Empty when no siblings.
+  siblingModules = goPackagesResult.siblingModules or { };
 
   # importPath → srcOverlay store path for local packages with one set.
   # Mirrors the per-package override lookup below so the testrunner sees
@@ -622,7 +642,13 @@ let
       # on source touches and benefit from early-cutoff.
       mkDeriv = caMk (pickMk isCgo);
 
-      override = resolveOverride importPath goPackagesResult.modulePath isCgo;
+      # `pkg.modPath` is the main module's path or a key into siblingModules.
+      # Packages owned by a sibling compile with the sibling's go-directive
+      # and `<path>@<version>` -trimpath rewrite; main-module packages keep
+      # the main go-directive and bare-ImportPath rewrite (cmd/go gives the
+      # main module empty Module.Version).
+      sibling = siblingModules.${pkg.modPath} or null;
+      override = resolveOverride importPath pkg.modPath isCgo;
       inherit (override) extraNativeBuildInputs extraEnv srcOverlay;
     in
     # Safety (defense-in-depth): reject paths with ".." path components.
@@ -647,7 +673,9 @@ let
           srcOverlay
           ;
         files = pkg.files or null;
-        goVersion = localGoVersion;
+        goVersion = if sibling != null then sibling.goVersion else localGoVersion;
+        modulePath = pkg.modPath;
+        moduleVersion = if sibling != null then sibling.version else "";
       };
     }
   ) allLocalPkgInfo;
@@ -750,6 +778,8 @@ let
             srcOverlay
             ;
           files = pkg.files or null;
+          modulePath = minfo.path;
+          moduleVersion = minfo.version;
         };
       }
     ) goPackagesResult.testPackages
@@ -1012,6 +1042,22 @@ let
               replacePath = repl.path;
               replaceVersion = if repl.version != "" then repl.version else m.version;
             };
+          # Filesystem-replaced sibling modules also produce a `dep`/`=>` line:
+          # cmd/go records every module in the closure whose path ≠ main
+          # (load/pkg.go:2370). The replace target is the literal `./dir`
+          # directive with empty version → "(devel)" (modload/build.go:424,
+          # load/pkg.go:2337).
+          siblingToModule =
+            modPath:
+            let
+              s = siblingModules.${modPath};
+            in
+            {
+              inherit (s) path;
+              inherit (s) version;
+              replacePath = s.replaceDir;
+              replaceVersion = "";
+            };
         in
         map (
           sp:
@@ -1022,7 +1068,7 @@ let
           {
             path = sp;
             files = goPackagesResult.localPackages.${ip}.files or null;
-            modules = map toModule closure.modKeys;
+            modules = map toModule closure.modKeys ++ map siblingToModule (closure.siblingModPaths or [ ]);
             inherit (closure) cxx;
           }
         ) normalizedSubPackages;
