@@ -15,18 +15,24 @@ import (
 
 // Options configures a package compilation.
 type Options struct {
-	ImportPath  string            // Go import path (e.g., "github.com/foo/bar")
-	PFlag       string            // -p flag for go tool compile (defaults to ImportPath)
-	SrcDir      string            // directory containing source files
-	Output      string            // output .a archive path (link object when IfaceOutput is set)
-	IfaceOutput string            // optional export-data-only interface output (compile-time deps key on this; rules_go .x model)
-	ImportCfg   string            // path to importcfg file
-	TrimPath    string            // path prefix to trim (defaults to $NIX_BUILD_TOP)
-	GCFlagsList []string          // extra flags for go tool compile
-	Tags        []string          // build tags for // #cgo constraint evaluation (file selection happened at eval time; this only gates #cgo CFLAGS/LDFLAGS/pkg-config lines)
-	GoVersion   string            // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
-	PGOProfile  string            // path to pprof CPU profile for PGO; empty disables PGO
-	Files       *gofiles.PkgFiles // explicit file lists (bypasses ListFiles discovery; paths relative to SrcDir)
+	ImportPath  string   // Go import path (e.g., "github.com/foo/bar")
+	PFlag       string   // -p flag for go tool compile (defaults to ImportPath)
+	SrcDir      string   // directory containing source files
+	Output      string   // output .a archive path (link object when IfaceOutput is set)
+	IfaceOutput string   // optional export-data-only interface output (compile-time deps key on this; rules_go .x model)
+	ImportCfg   string   // path to importcfg file
+	TrimPath    string   // path prefix to trim (defaults to $NIX_BUILD_TOP)
+	GCFlagsList []string // extra flags for go tool compile
+	Tags        []string // build tags for // #cgo constraint evaluation (file selection happened at eval time; this only gates #cgo CFLAGS/LDFLAGS/pkg-config lines)
+	GoVersion   string   // Go language version for -lang flag (e.g., "1.21"); auto-detected from go.mod if empty
+	// ModulePath/ModuleVersion drive the -trimpath rewrite target. When
+	// ModuleVersion is non-empty, source paths rewrite to
+	// "<ModulePath>@<ModuleVersion>/<suffix>" (matching cmd/go's rewriteDir
+	// for non-main modules — gc.go:271-276); otherwise ImportPath.
+	ModulePath    string
+	ModuleVersion string
+	PGOProfile    string            // path to pprof CPU profile for PGO; empty disables PGO
+	Files         *gofiles.PkgFiles // explicit file lists (bypasses ListFiles discovery; paths relative to SrcDir)
 
 	// Resolved once by CompilePackage; avoids repeated go env subprocesses.
 	goroot        string
@@ -36,6 +42,17 @@ type Options struct {
 	trimRewrite   string   // computed -trimpath rewrite in "old=>new;old2=>new2" format
 	concurrency   int      // -c=N backend concurrency for go tool compile
 	pgoPreprofile string   // path to preprocessed PGO profile (output of go tool preprofile)
+}
+
+// rewriteDir returns the -trimpath rewrite target for source files,
+// matching cmd/go (gc.go:269-277): "<ModulePath>@<ModuleVersion>/<suffix>"
+// when ModuleVersion is set (siblings, third-party), otherwise the bare
+// import path (main module, where Module.Version is "").
+func (o *Options) rewriteDir() string {
+	if o.ModuleVersion != "" && o.ModulePath != "" {
+		return o.ModulePath + "@" + o.ModuleVersion + strings.TrimPrefix(o.ImportPath, o.ModulePath)
+	}
+	return o.ImportPath
 }
 
 // CompileGoPackage compiles a single Go package (pure Go, assembly, or cgo).
@@ -66,11 +83,9 @@ func CompileGoPackage(opts Options) error {
 	// matching cmd/go behavior (gc.go:181-239).
 	opts.concurrency = gcBackendConcurrency()
 
-	// Compute -trimpath rewrite string matching cmd/go behavior (gc.go:243-310).
-	// Rewrites source dir to import path so debug info shows
-	// "github.com/foo/bar/file.go" instead of "/nix/store/xxx/file.go".
+	// Compute -trimpath rewrite string matching cmd/go behavior (gc.go:259-310).
 	// Strips build temp dir (TrimPath) for generated files (go_asm.h, symabis, etc.).
-	opts.trimRewrite = opts.SrcDir + "=>" + opts.ImportPath + ";" + opts.TrimPath + "=>"
+	opts.trimRewrite = opts.SrcDir + "=>" + opts.rewriteDir() + ";" + opts.TrimPath + "=>"
 
 	// Preprocess PGO profile if provided. go tool preprofile converts a
 	// pprof CPU profile into a text format (GO PREPROFILE V1) that the

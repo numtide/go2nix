@@ -28,6 +28,42 @@ func TestBaseCompileArgs(t *testing.T) {
 	}
 }
 
+func TestOptions_rewriteDir(t *testing.T) {
+	tests := []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{
+			name: "main module (no version)",
+			opts: Options{ImportPath: "example.com/m/cmd/app", ModulePath: "example.com/m"},
+			want: "example.com/m/cmd/app",
+		},
+		{
+			name: "sibling module",
+			opts: Options{ImportPath: "example.com/sib/util", ModulePath: "example.com/sib", ModuleVersion: "v0.1.0"},
+			want: "example.com/sib@v0.1.0/util",
+		},
+		{
+			name: "third-party module root",
+			opts: Options{ImportPath: "github.com/foo/bar", ModulePath: "github.com/foo/bar", ModuleVersion: "v1.2.3"},
+			want: "github.com/foo/bar@v1.2.3",
+		},
+		{
+			name: "no module info",
+			opts: Options{ImportPath: "example.com/p"},
+			want: "example.com/p",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.opts.rewriteDir(); got != tt.want {
+				t.Errorf("rewriteDir() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOptions_outputFlags(t *testing.T) {
 	tests := []struct {
 		name string

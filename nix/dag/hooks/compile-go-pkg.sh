@@ -8,6 +8,8 @@
 #   goPackagePath        — import path of the package to compile
 #   goPackageSrcDir      — absolute path to the source directory
 #   goLangVersion        — module's go directive (major.minor) for -lang; may be empty
+#   goModulePath         — owning module's path (for -trimpath rewrite)
+#   goModuleVersion      — owning module's version; empty for main-module packages
 #   compileManifestJSON  — compile manifest content (JSON string)
 
 # Variables set by Nix stdenv / derivation env, not by this script.
@@ -40,6 +42,8 @@ compileGoPkgBuildPhase() {
       --import-path "$goPackagePath" \
       --src-dir "$goPackageSrcDir" \
       --go-version "$goLangVersion" \
+      --module-path "$goModulePath" \
+      --module-version "$goModuleVersion" \
       --output "$out/$goPackagePath.a" \
       --iface-output "$iface/$goPackagePath.x" \
       --importcfg-output "$iface/importcfg" \
@@ -50,6 +54,8 @@ compileGoPkgBuildPhase() {
       --import-path "$goPackagePath" \
       --src-dir "$goPackageSrcDir" \
       --go-version "$goLangVersion" \
+      --module-path "$goModulePath" \
+      --module-version "$goModuleVersion" \
       --output "$out/$goPackagePath.a" \
       --importcfg-output "$out/importcfg" \
       --trim-path "$NIX_BUILD_TOP"

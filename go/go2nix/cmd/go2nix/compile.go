@@ -20,6 +20,8 @@ func runCompilePackageCmd(args []string) {
 	trimPath := fs.String("trim-path", "", "path prefix to trim (default: $NIX_BUILD_TOP)")
 	pFlag := fs.String("p", "", "override -p flag (default: import-path)")
 	goVersion := fs.String("go-version", "", "Go language version for -lang (e.g., 1.21); auto-detected from go.mod if empty")
+	modulePath := fs.String("module-path", "", "owning module's path; with --module-version, drives the -trimpath rewrite target")
+	moduleVersion := fs.String("module-version", "", "owning module's version (require-line); empty for main-module packages")
 	_ = fs.Parse(args)
 
 	if *manifest == "" || *importPath == "" || *srcDir == "" || *output == "" {
@@ -50,17 +52,19 @@ func runCompilePackageCmd(args []string) {
 	}
 
 	opts := compile.Options{
-		ImportPath:  *importPath,
-		PFlag:       *pFlag,
-		SrcDir:      *srcDir,
-		Output:      *output,
-		IfaceOutput: *ifaceOutput,
-		ImportCfg:   mergedCfg,
-		TrimPath:    *trimPath,
-		GCFlagsList: m.GCFlags,
-		Tags:        m.Tags,
-		GoVersion:   *goVersion,
-		PGOProfile:  pgo,
+		ImportPath:    *importPath,
+		PFlag:         *pFlag,
+		SrcDir:        *srcDir,
+		Output:        *output,
+		IfaceOutput:   *ifaceOutput,
+		ImportCfg:     mergedCfg,
+		TrimPath:      *trimPath,
+		GCFlagsList:   m.GCFlags,
+		Tags:          m.Tags,
+		GoVersion:     *goVersion,
+		ModulePath:    *modulePath,
+		ModuleVersion: *moduleVersion,
+		PGOProfile:    pgo,
 	}
 
 	if m.Files != nil {

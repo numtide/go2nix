@@ -213,6 +213,39 @@ go 1.21
 	}
 }
 
+func TestGenerateModinfoWithSiblingReplace(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n\ngo 1.23\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// go.sum lists the original; replaced modules must NOT carry the
+	// original's sum (load/pkg.go:2344-2348).
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte("example.com/sib v0.1.0 h1:should-not-appear=\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := []ModDep{
+		{
+			Path:    "example.com/sib",
+			Version: "v0.1.0",
+			Replace: &ModDep{Path: "./sib"}, // empty version → "(devel)"
+		},
+	}
+	line, err := GenerateModinfo(dir, "example.com/m/cmd/app", "go1.23.0", deps, BuildSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// runtime/debug.BuildInfo.String formats this as:
+	//   dep\texample.com/sib\tv0.1.0\n=>\t./sib\t(devel)\t\n
+	if !strings.Contains(line, "dep\\texample.com/sib\\tv0.1.0\\n=>\\t./sib\\t(devel)\\t\\n") {
+		t.Errorf("modinfo missing sibling dep/=> line: %s", line)
+	}
+	if strings.Contains(line, "should-not-appear") {
+		t.Error("replaced module must not carry original go.sum hash")
+	}
+}
+
 func TestReadGoSum(t *testing.T) {
 	dir := t.TempDir()
 	sumFile := filepath.Join(dir, "go.sum")

@@ -32,6 +32,24 @@ type ModDep struct {
 	Replace *ModDep // non-nil if this module is replaced
 }
 
+// debugModFromDep converts a ModDep to a *debug.Module, mirroring cmd/go's
+// debugModFromModinfo (load/pkg.go:2334-2349): empty version becomes
+// "(devel)", and Sum is read from go.sum only when there is *no* replace
+// (so a replaced dep records the replacement's sum, not the original's).
+func debugModFromDep(d ModDep, sums map[string]string) *debug.Module {
+	version := d.Version
+	if version == "" {
+		version = "(devel)"
+	}
+	dm := &debug.Module{Path: d.Path, Version: version}
+	if d.Replace != nil {
+		dm.Replace = debugModFromDep(*d.Replace, sums)
+	} else if d.Version != "" {
+		dm.Sum = sums[d.Path+"@"+d.Version]
+	}
+	return dm
+}
+
 // BuildSettings holds the build configuration to embed as `build` lines in
 // the binary's modinfo, matching the subset of cmd/go's setBuildInfo that
 // go2nix can determine. Empty string fields are omitted from the output
@@ -160,26 +178,7 @@ func GenerateModinfo(moduleRoot, mainPath, goVersion string, deps []ModDep, sett
 	})
 
 	for _, dep := range deps {
-		dm := debug.Module{
-			Path:    dep.Path,
-			Version: dep.Version,
-		}
-		// Look up go.sum hash for this module.
-		sumKey := dep.Path + "@" + dep.Version
-		if h, ok := sums[sumKey]; ok {
-			dm.Sum = h
-		}
-		if dep.Replace != nil {
-			dm.Replace = &debug.Module{
-				Path:    dep.Replace.Path,
-				Version: dep.Replace.Version,
-			}
-			replKey := dep.Replace.Path + "@" + dep.Replace.Version
-			if h, ok := sums[replKey]; ok {
-				dm.Replace.Sum = h
-			}
-		}
-		info.Deps = append(info.Deps, &dm)
+		info.Deps = append(info.Deps, debugModFromDep(dep, sums))
 	}
 
 	// Wrap with magic markers, matching ModInfoData().
