@@ -34,7 +34,6 @@ type Pkg struct {
 	EmbedPatterns  []string `json:"EmbedPatterns"` // //go:embed patterns
 	EmbedFiles     []string `json:"EmbedFiles"`    // resolved files matching embed patterns
 	Standard       bool     `json:"Standard"`
-	DepOnly        bool     `json:"DepOnly"`
 	Imports        []string `json:"Imports"`
 	DefaultGODEBUG string   `json:"DefaultGODEBUG"` // default GODEBUG for main packages
 
