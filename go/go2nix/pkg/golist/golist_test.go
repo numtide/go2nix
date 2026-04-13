@@ -40,26 +40,6 @@ func TestModuleModKey(t *testing.T) {
 	}
 }
 
-func TestCollectModules(t *testing.T) {
-	pkgs := []Pkg{
-		{ImportPath: "golang.org/x/crypto/ssh", Module: &Module{Path: "golang.org/x/crypto", Version: "v0.17.0"}},
-		{ImportPath: "golang.org/x/crypto/chacha20", Module: &Module{Path: "golang.org/x/crypto", Version: "v0.17.0"}},
-		{ImportPath: "github.com/foo/bar", Module: &Module{Path: "github.com/foo/bar", Version: "v1.0.0"}},
-		{ImportPath: "mymod/internal", Module: &Module{Path: "mymod", Main: true}},
-	}
-	mods := CollectModules(pkgs)
-	if len(mods) != 2 {
-		t.Fatalf("expected 2 modules, got %d", len(mods))
-	}
-	// Should be sorted
-	if mods[0].Key != "github.com/foo/bar@v1.0.0" {
-		t.Errorf("mods[0] = %q", mods[0].Key)
-	}
-	if mods[1].Key != "golang.org/x/crypto@v0.17.0" {
-		t.Errorf("mods[1] = %q", mods[1].Key)
-	}
-}
-
 func TestInjectCgoImports(t *testing.T) {
 	pkgs := []Pkg{
 		{ImportPath: "pure/go", Imports: []string{"fmt", "os"}},

@@ -31,25 +31,6 @@ func TestCAOutput(t *testing.T) {
 	}
 }
 
-func TestDynamicOutput(t *testing.T) {
-	// First create a CA placeholder for foo.drv.drv (note the double .drv)
-	drvPath, err := storepath.FromAbsolutePath("/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv.drv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	caPlaceholder, err := CAOutput(drvPath, "out")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Then create a dynamic placeholder from it
-	dynPlaceholder := DynamicOutput(caPlaceholder, "out")
-	want := "/0gn6agqxjyyalf0dpihgyf49xq5hqxgw100f0wydnj6yqrhqsb3w"
-	if got := dynPlaceholder.Render(); got != want {
-		t.Errorf("DynamicOutput(CA(foo.drv.drv), \"out\").Render() = %q, want %q", got, want)
-	}
-}
-
 func TestOutputPathName(t *testing.T) {
 	if got := OutputPathName("hello", "out"); got != "hello" {
 		t.Errorf("OutputPathName(\"hello\", \"out\") = %q, want %q", got, "hello")

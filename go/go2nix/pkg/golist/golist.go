@@ -34,7 +34,6 @@ type Pkg struct {
 	EmbedPatterns  []string `json:"EmbedPatterns"` // //go:embed patterns
 	EmbedFiles     []string `json:"EmbedFiles"`    // resolved files matching embed patterns
 	Standard       bool     `json:"Standard"`
-	DepOnly        bool     `json:"DepOnly"`
 	Imports        []string `json:"Imports"`
 	DefaultGODEBUG string   `json:"DefaultGODEBUG"` // default GODEBUG for main packages
 
@@ -47,7 +46,6 @@ type Module struct {
 	Version   string   `json:"Version"`
 	GoVersion string   `json:"GoVersion"` // go directive from go.mod
 	Main      bool     `json:"Main"`
-	Dir       string   `json:"Dir"`
 	Replace   *Replace `json:"Replace"`
 }
 
@@ -250,33 +248,4 @@ func CollectGoModModules(dir string) ([]ModInfo, error) {
 	}
 	sort.Slice(mods, func(i, j int) bool { return mods[i].Key < mods[j].Key })
 	return mods, nil
-}
-
-// CollectModules deduplicates modules from a list of packages.
-func CollectModules(pkgs []Pkg) []ModInfo {
-	seen := map[string]bool{}
-	var mods []ModInfo
-	for _, pkg := range pkgs {
-		if pkg.Module == nil || pkg.Module.Version == "" {
-			continue
-		}
-		if pkg.Module.IsLocal() {
-			continue
-		}
-		key := pkg.Module.ModKey()
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-
-		fetchPath := pkg.Module.FetchPath()
-		version := pkg.Module.Version
-		if r := pkg.Module.Replace; r != nil && r.Version != "" {
-			version = r.Version
-		}
-
-		mods = append(mods, ModInfo{Key: key, FetchPath: fetchPath, Version: version})
-	}
-	sort.Slice(mods, func(i, j int) bool { return mods[i].Key < mods[j].Key })
-	return mods
 }
