@@ -31,8 +31,10 @@ builtins.resolveGoPackages {
 `go` is intentionally omitted: the plugin defaults to the Go toolchain baked
 in at its own build time, so the call carries no derivation context and the
 default-mode evaluation stays IFD-free. You may pass
-`go = "/path/to/bin/go"` to override the toolchain (e.g. a `nix-shell` Go),
-but a derivation-backed value like `"${pkgs.go}/bin/go"` will be rejected.
+`go = "/path/to/bin/go"` to override the toolchain (e.g. a `nix-shell` Go).
+A derivation-backed value like `"${pkgs.go}/bin/go"` is accepted but emits a
+warning and forces the plugin to realise the derivation at eval time — i.e.
+opt-in IFD, still gated by `allow-import-from-derivation`.
 
 It runs `go list -json -deps` against `src` and returns:
 
