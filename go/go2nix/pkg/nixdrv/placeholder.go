@@ -48,16 +48,6 @@ func CAOutput(drvPath *storepath.StorePath, outputName string) (Placeholder, err
 	return Placeholder{hash: h[:]}, nil
 }
 
-// DynamicOutput creates a placeholder for a dynamically-created derivation output.
-// Format: SHA256("nix-computed-output:<nix-base32(compress(placeholder.hash, 20))>:<output_name>")
-func DynamicOutput(p Placeholder, outputName string) Placeholder {
-	compressed := compressHash(p.hash, 20)
-	compressedStr := nixbase32.EncodeToString(compressed)
-	clearText := "nix-computed-output:" + compressedStr + ":" + outputName
-	h := sha256.Sum256([]byte(clearText))
-	return Placeholder{hash: h[:]}
-}
-
 // Render returns the placeholder string as it appears in derivation env vars.
 // Format: /<nix-base32-encoded-hash>
 func (p Placeholder) Render() string {
@@ -71,13 +61,4 @@ func OutputPathName(drvName, outputName string) string {
 		return drvName
 	}
 	return drvName + "-" + outputName
-}
-
-// compressHash XOR-compresses a hash to a shorter length.
-func compressHash(hash []byte, newSize int) []byte {
-	result := make([]byte, newSize)
-	for i, b := range hash {
-		result[i%newSize] ^= b
-	}
-	return result
 }
