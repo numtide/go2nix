@@ -46,7 +46,6 @@ type Module struct {
 	Version   string   `json:"Version"`
 	GoVersion string   `json:"GoVersion"` // go directive from go.mod
 	Main      bool     `json:"Main"`
-	Dir       string   `json:"Dir"`
 	Replace   *Replace `json:"Replace"`
 }
 
