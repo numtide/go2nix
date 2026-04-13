@@ -86,6 +86,32 @@ Embed directives in test files are supported:
 - `XTestEmbedPatterns` (from external `_test.go` files) are resolved and
   symlinked into the xtest source directory with their own embed config.
 
+## `extraMainSrcFiles`
+
+Tests run against a filtered copy of `src` that keeps only what the build
+needs: `.go` sources, resolved `//go:embed` targets, and every `testdata/`
+directory under a tested package. Anything else is dropped so unrelated
+edits don't invalidate the test derivation.
+
+A test that reads a file at runtime *without* `//go:embed` and *outside*
+`testdata/` — e.g. `os.ReadFile("../config.yaml")` — will not find it.
+Prefer moving such fixtures under `testdata/`. When that isn't practical,
+list the paths in `extraMainSrcFiles`:
+
+```nix
+goEnv.buildGoApplication {
+  src = ./.;
+  goLock = ./go2nix.toml;
+  pname = "my-app";
+  version = "0.1.0";
+  extraMainSrcFiles = [ "config.yaml" "internal/svc/fixtures" ];
+}
+```
+
+Each entry is relative to `src` (not `modRoot`). A directory entry includes
+its full subtree, and a trailing `/` is tolerated. An entry that does not
+exist under `src` fails evaluation.
+
 ## `checkFlags`
 
 Extra flags passed to the test binary (not to `go test`, since go2nix

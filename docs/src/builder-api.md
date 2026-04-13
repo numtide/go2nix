@@ -62,6 +62,7 @@ time and emits an IFD warning.
 | `packageOverrides` | attrset | `{}` | both | Per-package customization (see below). |
 | `doCheck` | bool | `true` | default only | Run tests. Matches `buildGoModule`'s default. See [Test Support](test-support.md). |
 | `checkFlags` | list of strings | `[]` | default only | Flags passed to the compiled test binary (e.g., `-v`, `-count=1`). See [Test Support](test-support.md). |
+| `extraMainSrcFiles` | list of strings | `[]` | default only | Extra `src`-relative paths (files or directories) kept in the filtered test source tree. Escape hatch for tests that read runtime files outside `testdata/` and `//go:embed`. See [Test Support](test-support.md#extramainsrcfiles). |
 | `goProxy` | string or `null` | `null` | default only | Custom GOPROXY URL. |
 | `allowGoReference` | bool | `false` | default only | Allow the output to reference the Go toolchain. |
 | `meta` | attrset | `{}` | default only | Nix meta attributes. |
