@@ -1,0 +1,115 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Benchmark regression check
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: benchmark-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: NixOS/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes recursive-nix ca-derivations
+            extra-substituters = https://cache.numtide.com
+            extra-trusted-public-keys = niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g=
+
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Benchmark baseline
+        run: |
+          git checkout "origin/${{ github.base_ref }}"
+          NIXPKGS_PATH=$(nix eval --raw --inputs-from . nixpkgs#path)
+          export NIXPKGS_PATH
+          nix run .#bench-incremental -- \
+            --runs 5 \
+            --json /tmp/baseline.json
+
+      - name: Benchmark current
+        run: |
+          git checkout "${{ github.sha }}"
+          NIXPKGS_PATH=$(nix eval --raw --inputs-from . nixpkgs#path)
+          export NIXPKGS_PATH
+          nix run .#bench-incremental -- \
+            --runs 5 --stderr-tail 4000 \
+            --json /tmp/current.json
+
+      - name: Compare results
+        id: compare
+        run: |
+          set +e
+          result=$(python3 scripts/compare-benchmarks.py \
+            /tmp/baseline.json /tmp/current.json --threshold 20)
+          exit_code=$?
+          set -e
+
+          {
+            echo 'table<<EOF'
+            echo "$result"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          echo "regressed=$exit_code" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          TABLE: ${{ steps.compare.outputs.table }}
+        with:
+          script: |
+            const marker = '<!-- benchmark-regression-check -->';
+            const table = process.env.TABLE;
+            const body = [
+              marker,
+              '## Benchmark Regression Check',
+              '',
+              table,
+              '',
+              `Baseline: \`${{ github.base_ref }}\` | Current: \`${{ github.sha }}\``,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail on regression
+        if: steps.compare.outputs.regressed != '0'
+        run: |
+          echo "::error::Benchmark regression detected. See PR comment for details."
+          exit 1

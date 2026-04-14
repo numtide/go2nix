@@ -17,6 +17,10 @@ let
 
       # go
       gofumpt.enable = true;
+
+      # python
+      ruff-check.enable = true;
+      ruff-format.enable = true;
     };
     settings.formatter = {
       # nix
@@ -32,6 +36,12 @@ let
       shellcheck.priority = 1;
       shfmt.pipeline = "shell";
       shfmt.priority = 2;
+
+      # python
+      ruff-check.pipeline = "python";
+      ruff-check.priority = 1;
+      ruff-format.pipeline = "python";
+      ruff-format.priority = 2;
 
       # markdown
       mdformat.package = pkgs.lib.mkDefault (
