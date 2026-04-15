@@ -28,7 +28,7 @@ verifies that the binary links.
 | `-runs N` | `3` | Runs per scenario; the median is reported |
 | `-scenario S` | `all` | One of `no_change`, `leaf`, `mid`, `deep`, `all` |
 | `-touch-mode M` | `private` | `private` edits an unexported symbol; `exported` edits an exported one |
-| `-tools L` | `nix-nocgo,nix-ca-nocgo` | Comma-separated tool variants: `nix`, `nix-ca`, `nix-nocgo`, `nix-ca-nocgo` |
+| `-tools L` | `nix-nocgo,nix-ca-nocgo` | Comma-separated tool variants: `nix`, `nix-ca`, `nix-nocgo`, `nix-ca-nocgo`, `nix-dynamic`, `nix-dynamic-nocgo` |
 | `-fixture F` | `light` | `light` or `torture` (see below) |
 | `-json PATH` | — | Write raw results as JSON |
 | `-assert-cascade N` | — | Fail (non-zero exit) if any tool builds more than `N` derivations on a touch scenario |
@@ -37,6 +37,15 @@ The `nix-ca*` variants set `contentAddressed = true`; the `*-nocgo`
 variants set `CGO_ENABLED = 0`. Comparing `nix-nocgo` against
 `nix-ca-nocgo` with `-touch-mode private` shows the `iface` early-cutoff in
 action.
+
+The `nix-dynamic*` variants use the
+[experimental builder](modes/experimental-mode.md)
+(`buildGoApplicationExperimental` — recursive-nix + dynamic-derivations +
+ca-derivations). They need a Nix that provides those experimental features
+*and* the `recursive-nix` system feature in the build sandbox; the harness
+probes once at startup and silently drops the tool if the probe fails, so
+the rest of the run continues. Remote builders that don't advertise
+`recursive-nix` will not work — this is a local-only comparison for now.
 
 ## Fixtures and scenarios
 

@@ -83,6 +83,33 @@ goEnv.buildGoApplication {
   %s
 }
 `
+
+	// Experimental-mode template: same fixture/substitution shape so
+	// writeNixExpr stays a single Sprintf. The runCommand wrapper turns
+	// .target (a string with dynamic-derivation context) back into an
+	// ordinary derivation so the existing instantiate→realise flow in
+	// nixTool.build works unchanged.
+	dynExprTemplate = `{ srcPath ? %s }:
+let
+  pkgs = import <nixpkgs> { system = "%s"; };
+  go2nixLib = import %s/lib.nix {};
+  goEnv = go2nixLib.mkGoEnv {
+    go = pkgs.go_1_26;
+    go2nix = import %s/packages/go2nix { inherit pkgs; };
+    nixPackage = pkgs.nixVersions.nix_2_34;
+    inherit (pkgs) callPackage;
+  };
+  app = goEnv.buildGoApplicationExperimental {
+    src = srcPath;
+    modRoot = "%s";
+    goLock = "${srcPath}/%s/go2nix.toml";
+    pname = "bench";
+    subPackages = [ "%s" ];
+    %s
+  };
+in
+pkgs.runCommand "bench-dynamic" { } "ln -s ${app.target} $out"
+`
 )
 
 // Fixed symbol names + rotating values: each touch updates an existing
@@ -219,6 +246,7 @@ type nixTool struct {
 	extraOpts   []string
 	storeRoot   string // local store root (NIX_REMOTE=local?root=...)
 	stderrTail  int    // bytes of stderr to keep in error messages
+	skipOnFail  bool   // probe failure removes the tool instead of aborting
 }
 
 type buildResult struct {
@@ -314,8 +342,8 @@ func resolvePaths(repoRoot string) (nixpkgsPath, pluginPath, gomodcache string, 
 	return nixpkgsPath, pluginPath, gomodcache, nil
 }
 
-func writeNixExpr(tmpdir, name, fixturePath, go2nixSrc, system, mr, subPkg, extraAttrs string) (string, error) {
-	content := fmt.Sprintf(exprTemplate, fixturePath, system, go2nixSrc, go2nixSrc, mr, mr, subPkg, extraAttrs)
+func writeNixExpr(tmpdir, name, tmpl, fixturePath, go2nixSrc, system, mr, subPkg, extraAttrs string) (string, error) {
+	content := fmt.Sprintf(tmpl, fixturePath, system, go2nixSrc, go2nixSrc, mr, mr, subPkg, extraAttrs)
 	path := filepath.Join(tmpdir, "bench-"+name+".nix")
 	return path, os.WriteFile(path, []byte(content), 0o644)
 }
@@ -608,7 +636,7 @@ func main() {
 	touchMode := flag.String("touch-mode", "private",
 		"edit type: private=internal symbol, exported=API change")
 	toolsCSV := flag.String("tools", "nix-nocgo,nix-ca-nocgo",
-		"comma-separated tools (nix,nix-ca,nix-nocgo,nix-ca-nocgo)")
+		"comma-separated tools (nix,nix-ca,nix-nocgo,nix-ca-nocgo,nix-dynamic,nix-dynamic-nocgo)")
 	fixtureName := flag.String("fixture", "light",
 		"fixture to use (torture|light)")
 	jsonOut := flag.String("json", "", "export results as JSON to this path")
@@ -670,28 +698,42 @@ func main() {
 
 	mr := fc.modRoot
 	sp := fc.subPackage
-	exprNix, err := writeNixExpr(tmpdir, "nix", fixtureSrc, repoRoot, system, mr, sp, "")
+	exprNix, err := writeNixExpr(tmpdir, "nix", exprTemplate, fixtureSrc, repoRoot, system, mr, sp, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	exprCA, err := writeNixExpr(tmpdir, "nix-ca", fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true;")
+	exprCA, err := writeNixExpr(tmpdir, "nix-ca", exprTemplate, fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true;")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	exprNoCgo, err := writeNixExpr(tmpdir, "nix-nocgo", fixtureSrc, repoRoot, system, mr, sp, "CGO_ENABLED = \"0\";")
+	exprNoCgo, err := writeNixExpr(tmpdir, "nix-nocgo", exprTemplate, fixtureSrc, repoRoot, system, mr, sp, "CGO_ENABLED = \"0\";")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	exprCANoCgo, err := writeNixExpr(tmpdir, "nix-ca-nocgo", fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true; CGO_ENABLED = \"0\";")
+	exprCANoCgo, err := writeNixExpr(tmpdir, "nix-ca-nocgo", exprTemplate, fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true; CGO_ENABLED = \"0\";")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	exprDyn, err := writeNixExpr(tmpdir, "nix-dynamic", dynExprTemplate, fixtureSrc, repoRoot, system, mr, sp, "")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	exprDynNoCgo, err := writeNixExpr(tmpdir, "nix-dynamic-nocgo", dynExprTemplate, fixtureSrc, repoRoot, system, mr, sp, "CGO_ENABLED = 0;")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
 	caOpts := []string{"--option", "extra-experimental-features", "ca-derivations"}
+	dynOpts := []string{
+		"--option", "extra-experimental-features", "dynamic-derivations ca-derivations recursive-nix",
+		"--option", "extra-system-features", "recursive-nix",
+	}
 
 	available := map[string]*nixTool{
 		"nix": {
@@ -713,6 +755,16 @@ func main() {
 			name: "nix-ca-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprCANoCgo, storeRoot: storeRoot,
 			extraOpts: caOpts, stderrTail: *stderrTail,
+		},
+		"nix-dynamic": {
+			name: "nix-dynamic", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
+			gomodcache: gomodcache, exprPath: exprDyn, storeRoot: storeRoot,
+			extraOpts: dynOpts, stderrTail: *stderrTail, skipOnFail: true,
+		},
+		"nix-dynamic-nocgo": {
+			name: "nix-dynamic-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
+			gomodcache: gomodcache, exprPath: exprDynNoCgo, storeRoot: storeRoot,
+			extraOpts: dynOpts, stderrTail: *stderrTail, skipOnFail: true,
 		},
 	}
 
@@ -740,6 +792,31 @@ func main() {
 	}
 	if err := copyTree(fixtureSrc, fixtureCopy); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	// Probe each tool once. The dynamic-mode tools need recursive-nix in the
+	// build sandbox; on stores or remotes that don't provide it the wrapper
+	// build fails — drop those tools with a notice rather than aborting the
+	// whole run, mirroring benchmark-build's "SKIPPED (ca-derivations not
+	// enabled)" behaviour. Dag-mode tools still fail fast.
+	fmt.Println("Probing tools...")
+	probed := tools[:0]
+	for _, t := range tools {
+		if _, err := t.build(fixtureCopy); err != nil {
+			if t.skipOnFail {
+				fmt.Printf("  SKIP %s: %v\n", t.name, err)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "  FATAL: probe failed for %s: %v\n", t.name, err)
+			os.Exit(1)
+		}
+		fmt.Printf("  OK   %s\n", t.name)
+		probed = append(probed, t)
+	}
+	tools = probed
+	if len(tools) == 0 {
+		fmt.Fprintln(os.Stderr, "no runnable tools after probe")
 		os.Exit(1)
 	}
 
