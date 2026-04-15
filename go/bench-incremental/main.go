@@ -16,7 +16,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,6 +27,7 @@ type fixtureConfig struct {
 	dir        string // subdirectory under tests/fixtures/
 	modRoot    string
 	subPackage string
+	hasBazel   bool // fixture has Bazel BUILD files
 	scenarios  []struct {
 		name string
 		path string // relative to fixture root
@@ -36,6 +39,7 @@ var fixtures = map[string]fixtureConfig{
 		dir:        "torture-project",
 		modRoot:    "app-full",
 		subPackage: "./cmd/app-full",
+		hasBazel:   true,
 		scenarios: []struct {
 			name string
 			path string
@@ -210,6 +214,14 @@ func touchFile(path, mode string) error {
 	return os.WriteFile(path, []byte(string(content)+"\n"+line), 0o644)
 }
 
+// buildTool abstracts over build systems (Nix, Bazel, etc.) so the
+// benchmark harness can compare them on equal footing.
+type buildTool interface {
+	Name() string
+	Build(srcPath string) (buildResult, error)
+	Cleanup() error
+}
+
 type nixTool struct {
 	name        string
 	nixpkgsPath string
@@ -221,6 +233,9 @@ type nixTool struct {
 	stderrTail  int    // bytes of stderr to keep in error messages
 }
 
+func (t *nixTool) Name() string   { return t.name }
+func (t *nixTool) Cleanup() error { return nil }
+
 type buildResult struct {
 	total     time.Duration
 	evalTime  time.Duration
@@ -228,7 +243,7 @@ type buildResult struct {
 	built     int
 }
 
-func (t *nixTool) build(srcPath string) (buildResult, error) {
+func (t *nixTool) Build(srcPath string) (buildResult, error) {
 	baseArgs := []string{
 		"-I", "nixpkgs=" + t.nixpkgsPath,
 		"--option", "plugin-files", t.pluginPath,
@@ -284,6 +299,101 @@ func (t *nixTool) build(srcPath string) (buildResult, error) {
 	}, nil
 }
 
+// ---------------------------------------------------------------------------
+// Bazel tool
+// ---------------------------------------------------------------------------
+
+type bazelTool struct {
+	name       string
+	workspace  string // path to Bazel workspace (the fixture copy)
+	target     string // e.g. "//app-full/cmd/app-full"
+	outputBase string // isolated Bazel output base directory
+	stderrTail int
+}
+
+func (t *bazelTool) Name() string { return t.name }
+
+// bazelProcessRe parses Bazel's action summary line, e.g.:
+//
+//	INFO: 42 processes: 10 internal, 32 linux-sandbox.
+var bazelProcessRe = regexp.MustCompile(`INFO: (\d+) process`)
+
+func (t *bazelTool) Build(_ string) (buildResult, error) {
+	baseArgs := []string{"--output_base=" + t.outputBase}
+
+	// Phase 1: loading + analysis only (analogous to nix-instantiate).
+	analysisArgs := append(append([]string{}, baseArgs...), "build", "--nobuild", t.target)
+	analysisElapsed, _, analysisStderr, err := runBazelCommand(t.workspace, analysisArgs)
+	if err != nil {
+		tail := analysisStderr
+		if len(tail) > t.stderrTail {
+			tail = tail[len(tail)-t.stderrTail:]
+		}
+		return buildResult{}, fmt.Errorf("bazel build --nobuild failed: %w\n%s", err, tail)
+	}
+
+	// Phase 2: full build (analogous to nix-store --realise).
+	buildArgs := append(append([]string{}, baseArgs...), "build", t.target)
+	buildElapsed, _, buildStderr, err := runBazelCommand(t.workspace, buildArgs)
+	if err != nil {
+		tail := buildStderr
+		if len(tail) > t.stderrTail {
+			tail = tail[len(tail)-t.stderrTail:]
+		}
+		return buildResult{}, fmt.Errorf("bazel build failed: %w\n%s", err, tail)
+	}
+
+	// Count actions executed from Bazel's summary output.
+	built := parseBazelActionCount(buildStderr)
+
+	return buildResult{
+		total:     analysisElapsed + buildElapsed,
+		evalTime:  analysisElapsed,
+		buildTime: buildElapsed,
+		built:     built,
+	}, nil
+}
+
+func (t *bazelTool) Cleanup() error {
+	// Expunge removes the output base entirely, including read-only
+	// sandbox artifacts that os.RemoveAll cannot delete.
+	args := []string{"--output_base=" + t.outputBase, "clean", "--expunge"}
+	_, _, _, _ = runBazelCommand(t.workspace, args)
+
+	args = []string{"--output_base=" + t.outputBase, "shutdown"}
+	_, _, _, _ = runBazelCommand(t.workspace, args)
+
+	return nil
+}
+
+// runBazelCommand runs bazel with the given args in the specified workspace
+// directory and returns wall time, stdout, stderr, and any error.
+func runBazelCommand(workspace string, args []string) (time.Duration, string, string, error) {
+	cmd := exec.Command("bazel", args...)
+	cmd.Dir = workspace
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	start := time.Now()
+	err := cmd.Run()
+	elapsed := time.Since(start)
+
+	return elapsed, stdout.String(), stderr.String(), err
+}
+
+// parseBazelActionCount extracts the total action count from Bazel's stderr
+// summary line like "INFO: 42 processes: 10 internal, 32 linux-sandbox."
+func parseBazelActionCount(stderr string) int {
+	m := bazelProcessRe.FindStringSubmatch(stderr)
+	if len(m) < 2 {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
 func resolvePaths(repoRoot string) (nixpkgsPath, pluginPath, gomodcache string, err error) {
 	// Honor $NIXPKGS_PATH so callers can pin nixpkgs without going
 	// through the flake registry (which makes a network call to GitHub
@@ -320,19 +430,19 @@ func writeNixExpr(tmpdir, name, fixturePath, go2nixSrc, system, mr, subPkg, extr
 	return path, os.WriteFile(path, []byte(content), 0o644)
 }
 
-func runTouchBenchmark(tools []*nixTool, fixtureCopy, scenario, scenarioPath, touchMode string, runs int) []result {
+func runTouchBenchmark(tools []buildTool, fixtureCopy, scenario, scenarioPath, touchMode string, runs int) []result {
 	fmt.Printf("\n%s\nSCENARIO: %s (%s) -- touch %s\n%s\n",
 		strings.Repeat("=", 60), scenario, touchMode, scenarioPath, strings.Repeat("=", 60))
 
 	results := make(map[string]*result, len(tools))
 	for _, t := range tools {
-		results[t.name] = &result{Scenario: scenario + "-" + touchMode, Tool: t.name}
+		results[t.Name()] = &result{Scenario: scenario + "-" + touchMode, Tool: t.Name()}
 	}
 
 	fmt.Println("  Warming caches...")
 	for _, t := range tools {
-		if _, err := t.build(fixtureCopy); err != nil {
-			fmt.Fprintf(os.Stderr, "  FATAL: warmup failed for %s: %v\n", t.name, err)
+		if _, err := t.Build(fixtureCopy); err != nil {
+			fmt.Fprintf(os.Stderr, "  FATAL: warmup failed for %s: %v\n", t.Name(), err)
 			os.Exit(1)
 		}
 	}
@@ -351,18 +461,18 @@ func runTouchBenchmark(tools []*nixTool, fixtureCopy, scenario, scenarioPath, to
 			continue
 		}
 		for _, t := range tools {
-			br, err := t.build(fixtureCopy)
+			br, err := t.Build(fixtureCopy)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  FATAL: build failed for %s: %v\n", t.name, err)
+				fmt.Fprintf(os.Stderr, "  FATAL: build failed for %s: %v\n", t.Name(), err)
 				os.Exit(1)
 			}
 			s := br.total.Seconds()
-			results[t.name].Times = append(results[t.name].Times, s)
-			results[t.name].EvalTimes = append(results[t.name].EvalTimes, br.evalTime.Seconds())
-			results[t.name].BuildTimes = append(results[t.name].BuildTimes, br.buildTime.Seconds())
-			results[t.name].Builds = append(results[t.name].Builds, br.built)
+			results[t.Name()].Times = append(results[t.Name()].Times, s)
+			results[t.Name()].EvalTimes = append(results[t.Name()].EvalTimes, br.evalTime.Seconds())
+			results[t.Name()].BuildTimes = append(results[t.Name()].BuildTimes, br.buildTime.Seconds())
+			results[t.Name()].Builds = append(results[t.Name()].Builds, br.built)
 			fmt.Printf("    [%s] %.2fs (eval %.2fs + build %.2fs) -- %d drvs built\n",
-				t.name, s, br.evalTime.Seconds(), br.buildTime.Seconds(), br.built)
+				t.Name(), s, br.evalTime.Seconds(), br.buildTime.Seconds(), br.built)
 		}
 		if err := os.WriteFile(filePath, pristine, 0o644); err != nil {
 			fmt.Printf("    restore failed: %v\n", err)
@@ -372,24 +482,24 @@ func runTouchBenchmark(tools []*nixTool, fixtureCopy, scenario, scenarioPath, to
 	_ = os.WriteFile(filePath, pristine, 0o644)
 	out := make([]result, 0, len(tools))
 	for _, t := range tools {
-		out = append(out, *results[t.name])
+		out = append(out, *results[t.Name()])
 	}
 	return out
 }
 
-func runNoChangeBenchmark(tools []*nixTool, fixtureCopy string, runs int) []result {
+func runNoChangeBenchmark(tools []buildTool, fixtureCopy string, runs int) []result {
 	fmt.Printf("\n%s\nSCENARIO: no-change (cache validation overhead)\n%s\n",
 		strings.Repeat("=", 60), strings.Repeat("=", 60))
 
 	results := make(map[string]*result, len(tools))
 	for _, t := range tools {
-		results[t.name] = &result{Scenario: "no_change", Tool: t.name}
+		results[t.Name()] = &result{Scenario: "no_change", Tool: t.Name()}
 	}
 
 	fmt.Println("  Warming caches...")
 	for _, t := range tools {
-		if _, err := t.build(fixtureCopy); err != nil {
-			fmt.Fprintf(os.Stderr, "  FATAL: warmup failed for %s: %v\n", t.name, err)
+		if _, err := t.Build(fixtureCopy); err != nil {
+			fmt.Fprintf(os.Stderr, "  FATAL: warmup failed for %s: %v\n", t.Name(), err)
 			os.Exit(1)
 		}
 	}
@@ -397,24 +507,24 @@ func runNoChangeBenchmark(tools []*nixTool, fixtureCopy string, runs int) []resu
 	for runIdx := 1; runIdx <= runs; runIdx++ {
 		fmt.Printf("\n  Run %d/%d:\n", runIdx, runs)
 		for _, t := range tools {
-			br, err := t.build(fixtureCopy)
+			br, err := t.Build(fixtureCopy)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  FATAL: build failed for %s: %v\n", t.name, err)
+				fmt.Fprintf(os.Stderr, "  FATAL: build failed for %s: %v\n", t.Name(), err)
 				os.Exit(1)
 			}
 			s := br.total.Seconds()
-			results[t.name].Times = append(results[t.name].Times, s)
-			results[t.name].EvalTimes = append(results[t.name].EvalTimes, br.evalTime.Seconds())
-			results[t.name].BuildTimes = append(results[t.name].BuildTimes, br.buildTime.Seconds())
-			results[t.name].Builds = append(results[t.name].Builds, br.built)
+			results[t.Name()].Times = append(results[t.Name()].Times, s)
+			results[t.Name()].EvalTimes = append(results[t.Name()].EvalTimes, br.evalTime.Seconds())
+			results[t.Name()].BuildTimes = append(results[t.Name()].BuildTimes, br.buildTime.Seconds())
+			results[t.Name()].Builds = append(results[t.Name()].Builds, br.built)
 			fmt.Printf("    [%s] %.2fs (eval %.2fs + build %.2fs) -- %d drvs built\n",
-				t.name, s, br.evalTime.Seconds(), br.buildTime.Seconds(), br.built)
+				t.Name(), s, br.evalTime.Seconds(), br.buildTime.Seconds(), br.built)
 		}
 	}
 
 	out := make([]result, 0, len(tools))
 	for _, t := range tools {
-		out = append(out, *results[t.name])
+		out = append(out, *results[t.Name()])
 	}
 	return out
 }
@@ -608,7 +718,7 @@ func main() {
 	touchMode := flag.String("touch-mode", "private",
 		"edit type: private=internal symbol, exported=API change")
 	toolsCSV := flag.String("tools", "nix-nocgo,nix-ca-nocgo",
-		"comma-separated tools (nix,nix-ca,nix-nocgo,nix-ca-nocgo)")
+		"comma-separated tools (nix,nix-ca,nix-nocgo,nix-ca-nocgo,bazel)")
 	fixtureName := flag.String("fixture", "light",
 		"fixture to use (torture|light)")
 	jsonOut := flag.String("json", "", "export results as JSON to this path")
@@ -633,127 +743,167 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
 	fixtureSrc := filepath.Join(repoRoot, "tests", "fixtures", fc.dir)
-
-	fmt.Println("Resolving dependencies...")
-	nixpkgsPath, pluginPath, gomodcache, err := resolvePaths(repoRoot)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	system, err := detectSystem()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 
 	tmpBase := os.Getenv("TMPDIR")
 	if tmpBase == "" {
 		tmpBase = "/tmp"
 	}
+
 	tmpdir := filepath.Join(tmpBase, "bench-incremental")
 	if err := os.MkdirAll(tmpdir, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	// Shared local store for both tools — same store, same sandbox=false,
-	// no daemon. CA features are enabled client-side so the system daemon
-	// config doesn't matter. Persistent across invocations so the cold
-	// cache cost is paid once.
-	storeRoot := filepath.Join(tmpdir, "store")
-	if err := os.MkdirAll(storeRoot, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	// Compute fixture copy path early so tools can reference it.
+	fixtureCopy := filepath.Join(tmpBase, "bench-fixture-copy")
+
+	// Parse requested tools first so we can skip expensive Nix setup
+	// when only non-Nix tools (e.g. bazel) are requested.
+	requested := strings.Split(*toolsCSV, ",")
+
+	needsNix := false
+	for _, name := range requested {
+		name = strings.TrimSpace(name)
+		if strings.HasPrefix(name, "nix") {
+			needsNix = true
+			break
+		}
 	}
 
-	mr := fc.modRoot
-	sp := fc.subPackage
-	exprNix, err := writeNixExpr(tmpdir, "nix", fixtureSrc, repoRoot, system, mr, sp, "")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	exprCA, err := writeNixExpr(tmpdir, "nix-ca", fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true;")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	exprNoCgo, err := writeNixExpr(tmpdir, "nix-nocgo", fixtureSrc, repoRoot, system, mr, sp, "CGO_ENABLED = \"0\";")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	exprCANoCgo, err := writeNixExpr(tmpdir, "nix-ca-nocgo", fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true; CGO_ENABLED = \"0\";")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	available := make(map[string]buildTool)
 
-	caOpts := []string{"--option", "extra-experimental-features", "ca-derivations"}
+	// Nix tools: only set up when at least one nix-* tool is requested.
+	if needsNix {
+		fmt.Println("Resolving Nix dependencies...")
 
-	available := map[string]*nixTool{
-		"nix": {
+		nixpkgsPath, pluginPath, gomodcache, err := resolvePaths(repoRoot)
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		system, err := detectSystem()
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		// Shared local store for nix tools — same store, same sandbox=false,
+		// no daemon. CA features are enabled client-side so the system daemon
+		// config doesn't matter. Persistent across invocations so the cold
+		// cache cost is paid once.
+		storeRoot := filepath.Join(tmpdir, "store")
+		if err := os.MkdirAll(storeRoot, 0o755); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		mr := fc.modRoot
+		sp := fc.subPackage
+		exprNix, err := writeNixExpr(tmpdir, "nix", fixtureSrc, repoRoot, system, mr, sp, "")
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		exprCA, err := writeNixExpr(tmpdir, "nix-ca", fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true;")
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		exprNoCgo, err := writeNixExpr(tmpdir, "nix-nocgo", fixtureSrc, repoRoot, system, mr, sp, "CGO_ENABLED = \"0\";")
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		exprCANoCgo, err := writeNixExpr(tmpdir, "nix-ca-nocgo", fixtureSrc, repoRoot, system, mr, sp, "contentAddressed = true; CGO_ENABLED = \"0\";")
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		caOpts := []string{"--option", "extra-experimental-features", "ca-derivations"}
+
+		available["nix"] = &nixTool{
 			name: "nix", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprNix, storeRoot: storeRoot,
 			stderrTail: *stderrTail,
-		},
-		"nix-ca": {
+		}
+		available["nix-ca"] = &nixTool{
 			name: "nix-ca", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprCA, storeRoot: storeRoot,
 			extraOpts: caOpts, stderrTail: *stderrTail,
-		},
-		"nix-nocgo": {
+		}
+		available["nix-nocgo"] = &nixTool{
 			name: "nix-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprNoCgo, storeRoot: storeRoot,
 			stderrTail: *stderrTail,
-		},
-		"nix-ca-nocgo": {
+		}
+		available["nix-ca-nocgo"] = &nixTool{
 			name: "nix-ca-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
 			gomodcache: gomodcache, exprPath: exprCANoCgo, storeRoot: storeRoot,
 			extraOpts: caOpts, stderrTail: *stderrTail,
-		},
+		}
 	}
 
-	requested := strings.Split(*toolsCSV, ",")
-	tools := make([]*nixTool, 0, len(requested))
+	// Bazel tool: only available for fixtures that have BUILD files.
+	if fc.hasBazel {
+		bazelTarget := "//" + fc.modRoot + "/" + strings.TrimPrefix(fc.subPackage, "./")
+		available["bazel"] = &bazelTool{
+			name:       "bazel",
+			workspace:  fixtureCopy,
+			target:     bazelTarget,
+			outputBase: filepath.Join(tmpdir, "bazel-output-base"),
+			stderrTail: *stderrTail,
+		}
+	}
+
+	tools := make([]buildTool, 0, len(requested))
 	for _, name := range requested {
 		name = strings.TrimSpace(name)
 		t, ok := available[name]
 		if !ok {
-			names := make([]string, 0, len(available))
-			for k := range available {
-				names = append(names, k)
+			if name == "bazel" && !fc.hasBazel {
+				fmt.Fprintf(os.Stderr, "tool %q is not available for fixture %q (no Bazel BUILD files; try -fixture torture)\n", name, *fixtureName)
+			} else {
+				names := make([]string, 0, len(available))
+				for k := range available {
+					names = append(names, k)
+				}
+				sort.Strings(names)
+				fmt.Fprintf(os.Stderr, "unknown tool: %q (available: %v)\n", name, names)
 			}
-			fmt.Fprintf(os.Stderr, "unknown tool: %q (available: %v)\n", name, names)
 			os.Exit(2)
 		}
 		tools = append(tools, t)
 	}
 
 	// Copy fixture once; touched files are restored in-place per run.
-	fixtureCopy := filepath.Join(tmpBase, "bench-fixture-copy")
-	if err := os.RemoveAll(fixtureCopy); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if err := copyTree(fixtureSrc, fixtureCopy); err != nil {
+	if err = os.RemoveAll(fixtureCopy); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n%s\nGO2NIX INCREMENTAL BUILD BENCHMARK\n%s\n",
+	if err = copyTree(fixtureSrc, fixtureCopy); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\n%s\nINCREMENTAL BUILD BENCHMARK\n%s\n",
 		strings.Repeat("=", 70), strings.Repeat("=", 70))
 	fmt.Printf("Fixture:    %s/%s\n", fc.dir, fc.modRoot)
 	names := make([]string, len(tools))
 	for i, t := range tools {
-		names[i] = t.name
+		names[i] = t.Name()
 	}
 	fmt.Printf("Tools:      %s\n", strings.Join(names, ", "))
 	fmt.Printf("Touch mode: %s\n", *touchMode)
 	fmt.Printf("Runs:       %d\n", *runs)
-	fmt.Printf("Store:      %s\n", storeRoot)
 
 	var scenarios []string
 	if *scenario == "all" {
@@ -773,7 +923,7 @@ func main() {
 		}
 		path, ok := scenarioPath(fc, name)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown scenario: %s\n", name)
+			_, _ = fmt.Fprintf(os.Stderr, "unknown scenario: %s\n", name)
 			os.Exit(2)
 		}
 		allResults = append(allResults, runTouchBenchmark(tools, fixtureCopy, name, path, *touchMode, *runs))
@@ -782,13 +932,16 @@ func main() {
 	fmt.Print(formatResults(allResults))
 
 	if *jsonOut != "" {
-		if err := exportJSON(allResults, *jsonOut); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		if err = exportJSON(allResults, *jsonOut); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	}
 
-	// Cleanup before asserting so a failure doesn't leak the store.
+	// Cleanup tools (e.g. bazel shutdown) then temp dirs.
+	for _, t := range tools {
+		_ = t.Cleanup()
+	}
 	_ = os.RemoveAll(fixtureCopy)
 	_ = os.RemoveAll(tmpdir)
 	// storeRoot intentionally NOT removed: leaving the populated rooted
@@ -830,27 +983,34 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
+
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
 		}
+
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
 			return os.MkdirAll(target, info.Mode())
 		}
+
 		in, err := os.Open(path)
 		if err != nil {
 			return err
 		}
-		defer in.Close() //nolint:errcheck
+
+		defer func() { _ = in.Close() }() //nolint:errcheck
+
 		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(out, in); err != nil {
+
+		if _, err = io.Copy(out, in); err != nil {
 			_ = out.Close()
 			return err
 		}
+
 		return out.Close()
 	})
 }

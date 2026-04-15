@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "gcp",
+    srcs = ["gcp.go"],
+    importpath = "github.com/numtide/go2nix/torture/internal/gcp",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/common",
+        "@com_google_cloud_go_bigquery//:bigquery",
+        "@com_google_cloud_go_bigtable//:bigtable",
+        "@com_google_cloud_go_compute_metadata//:metadata",
+        "@com_google_cloud_go_datastore//:datastore",
+        "@com_google_cloud_go_firestore//:firestore",
+        "@com_google_cloud_go_iam//:iam",
+        "@com_google_cloud_go_logging//:logging",
+        "@com_google_cloud_go_pubsub//:pubsub",
+        "@com_google_cloud_go_spanner//:spanner",
+        "@com_google_cloud_go_storage//:storage",
+    ],
+)

@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "app-untidy_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/numtide/go2nix/torture/app-untidy/cmd/app-untidy",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//internal/aws",
+        "//internal/azure",
+        "//internal/common",
+        "//internal/conflict-a",
+        "//internal/conflict-b",
+        "//internal/crypto",
+        "//internal/data",
+        "//internal/db",
+        "//internal/gcp",
+        "//internal/k8s",
+        "//internal/networking",
+        "//internal/observability",
+        "//internal/testing",
+        "//internal/web",
+    ],
+)
+
+go_binary(
+    name = "app-untidy",
+    embed = [":app-untidy_lib"],
+    visibility = ["//visibility:public"],
+)

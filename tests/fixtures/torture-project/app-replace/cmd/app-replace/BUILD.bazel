@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "app-replace_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/numtide/go2nix/torture/app-replace/cmd/app-replace",
+    visibility = ["//visibility:private"],
+    deps = ["@org_uber_go_atomic//:atomic"],
+)
+
+go_binary(
+    name = "app-replace",
+    embed = [":app-replace_lib"],
+    visibility = ["//visibility:public"],
+)

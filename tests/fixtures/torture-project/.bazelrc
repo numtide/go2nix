@@ -1,0 +1,9 @@
+# Disable remote cache for fair benchmarking
+build --remote_cache=
+build --disk_cache=
+
+# Sandboxed execution (matches Nix sandbox)
+build --spawn_strategy=sandboxed
+
+# Hermetic environment
+build --incompatible_strict_action_env
