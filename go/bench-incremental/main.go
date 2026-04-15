@@ -723,7 +723,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	exprDynNoCgo, err := writeNixExpr(tmpdir, "nix-dynamic-nocgo", dynExprTemplate, fixtureSrc, repoRoot, system, mr, sp, "CGO_ENABLED = 0;")
+	exprDynNoCgo, err := writeNixExpr(tmpdir, "nix-dynamic-nocgo", dynExprTemplate, fixtureSrc, repoRoot, system, mr, sp, `CGO_ENABLED = "0";`)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

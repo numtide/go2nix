@@ -43,8 +43,8 @@ The `nix-dynamic*` variants use the
 (`buildGoApplicationExperimental` — recursive-nix + dynamic-derivations +
 ca-derivations). They need a Nix that provides those experimental features
 *and* the `recursive-nix` system feature in the build sandbox; the harness
-probes once at startup and silently drops the tool if the probe fails, so
-the rest of the run continues. Remote builders that don't advertise
+probes once at startup and drops the tool with a `SKIP` notice if the probe
+fails, so the rest of the run continues. Remote builders that don't advertise
 `recursive-nix` will not work — this is a local-only comparison for now.
 
 ## Fixtures and scenarios
