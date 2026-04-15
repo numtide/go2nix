@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "web",
+    srcs = ["web.go"],
+    importpath = "github.com/numtide/go2nix/torture/internal/web",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/common",
+        "//internal/db",
+        "@com_github_a_h_templ//:templ",
+        "@com_github_flosch_pongo2_v6//:pongo2",
+        "@com_github_gin_gonic_gin//:gin",
+        "@com_github_go_chi_chi_v5//:chi",
+        "@com_github_go_playground_validator_v10//:validator",
+        "@com_github_go_resty_resty_v2//:resty",
+        "@com_github_gofiber_fiber_v2//:fiber",
+        "@com_github_gorilla_csrf//:csrf",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_gorilla_sessions//:sessions",
+        "@com_github_gorilla_websocket//:websocket",
+        "@com_github_julienschmidt_httprouter//:httprouter",
+        "@com_github_labstack_echo_v4//:echo",
+        "@com_github_magefile_mage//mg",
+        "@com_github_masterminds_sprig_v3//:sprig",
+        "@com_github_rs_cors//:cors",
+        "@com_github_rs_zerolog//:zerolog",
+        "@com_github_valyala_fasthttp//:fasthttp",
+        "@com_github_valyala_quicktemplate//:quicktemplate",
+    ],
+)

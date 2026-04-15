@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "networking",
+    srcs = ["networking.go"],
+    importpath = "github.com/numtide/go2nix/torture/internal/networking",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/common",
+        "@com_github_go_git_go_git_v5//:go-git",
+        "@com_github_go_playground_webhooks_v6//github",
+        "@com_github_hashicorp_memberlist//:memberlist",
+        "@com_github_hashicorp_raft//:raft",
+        "@com_github_ibm_sarama//:sarama",
+        "@com_github_pion_webrtc_v4//:webrtc",
+        "@com_github_quic_go_quic_go//:quic-go",
+        "@com_github_traefik_yaegi//interp",
+        "@com_github_twmb_franz_go//pkg/kgo",
+        "@io_nhooyr_websocket//:websocket",
+    ],
+)

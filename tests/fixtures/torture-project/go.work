@@ -1,0 +1,33 @@
+go 1.25.0
+
+use (
+	./app-full
+	./app-partial
+	./app-replace
+	./internal/aws
+	./internal/azure
+	./internal/common
+	./internal/conflict-a
+	./internal/conflict-b
+	./internal/crypto
+	./internal/data
+	./internal/db
+	./internal/gcp
+	./internal/k8s
+	./internal/networking
+	./internal/observability
+	./internal/testing
+	./internal/web
+)
+
+// Resolve conflicting version-pin replaces between conflict-a and conflict-b.
+// Go workspace semantics: workspace-level replace takes precedence.
+// Picks the higher version (MVS-like resolution).
+replace (
+	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.10.0
+	github.com/go-chi/chi/v5 => github.com/go-chi/chi/v5 v5.2.0
+	github.com/go-sql-driver/mysql => github.com/go-sql-driver/mysql v1.9.0
+	github.com/jackc/pgx/v5 => github.com/jackc/pgx/v5 v5.7.2
+	github.com/redis/go-redis/v9 => github.com/redis/go-redis/v9 v9.7.0
+	go.uber.org/zap => go.uber.org/zap v1.27.0
+)

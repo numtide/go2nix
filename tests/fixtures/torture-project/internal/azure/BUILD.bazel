@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "azure",
+    srcs = ["azure.go"],
+    importpath = "github.com/numtide/go2nix/torture/internal/azure",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/common",
+        "@com_github_azure_azure_sdk_for_go_sdk_azcore//:azcore",
+        "@com_github_azure_azure_sdk_for_go_sdk_azidentity//:azidentity",
+        "@com_github_azure_azure_sdk_for_go_sdk_data_azcosmos//:azcosmos",
+        "@com_github_azure_azure_sdk_for_go_sdk_messaging_azeventhubs//:azeventhubs",
+        "@com_github_azure_azure_sdk_for_go_sdk_resourcemanager_compute_armcompute_v6//:armcompute",
+        "@com_github_azure_azure_sdk_for_go_sdk_resourcemanager_network_armnetwork_v6//:armnetwork",
+        "@com_github_azure_azure_sdk_for_go_sdk_security_keyvault_azsecrets//:azsecrets",
+        "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//:azblob",
+    ],
+)

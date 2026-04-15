@@ -255,7 +255,12 @@
           # nix on it.
           bench = pkgs.callPackage ./packages/bench-incremental/default.nix { };
           benchIncremental = pkgs.writeShellScriptBin "bench-incremental" ''
-            export PATH="${pkgs.lib.makeBinPath [ pkgs.nixVersions.nix_2_34 ]}:$PATH"
+            export PATH="${
+              pkgs.lib.makeBinPath [
+                pkgs.nixVersions.nix_2_34
+                pkgs.bazel_7
+              ]
+            }:$PATH"
             exec ${bench}/bin/bench-incremental "$@"
           '';
         in

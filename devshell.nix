@@ -7,6 +7,7 @@ pkgs.mkShell {
     pkgs.mdbook
     pkgs.socat
     pkgs.hyperfine
+    pkgs.bazel_7
   ];
 
   shellHook = ''

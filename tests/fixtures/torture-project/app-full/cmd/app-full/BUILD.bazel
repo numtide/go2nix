@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "app-full_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/numtide/go2nix/torture/app-full/cmd/app-full",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//internal/aws",
+        "//internal/azure",
+        "//internal/common",
+        "//internal/conflict-a",
+        "//internal/conflict-b",
+        "//internal/crypto",
+        "//internal/data",
+        "//internal/db",
+        "//internal/gcp",
+        "//internal/k8s",
+        "//internal/networking",
+        "//internal/observability",
+        "//internal/testing",
+        "//internal/web",
+    ],
+)
+
+go_binary(
+    name = "app-full",
+    embed = [":app-full_lib"],
+    visibility = ["//visibility:public"],
+)

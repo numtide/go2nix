@@ -11,6 +11,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -775,6 +776,194 @@ func generateAppMain(baseDir string, app AppDef) error {
 	return os.WriteFile(filepath.Join(dir, "main.go"), src, 0o644)
 }
 
+// generateGoWork creates a go.work file that unifies all modules into a single
+// Go workspace. Required for Gazelle's go_deps module extension.
+//
+// When multiple modules have conflicting version-pin replaces (e.g. conflict-a
+// pins gin@v1.9.1, conflict-b pins gin@v1.10.0), the workspace resolves them
+// by picking the higher version (MVS-like).
+func generateGoWork(baseDir string) error {
+	var buf strings.Builder
+	buf.WriteString("go 1.25\n\nuse (\n")
+	for _, app := range apps {
+		if app.SkipTidy {
+			continue // untidy apps have no go.sum, can't be part of workspace
+		}
+		fmt.Fprintf(&buf, "\t./%s\n", app.Name)
+	}
+	for _, mod := range multiModules {
+		fmt.Fprintf(&buf, "\t./internal/%s\n", mod.Name)
+	}
+	buf.WriteString(")\n")
+
+	// Collect version-pin replaces across all modules; when multiple
+	// modules pin the same package to different versions, keep the higher
+	// one. These workspace-level replaces resolve conflicts that `go work
+	// sync` would otherwise reject.
+	pins := map[string]string{}
+	var count int
+	for _, mod := range multiModules {
+		for pkg, ver := range mod.Replaces {
+			if existing, ok := pins[pkg]; !ok || ver > existing {
+				pins[pkg] = ver
+			}
+			count++
+		}
+	}
+	// Only emit replace block if there are actual conflicts (i.e. more
+	// pins than unique packages, meaning at least two modules pin the
+	// same package).
+	if count > len(pins) && len(pins) > 0 {
+		sorted := make([]string, 0, len(pins))
+		for pkg := range pins {
+			sorted = append(sorted, pkg)
+		}
+		sort.Strings(sorted)
+		buf.WriteString("\n// Resolve conflicting version-pin replaces across modules.\n")
+		buf.WriteString("replace (\n")
+		for _, pkg := range sorted {
+			fmt.Fprintf(&buf, "\t%s => %s %s\n", pkg, pkg, pins[pkg])
+		}
+		buf.WriteString(")\n")
+	}
+
+	return os.WriteFile(filepath.Join(baseDir, "go.work"), []byte(buf.String()), 0o644)
+}
+
+// generateBazelFiles creates the Bazel workspace scaffolding: MODULE.bazel,
+// root BUILD.bazel, .bazelversion, and .bazelrc. Per-module BUILD.bazel files
+// are generated afterwards by Gazelle (bazel run @gazelle//:gazelle).
+func generateBazelFiles(baseDir string) error {
+	// .bazelversion — pin for reproducible benchmarks
+	if err := os.WriteFile(filepath.Join(baseDir, ".bazelversion"), []byte("7.6.0\n"), 0o644); err != nil {
+		return fmt.Errorf(".bazelversion: %w", err)
+	}
+
+	// .bazelrc — benchmark-friendly defaults
+	bazelrc := `# Disable remote cache for fair benchmarking
+build --remote_cache=
+build --disk_cache=
+
+# Sandboxed execution (matches Nix sandbox)
+build --spawn_strategy=sandboxed
+
+# Hermetic environment
+build --incompatible_strict_action_env
+`
+	if err := os.WriteFile(filepath.Join(baseDir, ".bazelrc"), []byte(bazelrc), 0o644); err != nil {
+		return fmt.Errorf(".bazelrc: %w", err)
+	}
+
+	// Root BUILD.bazel with custom Gazelle binary (avoids the upstream
+	// gazelle_local target's dev-only dependency on bazel_skylib_gazelle_plugin).
+	buildBazel := `load("@gazelle//:def.bzl", "gazelle", "gazelle_binary")
+
+# gazelle:prefix github.com/numtide/go2nix/torture
+
+gazelle_binary(
+    name = "gazelle_bin",
+    languages = [
+        "@gazelle//language/proto",
+        "@gazelle//language/go",
+    ],
+)
+
+gazelle(
+    name = "gazelle",
+    gazelle = ":gazelle_bin",
+)
+`
+	if err := os.WriteFile(filepath.Join(baseDir, "BUILD.bazel"), []byte(buildBazel), 0o644); err != nil {
+		return fmt.Errorf("BUILD.bazel: %w", err)
+	}
+
+	// MODULE.bazel — bzlmod root with rules_go + gazelle
+	//
+	// The go_deps extension reads the go.work file to resolve all external
+	// Go dependencies. After generation, run `bazel mod tidy` to populate
+	// the use_repo(...) directive with the full list of ~497 repos.
+	var buf strings.Builder
+	buf.WriteString(`module(name = "torture_project", version = "0.0.0")
+
+bazel_dep(name = "rules_go", version = "0.60.0")
+bazel_dep(name = "gazelle", version = "0.42.0")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.host()
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_work = "//:go.work")
+
+# etcd's api/v3 module has proto-generated dirs without BUILD files.
+go_deps.gazelle_override(
+    path = "go.etcd.io/etcd/api/v3",
+    directives = [
+        "gazelle:proto disable",
+    ],
+    build_file_generation = "on",
+)
+`)
+
+	// Collect all external module paths that appear in replace directives
+	// so they're available as repos. The full list is populated by
+	// `bazel mod tidy`, but we seed the version-pinned ones here.
+	pinned := map[string]bool{}
+	for _, mod := range multiModules {
+		for pkg := range mod.Replaces {
+			pinned[pkg] = true
+		}
+	}
+	if len(pinned) > 0 {
+		sorted := make([]string, 0, len(pinned))
+		for pkg := range pinned {
+			sorted = append(sorted, pkg)
+		}
+		sort.Strings(sorted)
+		buf.WriteString("\n# Version-pinned repos from replace directives.\n")
+		buf.WriteString("# Run `bazel mod tidy` to populate the full use_repo list.\n")
+		buf.WriteString("use_repo(\n    go_deps,\n")
+		for _, pkg := range sorted {
+			// Convert Go module path to Bazel repo name: replace / and . with _
+			repo := goModuleToRepo(pkg)
+			fmt.Fprintf(&buf, "    %q,\n", repo)
+		}
+		buf.WriteString(")\n")
+	}
+
+	if err := os.WriteFile(filepath.Join(baseDir, "MODULE.bazel"), []byte(buf.String()), 0o644); err != nil {
+		return fmt.Errorf("MODULE.bazel: %w", err)
+	}
+
+	return nil
+}
+
+// goModuleToRepo converts a Go module path to a Bazel repository name
+// following the gazelle convention: com_github_foo_bar for github.com/foo/bar.
+func goModuleToRepo(modPath string) string {
+	// Strip version suffix (e.g. /v5, /v9)
+	parts := strings.Split(modPath, "/")
+	var filtered []string
+	for _, p := range parts {
+		if len(p) > 1 && p[0] == 'v' && p[1] >= '0' && p[1] <= '9' {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	// Reverse domain parts and join with underscore
+	// github.com/foo/bar -> com_github_foo_bar
+	if len(filtered) > 1 {
+		domain := strings.Split(filtered[0], ".")
+		for i, j := 0, len(domain)-1; i < j; i, j = i+1, j-1 {
+			domain[i], domain[j] = domain[j], domain[i]
+		}
+		filtered[0] = strings.Join(domain, "_")
+	}
+	result := strings.Join(filtered, "_")
+	// Replace hyphens with underscores
+	result = strings.ReplaceAll(result, "-", "_")
+	return result
+}
+
 // RunTorture generates a multi-module torture-test Go project in baseDir.
 func RunTorture(baseDir string) error {
 	fmt.Printf("Generating multi-module layout with %d lib modules + app into %s/...\n",
@@ -814,12 +1003,24 @@ func RunTorture(baseDir string) error {
 		fmt.Printf("  Generated %s (depends on %d libs)\n", app.Name, len(libs))
 	}
 
+	// Generate Go workspace file for Bazel/Gazelle integration.
+	if err := generateGoWork(baseDir); err != nil {
+		return fmt.Errorf("go.work: %w", err)
+	}
+	fmt.Println("  Generated go.work")
+
+	// Generate Bazel workspace scaffolding.
+	if err := generateBazelFiles(baseDir); err != nil {
+		return fmt.Errorf("bazel: %w", err)
+	}
+	fmt.Println("  Generated Bazel scaffolding (MODULE.bazel, BUILD.bazel, .bazelversion, .bazelrc)")
+
 	fmt.Printf("Done. Run go mod tidy on internal modules and apps (skip: ")
 	for _, app := range apps {
 		if app.SkipTidy {
 			fmt.Printf("%s ", app.Name)
 		}
 	}
-	fmt.Println(")")
+	fmt.Printf(")\nThen run: cd %s && bazel run @gazelle//:gazelle && bazel mod tidy\n", baseDir)
 	return nil
 }

@@ -1,0 +1,16 @@
+load("@gazelle//:def.bzl", "gazelle", "gazelle_binary")
+
+# gazelle:prefix github.com/numtide/go2nix/torture
+
+gazelle_binary(
+    name = "gazelle_bin",
+    languages = [
+        "@gazelle//language/proto",
+        "@gazelle//language/go",
+    ],
+)
+
+gazelle(
+    name = "gazelle",
+    gazelle = ":gazelle_bin",
+)
