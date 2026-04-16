@@ -47,9 +47,9 @@ func compileScript(go2nixBin string) string {
 	b.WriteString("export HOME=\"$TMPDIR\"\n")
 	b.WriteString("mkdir -p \"$out\"\n\n")
 
-	// Write importcfg from env var (placeholders resolved by Nix at build time).
-	// Use absolute path since compile-package changes CWD to srcdir.
-	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > \"$NIX_BUILD_TOP/importcfg\"\n\n")
+	// Write importcfg from passAsFile (placeholders resolved by Nix at build
+	// time). passAsFile keeps the derivation's exec env under MAX_ARG_STRLEN.
+	b.WriteString("cat \"$importcfg_entriesPath\" > \"$NIX_BUILD_TOP/importcfg\"\n\n")
 
 	// Write compile manifest from env var (JSON generated at derivation creation time).
 	// Replace @@IMPORTCFG@@ placeholder with the actual importcfg path so that
@@ -83,8 +83,9 @@ func linkScript(goStorePath, pname, buildMode string) string {
 	b.WriteString("export HOME=\"$TMPDIR\"\n")
 	b.WriteString("mkdir -p \"$out/bin\"\n\n")
 
-	// Write importcfg for all transitive deps
-	b.WriteString("printf '%s\\n' \"$importcfg_entries\" > \"$NIX_BUILD_TOP/importcfg\"\n\n")
+	// Write importcfg for all transitive deps. passAsFile keeps the exec
+	// env under MAX_ARG_STRLEN — torture's full closure is ~400KB.
+	b.WriteString("cat \"$importcfg_entriesPath\" > \"$NIX_BUILD_TOP/importcfg\"\n\n")
 
 	// Set GOROOT so the linker embeds it as runtime.defaultGOROOT,
 	// enabling runtime.GOROOT() in the resulting binary.

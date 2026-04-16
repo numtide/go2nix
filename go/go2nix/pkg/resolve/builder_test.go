@@ -87,8 +87,8 @@ func TestCompileScript(t *testing.T) {
 	if !strings.Contains(script, "compile-package") {
 		t.Error("missing compile-package call")
 	}
-	if !strings.Contains(script, "$importcfg_entries") {
-		t.Error("missing importcfg_entries reference")
+	if !strings.Contains(script, "$importcfg_entriesPath") {
+		t.Error("missing importcfg_entriesPath reference")
 	}
 	if !strings.Contains(script, "${compileManifestJSON//@@IMPORTCFG@@/$NIX_BUILD_TOP/importcfg}") {
 		t.Error("missing compileManifestJSON with @@IMPORTCFG@@ expansion")
@@ -331,9 +331,9 @@ func TestBuildImportcfgMissingDrvPath(t *testing.T) {
 	}
 }
 
-// TestImportcfgEntriesBashWrite verifies that the multi-line importcfg_entries
-// env var is correctly written to a file by the bash printf in both
-// compileScript and linkScript.
+// TestImportcfgEntriesBashWrite verifies that the importcfg_entries content
+// (delivered via passAsFile) is correctly copied to NIX_BUILD_TOP/importcfg
+// by the bash snippet in both compileScript and linkScript.
 func TestImportcfgEntriesBashWrite(t *testing.T) {
 	entries := strings.Join([]string{
 		"packagefile fmt=/nix/store/stdlib/fmt.a",
@@ -342,13 +342,18 @@ func TestImportcfgEntriesBashWrite(t *testing.T) {
 	}, "\n")
 
 	tmpDir := t.TempDir()
+	inFile := filepath.Join(tmpDir, "passAsFile-importcfg_entries")
 	outFile := filepath.Join(tmpDir, "importcfg")
+	if err := os.WriteFile(inFile, []byte(entries), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Run the same bash snippet used by both compileScript and linkScript.
-	script := `printf '%s\n' "$importcfg_entries" > "$outfile"`
+	script := `cat "$importcfg_entriesPath" > "$outfile"`
 	cmd := exec.Command("bash", "-c", script)
 	cmd.Env = []string{
-		"importcfg_entries=" + entries,
+		"PATH=" + os.Getenv("PATH"),
+		"importcfg_entriesPath=" + inFile,
 		"outfile=" + outFile,
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
