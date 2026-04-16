@@ -259,6 +259,7 @@
               pkgs.lib.makeBinPath [
                 pkgs.nixVersions.nix_2_34
                 pkgs.bazel_7
+                pkgs.stdenv.cc
               ]
             }:$PATH"
             exec ${bench}/bin/bench-incremental "$@"
