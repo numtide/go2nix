@@ -68,7 +68,7 @@ func Run() error {
 	_ = badger.DefaultOptions("")
 	var _ *pebble.DB
 	_ = elasticsearch.Config{}
-	_ = sqlite3.ErrNo(0)
+	_ = sqlite3.SQLiteDriver{}
 	_ = pq.ErrSSLNotSupported
 	var _ *bun.DB
 	_ = goose.Up
