@@ -685,6 +685,7 @@ func buildPackageDrv(
 		return nil, fmt.Errorf("marshaling compile manifest: %w", err)
 	}
 	drv.SetEnv("compileManifestJSON", string(manifestJSON))
+	drv.SetEnv("passAsFile", "importcfg_entries")
 
 	if pkg.GoVersion != "" {
 		drv.SetEnv("goVersion", compile.LangVersion(pkg.GoVersion))
@@ -1030,6 +1031,7 @@ func buildLinkDrv(
 	}
 
 	drv.SetEnv("importcfg_entries", strings.Join(importcfgEntries, "\n"))
+	drv.SetEnv("passAsFile", "importcfg_entries")
 	drv.SetEnv("ldflags", cfg.LDFlags)
 
 	// Propagate sanitizer flags (-race, -msan, -asan) from gcflags to the
