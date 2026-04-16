@@ -3,7 +3,7 @@
 # go/go2nix/, packages/go2nix-nix-plugin/, nix/dag/hooks/, or the nixpkgs
 # flake input. A change to nix/dag/*.nix alone should NOT require
 # updating this file.
-testify-basic /nix/store/s9wzmjsr57g7jvagkhwk6drj6vzsfh17-testify-basic-0.0.1.drv
-xtest-local-dep /nix/store/ki7f3z96ni89hs4vppcjqhrjs7v4dwr9-xtest-local-dep-0.0.1.drv
-cgo-internal-test /nix/store/9wz2kr67ljvp6q6smqkpn2igsvh3h1m0-cgo-internal-test-0.0.1.drv
-torture-app-full /nix/store/yca3b3ki3q53640h83q5sp2nq6zjj5s4-torture-app-full-0.0.1.drv
+testify-basic /nix/store/q8zaj6w17xy8bhjvqjv0dxw9khqsynba-testify-basic-0.0.1.drv
+xtest-local-dep /nix/store/1hjag8spqwjsr35jxjbsqgklya9cmxh9-xtest-local-dep-0.0.1.drv
+cgo-internal-test /nix/store/xqz4n7smyz1rxazid5q2n19d641madif-cgo-internal-test-0.0.1.drv
+torture-app-full /nix/store/mkvfka056fyksxddq4z0rnf6939nsayb-torture-app-full-0.0.1.drv

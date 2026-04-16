@@ -85,6 +85,10 @@ struct GoPackage {
     cgo_cflags: Vec<String>,
     #[serde(rename = "CgoLDFLAGS")]
     cgo_ldflags: Vec<String>,
+    #[serde(rename = "TestImports")]
+    test_imports: Vec<String>,
+    #[serde(rename = "XTestImports")]
+    x_test_imports: Vec<String>,
     #[serde(rename = "ForTest")]
     for_test: String,
     #[serde(rename = "Error")]
@@ -451,7 +455,7 @@ fn run_go_list_test(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,ForTest,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,TestImports,XTestImports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,ForTest,Error");
     cmd.arg("-deps");
     cmd.arg("-test");
     cmd.arg("-e");
@@ -506,6 +510,11 @@ fn parse_test_packages(
     let mut test_local_paths = BTreeSet::new();
     let mut raw_test_locals: Vec<RawLocalPkg> = Vec::new();
     let mut local_test_embed_files: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // {Test,XTest}Imports of every local package (build-closure or test-only),
+    // keyed by bare import path. Used to compute test-reachability below.
+    // Populated only from bare entries (ForTest empty); recompiled variants
+    // don't carry test imports.
+    let mut local_test_imports: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut pkg_errors = Vec::new();
 
     for result in serde_json::Deserializer::from_slice(stdout).into_iter::<GoPackage>() {
@@ -557,6 +566,23 @@ fn parse_test_packages(
         // Local = main module or filesystem-path replace.
         let is_local = module.main || (!replace_path.is_empty() && replace_version.is_empty());
         if is_local {
+            // Harvest {Test,XTest}Imports for reachability seeding/expansion.
+            // Only bare entries carry these (variants have ForTest set and are
+            // recompilations of someone else's test, not pattern matches).
+            // Populated before dedup so a variant occurrence appearing first
+            // doesn't shadow the bare entry's test imports.
+            if jpkg.for_test.is_empty()
+                && (!jpkg.test_imports.is_empty() || !jpkg.x_test_imports.is_empty())
+            {
+                local_test_imports.insert(
+                    import_path.clone(),
+                    jpkg.test_imports
+                        .iter()
+                        .chain(&jpkg.x_test_imports)
+                        .map(|i| strip_variant_suffix(i).to_owned())
+                        .collect(),
+                );
+            }
             // For build-graph locals, harvest the {Test,XTest}EmbedFiles that
             // only resolve under -test; the rest are test-only locals
             // (e.g. an internal/testutil only imported from *_test.go files).
@@ -653,10 +679,43 @@ fn parse_test_packages(
         );
     }
 
+    // The `<sibling>/...` patterns enumerate every package in sibling modules,
+    // not just those reachable from the building module's tests. An unreachable
+    // sibling package may have third-party imports outside the building
+    // module's go.sum (which the classify step below silently drops); its
+    // compile drv would then fail with "could not import X (open : no such
+    // file or directory)". Filter raw_test_locals to packages reachable from
+    // a build-closure local's test imports (and transitively via reached
+    // test-only-locals' own imports + test imports, since the testrunner runs
+    // tests for everything in localArchives).
+    let by_ip: BTreeMap<&str, &RawLocalPkg> = raw_test_locals
+        .iter()
+        .map(|r| (r.import_path.as_str(), r))
+        .collect();
+    let mut reachable: BTreeSet<String> = BTreeSet::new();
+    let mut frontier: Vec<String> = local_paths
+        .iter()
+        .filter_map(|ip| local_test_imports.get(ip))
+        .flatten()
+        .cloned()
+        .collect();
+    while let Some(ip) = frontier.pop() {
+        if !test_local_paths.contains(&ip) || !reachable.insert(ip.clone()) {
+            continue;
+        }
+        if let Some(r) = by_ip.get(ip.as_str()) {
+            frontier.extend(r.imports.iter().cloned());
+        }
+        if let Some(ti) = local_test_imports.get(&ip) {
+            frontier.extend(ti.iter().cloned());
+        }
+    }
+
     // Classify test-only-local imports against the union of build-graph and
     // test-pass package sets, mirroring parse_go_packages.
     let test_local_packages: Vec<LocalPkgData> = raw_test_locals
         .into_iter()
+        .filter(|raw| reachable.contains(&raw.import_path))
         .map(|raw| {
             let mut local_imports = Vec::new();
             let mut third_party_imports = Vec::new();
@@ -1654,10 +1713,23 @@ mod tests {
 
     /// go list JSON for a main-module (local) package with Dir and Imports.
     fn local_pkg_json(import_path: &str, mod_path: &str, dir: &str, imports: &[&str]) -> String {
-        let imp_json: Vec<String> = imports.iter().map(|i| format!("\"{i}\"")).collect();
+        local_pkg_json_t(import_path, mod_path, dir, imports, &[])
+    }
+
+    /// As `local_pkg_json`, with TestImports.
+    fn local_pkg_json_t(
+        import_path: &str,
+        mod_path: &str,
+        dir: &str,
+        imports: &[&str],
+        test_imports: &[&str],
+    ) -> String {
+        let json_arr =
+            |xs: &[&str]| -> String { xs.iter().map(|i| format!("\"{i}\"")).collect::<Vec<_>>().join(",") };
         format!(
-            r#"{{"ImportPath":"{import_path}","Dir":"{dir}","Module":{{"Path":"{mod_path}","Main":true}},"Imports":[{}],"GoFiles":["a.go"]}}"#,
-            imp_json.join(",")
+            r#"{{"ImportPath":"{import_path}","Dir":"{dir}","Module":{{"Path":"{mod_path}","Main":true}},"Imports":[{}],"TestImports":[{}],"GoFiles":["a.go"]}}"#,
+            json_arr(imports),
+            json_arr(test_imports),
         )
     }
 
@@ -1983,12 +2055,13 @@ mod tests {
         let mut locals = BTreeSet::new();
         locals.insert("example.com/m/internal/app".to_owned());
         let input = [
-            // Already in build graph: skipped.
-            local_pkg_json(
+            // Build-graph local: its TestImports seed the reachability walk.
+            local_pkg_json_t(
                 "example.com/m/internal/app",
                 "example.com/m",
                 "/src/app",
                 &[],
+                &["example.com/m/internal/testutil"],
             ),
             // Test-only local importing build-graph local + test-only third-party.
             local_pkg_json(
@@ -2014,16 +2087,74 @@ mod tests {
 
     #[test]
     fn test_parse_deduplicates() {
+        let mut locals = BTreeSet::new();
+        locals.insert("example.com/m/app".to_owned());
         let input = [
             third_party_json("github.com/dup", "github.com/dup", "v1.0.0"),
             third_party_json("github.com/dup", "github.com/dup", "v1.0.0"),
+            local_pkg_json_t(
+                "example.com/m/app",
+                "example.com/m",
+                "/src/app",
+                &[],
+                &["example.com/m/x"],
+            ),
             local_pkg_json("example.com/m/x", "example.com/m", "/src/x", &[]),
             local_pkg_json("example.com/m/x", "example.com/m", "/src/x", &[]),
         ]
         .join("\n");
-        let r = ptp(&input, &BTreeSet::new(), &BTreeSet::new());
+        let r = ptp(&input, &BTreeSet::new(), &locals);
         assert_eq!(r.test_packages.len(), 1);
         assert_eq!(r.test_local_packages.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_reachability_drops_unreachable_sibling() {
+        // Build-closure local `app`'s tests import `testutil` (reachable).
+        // `testutil`'s tests import `helper2` (transitively reachable).
+        // `unreachable` is in a sibling module, surfaced by `<mod>/...`, but
+        // nothing in scope imports it — its third-party dep `cloud.gone`
+        // wouldn't be in the building module's go.sum, so its compile drv
+        // would fail. The reachability filter must drop it.
+        let mut locals = BTreeSet::new();
+        locals.insert("example.com/m/app".to_owned());
+        let input = [
+            local_pkg_json_t(
+                "example.com/m/app",
+                "example.com/m",
+                "/src/app",
+                &[],
+                &["example.com/sib/testutil"],
+            ),
+            local_pkg_json_t(
+                "example.com/sib/testutil",
+                "example.com/sib",
+                "/src/sib/testutil",
+                &["example.com/m/app"],
+                &["example.com/sib/helper2"],
+            ),
+            local_pkg_json(
+                "example.com/sib/helper2",
+                "example.com/sib",
+                "/src/sib/helper2",
+                &[],
+            ),
+            local_pkg_json(
+                "example.com/sib/unreachable",
+                "example.com/sib",
+                "/src/sib/unreachable",
+                &["cloud.gone/sdk"],
+            ),
+        ]
+        .join("\n");
+
+        let r = ptp(&input, &BTreeSet::new(), &locals);
+        let got: Vec<&str> = r
+            .test_local_packages
+            .iter()
+            .map(|p| p.import_path.as_str())
+            .collect();
+        assert_eq!(got, vec!["example.com/sib/testutil", "example.com/sib/helper2"]);
     }
 
     #[test]
@@ -2577,7 +2708,7 @@ mod tests {
         // as a `[X.test]` variant. parse_test_packages must surface it under
         // its bare path so mainSrc includes its source.
         let stdout = br#"
-{"ImportPath":"example.com/sib","Dir":"/src/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"GoFiles":["helper.go"]}
+{"ImportPath":"example.com/sib","Dir":"/src/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"GoFiles":["helper.go"],"XTestImports":["example.com/sib/testutil"]}
 {"ImportPath":"example.com/sib [example.com/sib.test]","Dir":"/src/sib","ForTest":"example.com/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"GoFiles":["helper.go"],"TestGoFiles":["internal_test.go"]}
 {"ImportPath":"example.com/sib/testutil [example.com/sib.test]","Dir":"/src/sib/testutil","ForTest":"example.com/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"GoFiles":["testutil.go"],"Imports":["example.com/sib [example.com/sib.test]"]}
 {"ImportPath":"example.com/sib_test [example.com/sib.test]","Dir":"/src/sib","ForTest":"example.com/sib","Module":{"Path":"example.com/sib","Replace":{"Path":"./sib"}},"XTestGoFiles":["helper_test.go"]}
