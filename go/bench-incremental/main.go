@@ -897,14 +897,21 @@ func main() {
 			gomodcache: gomodcache, exprPath: exprCANoCgo, storeRoot: storeRoot,
 			extraOpts: caOpts, stderrTail: *stderrTail,
 		}
+		// Dynamic tools use the host store (storeRoot=""). The recursive-nix
+		// inner daemon serves whichever store the outer build runs against,
+		// and a rooted store doesn't have the FOD inputDrvs the inner
+		// `go2nix resolve` registers — AddToStore fails with "path is not
+		// valid". The host store does. Less isolated than the dag tools'
+		// rooted store, but the wrapper drv is unique per fixture path so
+		// runs don't interfere.
 		available["nix-dynamic"] = &nixTool{
 			name: "nix-dynamic", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
-			gomodcache: gomodcache, exprPath: exprDyn, storeRoot: storeRoot,
+			gomodcache: gomodcache, exprPath: exprDyn,
 			extraOpts: dynOpts, stderrTail: *stderrTail, skipOnFail: true,
 		}
 		available["nix-dynamic-nocgo"] = &nixTool{
 			name: "nix-dynamic-nocgo", nixpkgsPath: nixpkgsPath, pluginPath: pluginPath,
-			gomodcache: gomodcache, exprPath: exprDynNoCgo, storeRoot: storeRoot,
+			gomodcache: gomodcache, exprPath: exprDynNoCgo,
 			extraOpts: dynOpts, stderrTail: *stderrTail, skipOnFail: true,
 		}
 	}
