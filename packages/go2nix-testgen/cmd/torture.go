@@ -180,7 +180,7 @@ var categories = []DepCategory{
 			{Path: "github.com/dgraph-io/badger/v4", Alias: "badger", Usage: `_ = badger.DefaultOptions("")`},
 			{Path: "github.com/cockroachdb/pebble", Usage: "var _ *pebble.DB"},
 			{Path: "github.com/elastic/go-elasticsearch/v8", Alias: "elasticsearch", Usage: "_ = elasticsearch.Config{}"},
-			{Path: "github.com/mattn/go-sqlite3", Alias: "sqlite3", Usage: `_ = sqlite3.ErrNo(0)`},
+			{Path: "github.com/mattn/go-sqlite3", Alias: "sqlite3", Usage: `_ = sqlite3.SQLiteDriver{}`},
 			{Path: "github.com/lib/pq", Alias: "pq", Usage: `_ = pq.ErrSSLNotSupported`},
 			{Path: "github.com/uptrace/bun", Usage: "var _ *bun.DB"},
 			{Path: "github.com/pressly/goose/v3", Alias: "goose", Usage: "_ = goose.Up"},
