@@ -162,6 +162,7 @@ let
         ${lib.optionalString (netrcFile != null) "--netrc-file ${netrcFile}"} \
         ${lib.optionalString (pgoProfile != null) "--pgo-profile ${pgoProfile}"} \
         --daemon-socket "''${NIX_REMOTE#unix://}" \
+        --nix-jobs "''${NIX_BUILD_CORES:-0}" \
         --output $out
     '';
 
