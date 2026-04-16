@@ -353,8 +353,14 @@ var bazelProcessRe = regexp.MustCompile(`INFO: (\d+) process`)
 func (t *bazelTool) Build(_ string) (buildResult, error) {
 	baseArgs := []string{"--output_base=" + t.outputBase}
 
+	// Redirect convenience symlinks (bazel-bin, bazel-out, …) to the
+	// output base so they don't land in the shared fixture copy.  Stray
+	// symlinks in the workspace change the nix store path when
+	// nix-dynamic re-evaluates, forcing a full wrapper rebuild that fails.
+	symlinkPrefix := t.outputBase + "/convenience-"
+
 	// Phase 1: loading + analysis only (analogous to nix-instantiate).
-	analysisArgs := append(append([]string{}, baseArgs...), "build", "--nobuild", t.target)
+	analysisArgs := append(append([]string{}, baseArgs...), "build", "--nobuild", "--symlink_prefix="+symlinkPrefix, t.target)
 	analysisElapsed, _, analysisStderr, err := runBazelCommand(t.workspace, analysisArgs)
 	if err != nil {
 		tail := analysisStderr
@@ -365,7 +371,7 @@ func (t *bazelTool) Build(_ string) (buildResult, error) {
 	}
 
 	// Phase 2: full build (analogous to nix-store --realise).
-	buildArgs := append(append([]string{}, baseArgs...), "build", t.target)
+	buildArgs := append(append([]string{}, baseArgs...), "build", "--symlink_prefix="+symlinkPrefix, t.target)
 	buildElapsed, _, buildStderr, err := runBazelCommand(t.workspace, buildArgs)
 	if err != nil {
 		tail := buildStderr
