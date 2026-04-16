@@ -205,6 +205,10 @@ func Resolve(cfg Config) error {
 		"GOMODCACHE=" + gomodcache,
 		"GONOSUMCHECK=*",
 		"GOPROXY=off",
+		// Match the plugin (resolve.rs): in workspace mode, individual
+		// modules' replace directives are ignored, so MVS may select a
+		// version the lockfile (generated per-module) doesn't have.
+		"GOWORK=off",
 		"GOFLAGS=-mod=readonly",
 		// The merged GOMODCACHE is assembled from symlinks to Nix store FOD
 		// outputs (see setupGOMODCACHE). Go's //go:embed rejects symlinks by
