@@ -136,6 +136,9 @@
           test-fixture-nested-module = callPkgWith ./tests/nix/nested_module_test.nix {
             inherit flake system;
           };
+          test-fixture-modroot-dotslash = callPkgWith ./tests/nix/modroot_dotslash_test.nix {
+            inherit flake system;
+          };
           test-fixture-mainsrc-precise = callPkgWith ./packages/test-fixture-mainsrc-precise/default.nix {
             inherit flake system;
           };

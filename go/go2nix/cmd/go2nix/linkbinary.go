@@ -217,7 +217,7 @@ func linkBinary(manifestPath, output string) error {
 		clean := strings.TrimPrefix(sp.Path, "./")
 		if sp.Path == "." || clean == "" {
 			importpath = modulePath
-			srcdir = m.ModuleRoot
+			srcdir = filepath.Clean(m.ModuleRoot)
 			binname = m.Pname
 			if binname == "" {
 				binname = filepath.Base(modulePath)
