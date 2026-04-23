@@ -98,6 +98,8 @@ let
     splitString
     ;
 
+  cleanModRoot = removePrefix "./" modRoot;
+
   hasPackageOverrides = packageOverrides != { };
 
   # Per-package override resolution. Factored from the three near-identical
@@ -845,7 +847,6 @@ let
   # directory; directories include their full subtree).
   mainSrc =
     let
-      cleanModRoot = removePrefix "./" modRoot;
       replaceDirs = goPackagesResult.localReplaceDirs;
 
       # Under doCheck the testrunner walks every local package; otherwise
@@ -958,7 +959,8 @@ let
           mainSrcFileSet ? ${rel} || underPrefix rel;
     };
 
-  moduleRoot = if modRoot == "." then "${mainSrc}" else "${mainSrc}/${modRoot}";
+  moduleRoot =
+    if cleanModRoot == "." || cleanModRoot == "" then "${mainSrc}" else "${mainSrc}/${cleanModRoot}";
 
   # Filter out known args so extra attrs pass through to mkDerivation.
   # Attrs we set ourselves below (env, buildInputs, passthru,
@@ -1148,7 +1150,11 @@ stdenv.mkDerivation (
     dontPatchELF = true;
     noAuditTmpdir = true;
 
-    disallowedReferences = optional (!allowGoReference) go ++ (args.disallowedReferences or [ ]);
+    disallowedReferences = [
+      mainSrc
+    ]
+    ++ optional (!allowGoReference) go
+    ++ (args.disallowedReferences or [ ]);
 
     passthru = {
       inherit
