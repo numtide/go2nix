@@ -18,6 +18,12 @@ mod resolve;
 
 use std::ffi::{CStr, CString};
 
+/// Expose [`resolve::API_LEVEL`] to the C++ shim for `builtins.go2nixApiLevel`.
+#[no_mangle]
+pub extern "C" fn go2nix_api_level() -> u32 {
+    resolve::API_LEVEL
+}
+
 /// Resolve Go packages from JSON input, returning JSON output.
 ///
 /// Input JSON: `{ "go": "...", "src": "...", "tags": [], "doCheck": false, ... }`

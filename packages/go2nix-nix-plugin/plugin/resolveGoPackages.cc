@@ -20,6 +20,7 @@ extern "C" {
         char **err_out
     );
     void go2nix_free_string(char *s);
+    unsigned go2nix_api_level(void);
 }
 
 using namespace nix;
@@ -153,5 +154,23 @@ static RegisterPrimOp rp(PrimOp {
     .impl = prim_resolveGoPackages,
 #else
     .fun = prim_resolveGoPackages,
+#endif
+});
+
+static void prim_go2nixApiLevel(EvalState &, const PosIdx, Value **, Value &v) {
+    v.mkInt(go2nix_api_level());
+}
+
+// Internal probe so nix/dag/default.nix can detect a skewed .so before
+// calling resolveGoPackages. Not user API.
+static RegisterPrimOp rpApiLevel(PrimOp {
+    .name = "__go2nixApiLevel",
+    .args = {},
+    .arity = 0,
+    .doc = "Internal: contract version of the loaded go2nix-nix-plugin resolver.",
+#ifdef NIX_PRIMOP_HAS_IMPL
+    .impl = prim_go2nixApiLevel,
+#else
+    .fun = prim_go2nixApiLevel,
 #endif
 });

@@ -407,31 +407,50 @@ let
 
   lockfileModules = builtins.mapAttrs parseModEntry lockfileModTable;
 
+  # Bump in lockstep with API_LEVEL in
+  # packages/go2nix-nix-plugin/rust/src/resolve.rs.
+  apiLevel = 1;
+  resolverApiLevel = builtins.go2nixApiLevel or 0;
+  apiLevelGuard =
+    if resolverApiLevel == apiLevel then
+      x: x
+    else
+      lib.warn ''
+        go2nix-nix-plugin: API level mismatch.
+          nix builtin resolver = ${toString resolverApiLevel}
+          nix/dag/default.nix  = ${toString apiLevel}
+        Your nix was built against a different go2nix-nix-plugin revision
+        than the nix/ tree you are evaluating. Rebuild/reload the plugin
+        against this checkout.
+      '';
+
   # --- Package graph from plugin (eval-time go list) ---
   # goProxy is unset by default — inherits the environment's GOPROXY.
   # When resolveHashes is true, the plugin also computes NAR hashes for all
   # modules from go.sum + GOMODCACHE, returned as moduleHashes.
-  goPackagesResult = builtins.resolveGoPackages (
-    {
-      # `go` is intentionally omitted: the plugin uses the toolchain baked in
-      # at its own build time. Passing "${go}/bin/go" would carry derivation
-      # context, which the plugin rejects to keep this path IFD-free.
-      inherit
-        src
-        tags
-        modRoot
-        doCheck
-        ;
-      subPackages = normalizedSubPackages;
-      resolveHashes = !hasLockfile;
-      # File lists in the manifest are computed at eval time by `go list`;
-      # pass the same target platform here that the build derivations will
-      # use so constraint evaluation matches.
-      goos = targetGoos;
-      goarch = targetGoarch;
-    }
-    // (if goProxy != null then { inherit goProxy; } else { })
-    // (if CGO_ENABLED != null then { cgoEnabled = toString CGO_ENABLED; } else { })
+  goPackagesResult = apiLevelGuard (
+    builtins.resolveGoPackages (
+      {
+        # `go` is intentionally omitted: the plugin uses the toolchain baked in
+        # at its own build time. Passing "${go}/bin/go" would carry derivation
+        # context, which the plugin rejects to keep this path IFD-free.
+        inherit
+          src
+          tags
+          modRoot
+          doCheck
+          ;
+        subPackages = normalizedSubPackages;
+        resolveHashes = !hasLockfile;
+        # File lists in the manifest are computed at eval time by `go list`;
+        # pass the same target platform here that the build derivations will
+        # use so constraint evaluation matches.
+        goos = targetGoos;
+        goarch = targetGoarch;
+      }
+      // (if goProxy != null then { inherit goProxy; } else { })
+      // (if CGO_ENABLED != null then { cgoEnabled = toString CGO_ENABLED; } else { })
+    )
   );
 
   # Precomputed by the plugin: every src-relative directory containing a

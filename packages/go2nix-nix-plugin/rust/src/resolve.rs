@@ -15,6 +15,12 @@ use std::process::Command;
 /// an explicit `go` field in the input always takes precedence.
 pub(crate) const DEFAULT_GO: Option<&str> = option_env!("GO2NIX_DEFAULT_GO");
 
+/// API level of the resolver output / Nix `nix/dag/default.nix` contract.
+/// Bump on any incompatible `JsonOutput` shape change; `nix/dag/default.nix`
+/// asserts equality via `builtins.go2nixApiLevel` before calling the
+/// resolver so skew surfaces with a clear message at the boundary.
+pub const API_LEVEL: u32 = 1;
+
 // ---------------------------------------------------------------------------
 // Go list JSON types
 // ---------------------------------------------------------------------------
@@ -1139,6 +1145,8 @@ struct JsonLocalPkg {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JsonOutput {
+    /// See [`API_LEVEL`].
+    api_level: u32,
     packages: BTreeMap<String, JsonPkg>,
     local_packages: BTreeMap<String, JsonLocalPkg>,
     module_path: String,
@@ -1650,6 +1658,7 @@ pub(crate) fn package_graph_to_json(
     let nested_module_roots = find_nested_module_roots(&canon_src, &nested_starts)?;
 
     let output = JsonOutput {
+        api_level: API_LEVEL,
         packages,
         local_packages,
         module_path: graph.module_path.clone(),
