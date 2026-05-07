@@ -7,7 +7,7 @@ description = "Go package resolver for Nix — runs go list and returns the depe
 
 [lib]
 name = "go2nix_nix_plugin"
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
