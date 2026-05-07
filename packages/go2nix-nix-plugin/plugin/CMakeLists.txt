@@ -25,8 +25,10 @@ if(NIX_PRIMOP_HAS_IMPL)
 endif()
 target_link_libraries(go2nix_plugin nlohmann_json::nlohmann_json)
 
-target_link_directories(go2nix_plugin PRIVATE ${RUST_LIB_DIR})
-target_link_libraries(go2nix_plugin go2nix_nix_plugin)
+# Link the staticlib explicitly. The Rust crate emits both staticlib and
+# cdylib; an unqualified `-lgo2nix_nix_plugin` would let the linker pick
+# the .so, which isn't on the Nix plugin's runtime loader path.
+target_link_libraries(go2nix_plugin ${RUST_LIB_DIR}/libgo2nix_nix_plugin.a)
 
 if(APPLE)
   set_target_properties(go2nix_plugin PROPERTIES
