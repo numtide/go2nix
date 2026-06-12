@@ -270,7 +270,8 @@ func TestBuildImportcfg(t *testing.T) {
 
 	// Build a fake dependency drv path (must end in .drv).
 	depDrvPath, err := storepath.FromAbsolutePath(
-		"/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-dep-pkg.drv")
+		"/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-dep-pkg.drv",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -958,7 +958,8 @@ func main() {
 				if maxInt(r.Builds) > *assertCascade {
 					violations = append(violations, fmt.Sprintf(
 						"%s/%s: built %d drvs (threshold %d)",
-						r.Scenario, r.Tool, maxInt(r.Builds), *assertCascade))
+						r.Scenario, r.Tool, maxInt(r.Builds), *assertCascade,
+					))
 				}
 			}
 		}
