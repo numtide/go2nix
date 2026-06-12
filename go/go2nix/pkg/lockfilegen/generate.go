@@ -107,7 +107,8 @@ func modCacheHash(fetchPath, version string) (string, error) {
 	defer removeReadOnly(tmpdir)
 
 	cmd := exec.Command("go", "mod", "download", fetchPath+"@"+version)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"GOMODCACHE="+tmpdir,
 		"GONOSUMCHECK=*",
 		"GONOSUMDB=*",
