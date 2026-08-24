@@ -77,22 +77,31 @@ type godebugEntry struct {
 	Name    string
 	Changed int    // minor version when default changed; 21 means Go 1.21
 	Old     string // value that restores behavior prior to Changed
+	Removed int    // minor version that removed the setting (0 = still present)
 }
 
 // godebugTable is copied from internal/godebugs/table.go.
 // Only entries with Changed > 0 are included since those are the only ones
 // that affect the default GODEBUG string.
 //
-// This table should be updated when upgrading the Go toolchain.
+// Entries the toolchain has since retired (internal/godebugs.Removed) stay
+// here with Removed set: cmd/go of an older toolchain still emits their Old
+// value, while a toolchain >= Removed no longer knows the setting, so the
+// default must depend on the toolchain go2nix is driving, not on the
+// newest Go release. Upstream drops Changed/Old when it retires a setting;
+// the values below are the ones it carried before removal.
+//
+// This table should be updated when upgrading the Go toolchain
+// (scripts/check-godebug-table.go --update).
 // Missing entries are benign — they only mean newer godebug compat
 // defaults won't be applied for modules with older go directives.
 var godebugTable = []godebugEntry{
-	{Name: "asynctimerchan", Changed: 23, Old: "1"},
+	{Name: "asynctimerchan", Changed: 23, Old: "1", Removed: 27},
 	{Name: "containermaxprocs", Changed: 25, Old: "0"},
 	{Name: "cryptocustomrand", Changed: 26, Old: "1"},
 	{Name: "decoratemappings", Changed: 25, Old: "0"},
 	{Name: "gotestjsonbuildtext", Changed: 24, Old: "1"},
-	{Name: "gotypesalias", Changed: 23, Old: "0"},
+	{Name: "gotypesalias", Changed: 23, Old: "0", Removed: 27},
 	{Name: "httpcookiemaxnum", Changed: 24, Old: "0"},
 	{Name: "httplaxcontentlength", Changed: 22, Old: "1"},
 	{Name: "httpmuxgo121", Changed: 22, Old: "1"},
@@ -102,22 +111,24 @@ var godebugTable = []godebugEntry{
 	{Name: "panicnil", Changed: 21, Old: "1"},
 	{Name: "randseednop", Changed: 24, Old: "0"},
 	{Name: "rsa1024min", Changed: 24, Old: "0"},
-	{Name: "tls10server", Changed: 22, Old: "1"},
-	{Name: "tls3des", Changed: 23, Old: "1"},
+	{Name: "tls10server", Changed: 22, Old: "1", Removed: 27},
+	{Name: "tls3des", Changed: 23, Old: "1", Removed: 27},
 	{Name: "tlsmlkem", Changed: 24, Old: "0"},
-	{Name: "tlsrsakex", Changed: 22, Old: "1"},
+	{Name: "tlsrsakex", Changed: 22, Old: "1", Removed: 27},
 	{Name: "tlssecpmlkem", Changed: 26, Old: "0"},
 	{Name: "tlssha1", Changed: 25, Old: "1"},
-	{Name: "tlsunsafeekm", Changed: 22, Old: "1"},
+	{Name: "tlsunsafeekm", Changed: 22, Old: "1", Removed: 27},
+	{Name: "tracebacklabels", Changed: 27, Old: "0"},
 	{Name: "updatemaxprocs", Changed: 25, Old: "0"},
 	{Name: "urlmaxqueryparams", Changed: 24, Old: "0"},
 	{Name: "urlstrictcolons", Changed: 26, Old: "0"},
 	{Name: "winreadlinkvolume", Changed: 23, Old: "0"},
 	{Name: "winsymlink", Changed: 23, Old: "0"},
-	{Name: "x509keypairleaf", Changed: 23, Old: "0"},
+	{Name: "x509keypairleaf", Changed: 23, Old: "0", Removed: 27},
 	{Name: "x509negativeserial", Changed: 23, Old: "1"},
 	{Name: "x509rsacrt", Changed: 24, Old: "0"},
 	{Name: "x509sha256skid", Changed: 25, Old: "0"},
+	{Name: "x509sslcertoverrideplatform", Changed: 27, Old: "0"},
 	{Name: "x509usepolicies", Changed: 24, Old: "0"},
 }
 
@@ -131,7 +142,12 @@ var godebugTable = []godebugEntry{
 // including default=. goFips140 is the GOFIPS140 build setting; when
 // Fips140Enabled, fips140=on is added with lower precedence than go.mod
 // and source directives (cmd/go/internal/load/godebug.go:68).
-func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug, goFips140 string) string {
+// toolchainVersion is the version of the Go toolchain go2nix is driving
+// (the `go env GOVERSION` string, e.g. "go1.26.3"); entries that toolchain
+// has retired are skipped, as its cmd/go would. An unparseable or empty
+// value is treated as the newest release, i.e. every retired entry is
+// skipped.
+func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug, goFips140, toolchainVersion string) string {
 	goModPath := filepath.Join(moduleRoot, "go.mod")
 	data, err := os.ReadFile(goModPath)
 	if err != nil {
@@ -181,12 +197,18 @@ func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug, goFips140 string
 	}
 
 	// Build defaults map: for each godebug entry where the effective
-	// go version < Changed, use the old value.
+	// go version < Changed, use the old value — unless the toolchain in
+	// use has retired the setting (cmd/go only walks godebugs.All).
+	toolchainMinor := parseGoMinor(strings.TrimPrefix(toolchainVersion, "go"))
 	m := make(map[string]string)
 	for _, entry := range godebugTable {
-		if minor < entry.Changed {
-			m[entry.Name] = entry.Old
+		if minor >= entry.Changed {
+			continue
 		}
+		if entry.Removed > 0 && (toolchainMinor < 0 || toolchainMinor >= entry.Removed) {
+			continue
+		}
+		m[entry.Name] = entry.Old
 	}
 
 	// GOFIPS140 != off implies fips140=on, with lower precedence than go.mod
