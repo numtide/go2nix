@@ -229,7 +229,7 @@ func linkBinary(manifestPath, output string) error {
 		}
 
 		srcDirectives := buildinfo.ParseSourceGodebugs(&bctx, srcdir)
-		godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot, srcDirectives, goFips140)
+		godebugDefault := buildinfo.DefaultGODEBUG(m.ModuleRoot, srcDirectives, goFips140, goVersion)
 		settings.DefaultGODEBUG = godebugDefault
 
 		slog.Info("compiling main", "pkg", importpath)
