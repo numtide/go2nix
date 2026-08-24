@@ -66,8 +66,41 @@ func TestDefaultGODEBUG_RemovedByToolchain(t *testing.T) {
 		if !contains(result, "httplaxcontentlength=1") {
 			t.Errorf("toolchain %q: expected httplaxcontentlength=1 for go 1.21", tc.toolchain)
 		}
-		if !contains(result, "tracebacklabels=0") {
-			t.Errorf("toolchain %q: expected tracebacklabels=0 (Changed: 27) for go 1.21", tc.toolchain)
+		// tracebacklabels (Changed: 27) exists only from Go 1.27 on: a 1.26
+		// toolchain's cmd/go cannot emit it, a 1.27 one (or an unknown one,
+		// assumed newest) does.
+		if got := contains(result, "tracebacklabels=0"); got != tc.removed {
+			t.Errorf("toolchain %q: tracebacklabels=0 present=%v, want present=%v (got %q)", tc.toolchain, got, tc.removed, result)
+		}
+	}
+}
+
+// With the newest toolchain the output must equal what its cmd/go computes
+// from godebugs.All alone; with an older toolchain it must equal that
+// toolchain's table — never a union of the two.
+func TestDefaultGODEBUG_MatchesToolchainTable(t *testing.T) {
+	dir := t.TempDir()
+	gomod := "module example.com/test\n\ngo 1.21\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		toolchain        string
+		want, wantAbsent []string
+	}{
+		{"go1.26.3", []string{"asynctimerchan=1", "tlsrsakex=1", "httplaxcontentlength=1"}, []string{"tracebacklabels=", "x509sslcertoverrideplatform="}},
+		{"go1.27.0", []string{"tracebacklabels=0", "x509sslcertoverrideplatform=0", "httplaxcontentlength=1"}, []string{"asynctimerchan=", "tlsrsakex="}},
+	} {
+		result := DefaultGODEBUG(dir, nil, "", tc.toolchain)
+		for _, w := range tc.want {
+			if !contains(result, w) {
+				t.Errorf("toolchain %q: missing %q in %q", tc.toolchain, w, result)
+			}
+		}
+		for _, w := range tc.wantAbsent {
+			if contains(result, w) {
+				t.Errorf("toolchain %q: unexpected %q in %q", tc.toolchain, w, result)
+			}
 		}
 	}
 }

@@ -143,9 +143,12 @@ var godebugTable = []godebugEntry{
 // Fips140Enabled, fips140=on is added with lower precedence than go.mod
 // and source directives (cmd/go/internal/load/godebug.go:68).
 // toolchainVersion is the version of the Go toolchain go2nix is driving
-// (the `go env GOVERSION` string, e.g. "go1.26.3"); entries that toolchain
-// has retired are skipped, as its cmd/go would. An unparseable or empty
-// value is treated as the newest release, i.e. every retired entry is
+// (the `go env GOVERSION` string, e.g. "go1.26.3"). The table is a superset
+// over toolchains, so an entry counts only if that toolchain's own
+// internal/godebugs table would carry it: not yet added (Changed after the
+// toolchain) and already retired (Removed at or before it) are both
+// skipped, as its cmd/go would. An unparseable or empty value is treated
+// as the newest release: nothing is too new, every retired entry is
 // skipped.
 func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug, goFips140, toolchainVersion string) string {
 	goModPath := filepath.Join(moduleRoot, "go.mod")
@@ -197,12 +200,17 @@ func DefaultGODEBUG(moduleRoot string, srcDirectives []Godebug, goFips140, toolc
 	}
 
 	// Build defaults map: for each godebug entry where the effective
-	// go version < Changed, use the old value — unless the toolchain in
-	// use has retired the setting (cmd/go only walks godebugs.All).
+	// go version < Changed, use the old value — but only for entries the
+	// toolchain in use actually carries (cmd/go walks its own
+	// godebugs.All): a setting it predates is not emitted, and neither is
+	// one it has retired.
 	toolchainMinor := parseGoMinor(strings.TrimPrefix(toolchainVersion, "go"))
 	m := make(map[string]string)
 	for _, entry := range godebugTable {
 		if minor >= entry.Changed {
+			continue
+		}
+		if toolchainMinor >= 0 && toolchainMinor < entry.Changed {
 			continue
 		}
 		if entry.Removed > 0 && (toolchainMinor < 0 || toolchainMinor >= entry.Removed) {
