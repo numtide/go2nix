@@ -80,6 +80,17 @@
   # that file by default. Prefer the testdata/ convention; this is the
   # escape hatch for paths that can't easily move.
   extraMainSrcFiles ? [ ],
+  # Predicate (path: type: bool, as for builtins.path's filter) ANDed into
+  # every filtered copy made of `src`: each local package's source and
+  # mainSrc. Lets a caller pass the real source tree as `src` together with
+  # the membership a pre-filtered copy would have had (e.g. that of a
+  # lib.fileset) instead of materialising that copy first. go2nix walks,
+  # re-filters and `go list`s `src` while evaluating, which over a store
+  # copy only works once the copy has been written, so a pre-copied `src`
+  # breaks read-only evaluation on any store that has not seen it
+  # (nix-instantiate --readonly-mode, alternative evaluators). The default
+  # keeps everything, i.e. the existing behaviour.
+  srcFilter ? (_path: _type: true),
   ...
 }@args:
 
@@ -638,13 +649,16 @@ let
         name = "golocal-${helpers.sanitizeName importPath}-src";
         filter =
           path: type:
-          type != "directory"
-          || (
-            let
-              rel = removePrefix srcPrefix (toString path);
-            in
-            !(localPkgDirSet ? ${rel} || nestedModuleRootSet ? ${rel})
-          );
+          (
+            type != "directory"
+            || (
+              let
+                rel = removePrefix srcPrefix (toString path);
+              in
+              !(localPkgDirSet ? ${rel} || nestedModuleRootSet ? ${rel})
+            )
+          )
+          && srcFilter path type;
       };
 
       srcDir = "${pkgSrc}";
@@ -972,10 +986,13 @@ let
         let
           rel = removePrefix srcPrefix (toString path);
         in
-        if type == "directory" then
-          ancestorSet ? ${rel} || underPrefix rel
-        else
-          mainSrcFileSet ? ${rel} || underPrefix rel;
+        (
+          if type == "directory" then
+            ancestorSet ? ${rel} || underPrefix rel
+          else
+            mainSrcFileSet ? ${rel} || underPrefix rel
+        )
+        && srcFilter path type;
     };
 
   moduleRoot =
@@ -1011,6 +1028,7 @@ let
     "checkFlags"
     "extraMainSrcFiles"
     "contentAddressed"
+    "srcFilter"
   ];
 
   # Test manifest: only materialized when doCheck = true.
