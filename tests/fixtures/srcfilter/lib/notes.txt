@@ -1,0 +1,4 @@
+Not a Go file, but it sits inside a package directory, so every filtered copy
+of lib/ carries it unless a predicate excludes it. The srcfilter fixture
+excludes it both ways (pre-filtered src vs srcFilter) and expects identical
+outputs.

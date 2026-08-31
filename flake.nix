@@ -145,6 +145,9 @@
           test-fixture-sibling-testonly = callPkgWith ./packages/test-fixture-sibling-testonly/default.nix {
             inherit flake system;
           };
+          test-fixture-srcfilter = callPkgWith ./packages/test-fixture-srcfilter/default.nix {
+            inherit flake system;
+          };
           test-fixture-sibling-versioned = callPkgWith ./packages/test-fixture-sibling-versioned/default.nix {
             inherit flake system;
           };
