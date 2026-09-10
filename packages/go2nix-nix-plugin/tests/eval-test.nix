@@ -122,5 +122,32 @@ pkgs.runCommand "go2nix-nix-plugin-eval-test"
       *) echo "FAIL: expected allow-import-from-derivation error, got: $out3"; exit 1 ;;
     esac
 
+    echo "=== Case 4: a go named by the expression is ignored, never run ==="
+    printf '#!/bin/sh\ntouch %s/planted-ran\n' "$TMPDIR" > $TMPDIR/planted
+    chmod +x $TMPDIR/planted
+    out4=$(nix-instantiate --eval --read-write-mode \
+      --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+      --expr "builtins.resolveGoPackages { src = \"$TMPDIR/torture-project\"; go = \"$TMPDIR/planted\"; }" \
+      2>&1 >/dev/null || true)
+    echo "$out4"
+    [ ! -e $TMPDIR/planted-ran ] || { echo "FAIL: the plugin ran the go the expression named"; exit 1; }
+    case "$out4" in
+      *"'go' attribute is ignored"*) echo "OK: go ignored with a warning" ;;
+      *) echo "FAIL: expected the ignored-go warning, got: $out4"; exit 1 ;;
+    esac
+
+    echo "=== Case 5: subPackages entries are patterns, never go list flags ==="
+    rm -f $TMPDIR/planted-ran
+    out5=$(nix-instantiate --eval --strict --read-write-mode \
+      --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+      --expr "builtins.resolveGoPackages { src = \"$TMPDIR/torture-project\"; subPackages = [ \"-export\" \"-toolexec\" \"$TMPDIR/planted\" \".\" ]; }" \
+      2>&1 || true)
+    echo "$out5"
+    [ ! -e $TMPDIR/planted-ran ] || { echo "FAIL: a subPackages entry ran as -toolexec"; exit 1; }
+    case "$out5" in
+      *"leading dash"*) echo "OK: leading-dash entry rejected as a pattern" ;;
+      *) echo "FAIL: expected a malformed-pattern error, got: $out5"; exit 1 ;;
+    esac
+
     echo "PASS: $pkgCount packages, $localPkgCount local packages, modulePath=$modulePath" > $out
   ''

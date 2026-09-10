@@ -383,6 +383,8 @@ fn configure_go_env(cmd: &mut Command, src_dir: &str, opts: &GoListOpts) {
     cmd.env("GOFLAGS", "-mod=readonly");
     cmd.env("GOENV", "off");
     cmd.env("GOWORK", "off");
+    // Never download and exec another Go because go.mod names a newer toolchain.
+    cmd.env("GOTOOLCHAIN", "local");
 
     // When GOPROXY is not "off", the go toolchain needs network access.
     if opts.go_proxy != Some("off") {
@@ -431,6 +433,8 @@ fn run_go_list(
         cmd.arg("-tags");
         cmd.arg(opts.tags.join(","));
     }
+    // "--" ends flag parsing: no pattern can act as a flag ("-export -toolexec X" runs X).
+    cmd.arg("--");
     for pkg in sub_packages {
         cmd.arg(pkg);
     }
@@ -473,6 +477,7 @@ fn run_go_list_test(
         cmd.arg("-tags");
         cmd.arg(opts.tags.join(","));
     }
+    cmd.arg("--");
     for p in patterns {
         cmd.arg(p);
     }
@@ -991,6 +996,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct JsonInput {
+    /// Not set by the Nix shim; for embedders that name their own toolchain.
     #[serde(default)]
     pub(crate) go: Option<String>,
     pub(crate) src: String,
@@ -1034,6 +1040,7 @@ pub(crate) fn find_gomodcache(go_bin: &str) -> Result<std::path::PathBuf> {
 
     let output = std::process::Command::new(go_bin)
         .args(["env", "GOMODCACHE"])
+        .env("GOTOOLCHAIN", "local")
         .output()
         .with_context(|| format!("running '{go_bin} env GOMODCACHE'"))?;
 
@@ -1067,7 +1074,7 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
         .go
         .as_deref()
         .or(DEFAULT_GO)
-        .ok_or_else(|| anyhow!("resolveGoPackages: 'go' not provided and GO2NIX_DEFAULT_GO was unset at plugin build time"))?;
+        .ok_or_else(|| anyhow!("resolveGoPackages: no Go toolchain: GO2NIX_DEFAULT_GO was not set when the plugin was built (build it with packages/go2nix-nix-plugin/default.nix)"))?;
 
     let opts = GoListOpts {
         tags: &input.tags,

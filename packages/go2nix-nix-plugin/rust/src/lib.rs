@@ -68,7 +68,7 @@ pub unsafe extern "C" fn resolve_go_packages_json(
                 .go
                 .as_deref()
                 .or(resolve::DEFAULT_GO)
-                .ok_or_else(|| "resolveGoPackages: 'go' not provided and GO2NIX_DEFAULT_GO was unset at plugin build time".to_owned())?;
+                .ok_or_else(|| "resolveGoPackages: no Go toolchain: GO2NIX_DEFAULT_GO was not set when the plugin was built (build it with packages/go2nix-nix-plugin/default.nix)".to_owned())?;
             let gomodcache = resolve::find_gomodcache(go_bin)
                 .map_err(|e| format!("finding GOMODCACHE: {e:#}"))?;
 

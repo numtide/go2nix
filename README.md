@@ -191,7 +191,7 @@ Each compile passes `-trimpath` with two rewrites: the package's source director
 <details>
 <summary>Inputs and the fields it returns</summary>
 
-It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch, cgoEnabled, goProxy, doCheck ? false, resolveHashes ? false, go ? <the toolchain baked into the plugin> }`, runs `go list -deps -json` (and a second `-test` pass under `doCheck`) with `GOFLAGS=-mod=readonly`, `GOWORK=off`, `GOENV=off` and the caller's `GOMODCACHE`, `GOPROXY` and `NETRC`, and returns:
+It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch, cgoEnabled, goProxy, doCheck ? false, resolveHashes ? false }`, runs `go list -deps -json` (and a second `-test` pass under `doCheck`) with the Go toolchain baked into the plugin, `GOFLAGS=-mod=readonly`, `GOWORK=off`, `GOENV=off`, `GOTOOLCHAIN=local` and the caller's `GOMODCACHE`, `GOPROXY` and `NETRC`, and returns:
 
 | Field | Content |
 |---|---|
