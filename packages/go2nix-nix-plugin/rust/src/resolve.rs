@@ -105,8 +105,31 @@ struct GoPackage {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct GoPackageError {
+    #[serde(rename = "ImportStack")]
+    import_stack: Vec<String>,
+    #[serde(rename = "Pos")]
+    pos: String,
     #[serde(rename = "Err")]
     err: String,
+}
+
+/// A parse error in the package's own files quotes them (go/parser's "found <token>"); keep only line and column.
+fn pkg_error_text(import_path: &str, err: &GoPackageError) -> String {
+    let own = err
+        .import_stack
+        .last()
+        .is_none_or(|p| strip_variant_suffix(p) == strip_variant_suffix(import_path));
+    // go's one other own-file error with a position is //go:embed's "pattern P: ..."; pass it on
+    if !own || err.pos.is_empty() || err.err.starts_with("pattern ") {
+        return format!("{import_path}: {}", err.err);
+    }
+    let name = err
+        .pos
+        .trim_end_matches(|c: char| c.is_ascii_digit() || c == ':');
+    let at = err.pos[name.len()..].trim_start_matches(':');
+    format!(
+        "{import_path}: a source file does not parse (at {at}); run 'go vet' in the package to see the error"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -446,7 +469,7 @@ fn run_go_list(
         .with_context(|| format!("resolveGoPackages: failed to execute '{go_bin}'"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = without_modfile_text(&String::from_utf8_lossy(&output.stderr));
         bail!(
             "resolveGoPackages: 'go list' failed (exit {}).\n{stderr}\n\
              Hint: ensure all modules are in your local cache ('go mod download').",
@@ -455,6 +478,32 @@ fn run_go_list(
     }
 
     Ok(output.stdout)
+}
+
+/// go reports a go.mod that does not parse by quoting from each offending line; keep only the count and first position.
+fn without_modfile_text(stderr: &str) -> String {
+    const HEADER: &str = "go: errors parsing ";
+    let Some(at) = stderr.find(HEADER) else {
+        return stderr.to_owned();
+    };
+    let mut lines = stderr[at + HEADER.len()..].lines();
+    let file = lines.next().unwrap_or_default().trim_end_matches(':');
+    let errors: Vec<&str> = lines.collect();
+    // digits and colons only, so that nothing else on the line can come through
+    let pos: String = errors
+        .first()
+        .and_then(|l| l.strip_prefix(file)?.strip_prefix(':'))
+        .map(|l| {
+            l.chars()
+                .take_while(|c| c.is_ascii_digit() || *c == ':')
+                .collect()
+        })
+        .unwrap_or_default();
+    format!(
+        "{file} does not parse: {} error(s), the first at line {}; run 'go list' in the module directory to see them\n",
+        errors.len(),
+        pos.trim_end_matches(':')
+    )
 }
 
 fn run_go_list_test(
@@ -489,7 +538,7 @@ fn run_go_list_test(
         .with_context(|| format!("resolveGoPackages: failed to execute '{go_bin}'"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = without_modfile_text(&String::from_utf8_lossy(&output.stderr));
         bail!(
             "resolveGoPackages: 'go list -test' failed (exit {}).\n{stderr}\n\
              Hint: check the error output above, and ensure all test \
@@ -541,7 +590,7 @@ fn parse_test_packages(
                 if local_paths.contains(bare)
                     || (!jpkg.for_test.is_empty() && local_paths.contains(&jpkg.for_test))
                 {
-                    pkg_errors.push(format!("{}: {}", jpkg.import_path, err.err));
+                    pkg_errors.push(pkg_error_text(&jpkg.import_path, err));
                 }
                 continue;
             }
@@ -843,7 +892,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
 
         if let Some(ref err) = jpkg.error {
             if !err.err.is_empty() {
-                pkg_errors.push(format!("{}: {}", jpkg.import_path, err.err));
+                pkg_errors.push(pkg_error_text(&jpkg.import_path, err));
                 continue;
             }
         }
@@ -1972,6 +2021,27 @@ mod tests {
     }
 
     #[test]
+    fn source_parse_errors_are_not_quoted() {
+        let input = r#"{"ImportPath":"m","Error":{"ImportStack":["m"],"Pos":"x.go:1:1","Err":"expected 'package', found SECRET"}}
+{"ImportPath":"m/dep","Error":{"ImportStack":["m"],"Pos":"x.go:3:8","Err":"cannot find module providing package m/dep"}}
+{"ImportPath":"m/e","Error":{"ImportStack":["m","m/e"],"Pos":"e/e.go:5:12","Err":"pattern assets/*: no matching files found"}}"#;
+        let msg = format!("{}", parse_go_packages(input.as_bytes()).err().unwrap());
+        assert!(!msg.contains("SECRET") && !msg.contains("x.go:1"), "{msg}");
+        assert!(msg.contains("m: a source file does not parse (at 1:1)"), "{msg}");
+        assert!(msg.contains("m/dep: cannot find module providing package m/dep"));
+        assert!(msg.contains("m/e: pattern assets/*: no matching files found"));
+        let variant = GoPackageError {
+            import_stack: vec!["m".into()],
+            pos: "x_test.go:2:9".into(),
+            err: "expected 'package', found SECRET".into(),
+        };
+        assert_eq!(
+            pkg_error_text("m [m.test]", &variant),
+            "m [m.test]: a source file does not parse (at 2:9); run 'go vet' in the package to see the error"
+        );
+    }
+
+    #[test]
     fn parse_cgo_fields() {
         let input = r#"{"ImportPath":"github.com/cgo/pkg","Module":{"Path":"github.com/cgo/pkg","Version":"v1.0.0"},"Imports":[],"CgoFiles":["bridge.go"],"CgoPkgConfig":["libfoo"],"CgoCFLAGS":["-I/usr/include"],"CgoLDFLAGS":["-lfoo"]}"#;
         let graph = parse_go_packages(input.as_bytes()).unwrap();
@@ -2425,6 +2495,22 @@ mod tests {
         assert!(
             err.to_string().contains("GO2NIX_DEFAULT_GO"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn modfile_errors_are_not_quoted() {
+        let out = without_modfile_text(
+            "go: errors parsing ../go.mod:\n../go.mod:2:5: unknown directive: SECRET1\n../go.mod:3: usage: go 1.23\n",
+        );
+        assert!(!out.contains("SECRET"), "{out}");
+        assert!(
+            out.contains("../go.mod does not parse: 2 error(s), the first at line 2:5;"),
+            "{out}"
+        );
+        assert_eq!(
+            without_modfile_text("go: no such module\n"),
+            "go: no such module\n"
         );
     }
 

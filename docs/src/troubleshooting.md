@@ -56,7 +56,7 @@ case below.
   `go` line of `go.mod` asks for a newer Go than the one in your scope. Lower
   the directive or use a newer `go` in `mkGoEnv`;
   `nix eval --raw nixpkgs#go.version` tells you what you have.
-- `go: errors parsing go.mod`: exactly that.
+- `go.mod does not parse: N error(s), the first at line L; …`: exactly that.
 
 ## `resolveGoPackages: package errors:`
 
