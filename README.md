@@ -1,70 +1,39 @@
+<img alt="go2nix" src="assets/banner.svg" width="100%">
+
 # go2nix
 
-> **⚠️ Experimental** — APIs and lockfile formats may change without notice.
+A Nix builder for Go that compiles every package in its own derivation, so a change rebuilds only the packages that depend on it.
 
-Nix-native Go builder with per-package derivations and fine-grained caching.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Status: experimental](https://img.shields.io/badge/status-experimental-orange.svg)](#about)
+[![Docs](https://img.shields.io/badge/docs-numtide.github.io%2Fgo2nix-informational.svg)](https://numtide.github.io/go2nix)
+[![godebug table](https://github.com/numtide/go2nix/actions/workflows/check-godebug-upstream.yml/badge.svg)](https://github.com/numtide/go2nix/actions/workflows/check-godebug-upstream.yml)
+[![Support: #numtide](https://img.shields.io/badge/support-%23numtide-blue.svg)](https://app.element.io/#/room/#home:numtide.com)
 
-## Why go2nix?
+> **Experimental** — APIs and the lockfile format may change without notice.
 
-go2nix is for projects that want more visibility and reuse than the usual
-"fetch all modules, then build everything in one derivation" model.
+## About
 
-In Go, a *module* is the versioned unit you depend on (one `go.mod`, one
-entry in `go.sum`); a *package* is a single importable directory of `.go`
-files. One module typically contains many packages. go2nix locks modules but
-builds packages:
+go2nix builds Go programs with Nix at the granularity Go itself compiles at. In Go a *module* is the versioned unit you depend on (one `go.mod`, one line in `go.sum`) and a *package* is one importable directory of `.go` files; a module usually holds many packages. go2nix pins modules and builds packages: it asks `go list` for the package graph, turns every package — standard library, third-party, your own — into a derivation that runs `go tool compile`, and links the result with `go tool link`. `go build` is never called.
 
-- the lockfile pins **modules**, not the package graph
-- the builder discovers the **package graph** and compiles it at package granularity
-- Nix can cache and rebuild **individual Go packages**, not just the whole app
-- local packages, third-party packages, and test-only packages can be modeled
-  separately
+It exists for repositories where "fetch all modules, then build everything in one derivation" throws away too much work: monorepos, services that share internal packages, anything where one edited file should not recompile four hundred untouched dependencies. Because each package is a store path, Nix caches, substitutes and shares them individually — between rebuilds, between binaries of one repository, and between machines through a binary cache. The design follows Bazel's `rules_go` in working from an explicit package graph, with a much narrower scope: no toolchain transitions, no proto rules, only Go builds as Nix derivations. The output is held to `go build -trimpath`: same module info, same `GODEBUG` defaults, no build paths in the binary.
 
-This tends to work especially well for monorepos and multi-package repositories
-that want to maximize Nix store reuse. When only part of the Go package graph
-changes, go2nix can often reuse the rest of the graph instead of rebuilding the
-whole application derivation.
+It is an alternative to nixpkgs' `buildGoModule` and to `gomod2nix`, not a replacement for them. Both build the whole application in one derivation (after one vendor fetch, or one fetch per module) and are the right choice when that is fast enough; `buildGoModule` remains the default way to package a Go program in nixpkgs. go2nix costs more machinery — its default mode needs a Nix plugin at evaluation time — and pays it back when per-package reuse matters. See [the comparison](#comparison) below.
 
-The approach is architecturally inspired by Bazel's `rules_go`: both systems
-work from an explicit package graph instead of treating `go build` as a black
-box. The difference is scope — `rules_go` is a full Bazel rule ecosystem,
-while go2nix is a Nix-native builder with a much narrower goal. It does not
-aim to replicate toolchain transitions, proto rules, or the full feature
-surface of `rules_go`.
+## Features
 
-If you just want the simplest way to package a Go program in nixpkgs,
-`buildGoModule` is still the default choice. go2nix is aimed at cases where
-per-package reuse and explicit graph handling are worth the extra machinery.
+- **One derivation per package.** Third-party packages are keyed on their module's source and their own dependencies, local packages on their own directory only, so touching `internal/web` rebuilds `internal/web` and what imports it, nothing else.
+- **A lockfile of modules, not packages.** `go2nix.toml` holds one NAR hash per module and changes only when `go.mod` does; the package graph is discovered when Nix evaluates. Or no lockfile at all: hashes can be derived from `go.sum` and the module cache.
+- **`go build` parity.** `-trimpath` rewrites, per-module `-lang`, `dep`/`=>` module info including filesystem `replace` targets, `DefaultGODEBUG` per toolchain and `go` directive, `GOFIPS140`, PGO, the platform's default build mode (PIE on darwin): `go version -m` on a go2nix binary reads like one from `go build -trimpath`.
+- **Tests as part of the build.** `doCheck` compiles and runs the tests of every local package in the build, including test-only dependencies and helper packages, with `checkFlags` passed to the test binaries.
+- **cgo without ceremony.** cgo packages are detected from `go list` and compiled with a C toolchain — C, C++ and Fortran sources, Go and gcc assembly — while pure-Go packages skip stdenv altogether; `packageOverrides` adds libraries per package or per module.
+- **Monorepo-shaped.** `modRoot` builds one module inside a larger tree, sibling modules reached through `replace => ../dir` keep their own identity, and `srcFilter` lets a caller hand over the real tree plus a predicate instead of copying a filtered tree into the store first.
+- **Early cutoff, if you want it.** With `contentAddressed = true` local packages become floating content-addressed derivations with a separate interface output, so a change that leaves a package's export data alone does not recompile its dependents.
+- **Cross-compilation** the nixpkgs way: pass a cross `pkgs` and `GOOS`/`GOARCH` follow `stdenv.hostPlatform`.
 
-See [Architecture](docs/src/go2nix-architecture.md) for how the builder works,
-[Incremental Builds](docs/src/incremental-builds.md) for what gets cached,
-[Builder API](docs/src/builder-api.md) for the full attribute reference, and
-[Troubleshooting](docs/src/troubleshooting.md) when something doesn't work.
+## Installation
 
-## Quick start
-
-> **Heads up:** the default builder requires the go2nix [Nix plugin](docs/src/nix-plugin.md)
-> to be loaded into your evaluator. Without it, `nix build` fails with
-> `error: attribute 'resolveGoPackages' missing`. See step 3.
-
-### 1. Generate a lockfile
-
-```bash
-go2nix generate .
-```
-
-`generate` is also the default when no subcommand is given, so bare `go2nix`
-is equivalent to `go2nix generate .`. This writes a `go2nix.toml` next to
-your `go.mod` — one NAR hash per module:
-
-```toml
-[mod]
-"golang.org/x/sys@v0.20.0" = "sha256-abc..."
-```
-
-See [Lockfile Format](docs/src/lockfile-format.md) for the full schema.
-
-### 2. Add go2nix to your flake
+go2nix is a flake. Add it as an input and build a toolchain scope with `lib.mkGoEnv`; there is no overlay, the scope is the API.
 
 ```nix
 {
@@ -75,30 +44,10 @@ See [Lockfile Format](docs/src/lockfile-format.md) for the full schema.
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-
-  outputs = { nixpkgs, go2nix, ... }:
-  let
-    system = "x86_64-linux";
-    pkgs = nixpkgs.legacyPackages.${system};
-    goEnv = go2nix.lib.mkGoEnv {
-      inherit (pkgs) go callPackage;
-      go2nix = go2nix.packages.${system}.go2nix;
-    };
-  in {
-    packages.${system}.default = goEnv.buildGoApplication {
-      src = ./.;
-      goLock = ./go2nix.toml;
-      pname = "my-app";
-      version = "0.1.0";
-    };
-  };
 }
 ```
 
-### 3. Build
-
-Default mode needs the [go2nix Nix plugin](docs/src/nix-plugin.md) loaded in
-the evaluator. For a one-off invocation:
+The default builder calls `builtins.resolveGoPackages`, which comes from a Nix plugin this flake builds (`packages.<system>.go2nix-nix-plugin`). The evaluator has to load it, either for one command:
 
 ```bash
 nix build \
@@ -106,84 +55,199 @@ nix build \
   "$(nix build --no-link --print-out-paths github:numtide/go2nix#go2nix-nix-plugin)/lib/nix/plugins/libgo2nix_plugin.so"
 ```
 
-For permanent setup, add the plugin path to `plugin-files` in `nix.conf` (or
-`nix.settings.plugin-files` on NixOS) — see [Nix Plugin → Loading the
-plugin](docs/src/nix-plugin.md#loading-the-plugin).
+or permanently, with `plugin-files` in `nix.conf` (`nix.settings.plugin-files` on NixOS, from `inputs.go2nix.packages.${pkgs.system}.go2nix-nix-plugin`). Without it evaluation stops at `error: attribute 'resolveGoPackages' missing`. Nix's plugin ABI changes between releases, so the plugin must be built against the Nix that loads it; the package builds against `nixVersions.nix_2_34`. Details in [Nix Plugin](docs/src/nix-plugin.md).
 
-## Builder modes
+The flake's `nixConfig` adds `nix-community.cachix.org` as a substituter. The CLI alone is `nix run github:numtide/go2nix -- generate .`. Supported systems: `x86_64-linux`, `aarch64-linux`, `aarch64-darwin`.
 
-| Mode | How it works | Requires |
-|------|-------------|----------|
-| **Default** | `go tool compile/link` per-package | [go2nix-nix-plugin](docs/src/nix-plugin.md) — Nix plugin providing `builtins.resolveGoPackages` |
-| **Experimental** | Recursive-nix at build time | Nix >= 2.34 with `recursive-nix`, `ca-derivations`, `dynamic-derivations` |
+## Quick start
+
+A module with one dependency:
+
+```go
+// main.go, next to a go.mod with `module example.com/my-app` and `require github.com/fatih/color v1.18.0`
+package main
+
+import "github.com/fatih/color"
+
+func main() {
+	color.Green("hello from go2nix")
+}
+```
+
+Pin its modules:
+
+```bash
+cd my-app
+nix run github:numtide/go2nix -- generate .
+```
+
+```toml
+# go2nix.toml — one NAR hash per module; regenerate when go.mod changes
+[mod]
+  "github.com/fatih/color@v1.18.0" = "sha256-pP5y72FSbi4j/BjyVq/XbAOFjzNjMxZt2R/lFFxGWvY="
+  "github.com/mattn/go-colorable@v0.1.13" = "sha256-qb3Qbo0CELGRIzvw7NVM1g/aayaz4Tguppk9MD2/OI8="
+  "github.com/mattn/go-isatty@v0.0.20" = "sha256-qhw9hWtU5wnyFyuMbKx+7RB8ckQaFQ8D+8GKPkN3HHQ="
+  "golang.org/x/sys@v0.25.0" = "sha256-PXZ9EQZ7SFpcL7d3E1+KGTxziYlHEIZPfoXEbnaVD3I="
+```
+
+Describe the build in `flake.nix`, next to the inputs above:
 
 ```nix
-# Default (recommended):
-goEnv.buildGoApplication { ... }
-
-# Experimental (requires nix >= 2.34 with experimental features):
-goEnv.buildGoApplicationExperimental { ... }
+  outputs = { nixpkgs, go2nix, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+      goEnv = go2nix.lib.mkGoEnv {
+        inherit (pkgs) go callPackage;
+        go2nix = go2nix.packages.${system}.go2nix;
+      };
+    in
+    {
+      packages.${system}.default = goEnv.buildGoApplication {
+        pname = "my-app";
+        version = "0.1.0";
+        src = ./.;
+        goLock = ./go2nix.toml;
+      };
+    };
 ```
 
-See [Default Mode](docs/src/modes/default-mode.md) and
-[Experimental Mode](docs/src/modes/experimental-mode.md) for details.
+Build it with the plugin loaded (see [Installation](#installation)) and run `./result/bin/my-app`. What Nix built: the standard library (`go-stdlib-…`), one fetch per module (four `gomod-…`), one compile per package `main.go` reaches (`gopkg-github.com-fatih-color-v1.18.0`, `gopkg-github.com-mattn-go-colorable-v0.1.13`, `gopkg-github.com-mattn-go-isatty-v0.0.20`, `gopkg-golang.org-x-sys-unix-v0.25.0` — one package of `x/sys`, not the module — and `golocal-example.com-my-app`), an importcfg bundle (`my-app-deps-importcfg`), and the link. Edit `main.go` and build again: only `golocal-example.com-my-app` and the link change.
 
-## CLI commands
+## Usage
 
-| Command | Description |
-|---------------------|----------------------------------------------------------------|
-| `go2nix generate` | Generate `go2nix.toml` lockfile |
-| `go2nix check` | Validate lockfile against `go.mod` |
+Everything hangs off the scope `mkGoEnv` returns. The full attribute tables are in [Builder API](docs/src/builder-api.md); this is the map.
 
-See [CLI Reference](docs/src/cli-reference.md) for all commands and flags.
+### `lib.mkGoEnv`
 
-## Comparison with Nix alternatives
-
-| Tool | Main model | Best at | Tradeoff vs go2nix |
-|------|------------|---------|--------------------|
-| `buildGoModule` | One fetch derivation + one main build derivation | Standard nixpkgs packaging, lowest conceptual overhead | Coarser caching; Nix does not model the Go package graph |
-| `gomod2nix` | Lock modules, then build with `go build` in a conventional app derivation | Offline reproducible app builds with a mature lockfile workflow | Still largely app-level/module-level, not package-graph-level |
-| `gobuild.nix` | Per-module derivations backed by `GOCACHEPROG` | Incremental module builds and package-set style composition | Granularity is centered on modules and Go cache subsets, not direct per-package derivations |
-| `nix-gocacheprog` | Reuse Go's own cache through a host daemon and sandbox hole | Fast local development on one machine | Intentionally impure; optimization layer, not a pure package-graph builder |
-| `go2nix` | Discover package graph and compile with `go tool compile/link` per package | Fine-grained Nix caching and explicit package-level rebuilds | More moving parts; default mode needs the plugin |
-
-### In one sentence each
-
-- Choose `buildGoModule` when you want the standard nixpkgs path.
-- Choose `gomod2nix` when you want an offline lockfile-driven app build.
-- Choose `nix-gocacheprog` when you want faster local iteration and accept impurity.
-- Choose `gobuild.nix` when per-module package-set composition is the goal.
-- Choose `go2nix` when you want Nix to understand and cache the Go build at
-  package granularity.
-
-## Repository layout
-
+```nix
+goEnv = go2nix.lib.mkGoEnv {
+  inherit (pkgs) go callPackage;                 # toolchain and the package set to build in
+  go2nix = go2nix.packages.${system}.go2nix;     # the CLI the builders run
+  tags = [ ];                                    # build tags for every build in the scope
+  goEnv = { };                                   # env for the stdlib and every go tool call: GOEXPERIMENT, GOFIPS140, CGO_ENABLED
+  netrcFile = null;                              # .netrc for private modules (ends up in the store — use a scoped token)
+  nixPackage = null;                             # a Nix with recursive-nix, only for the experimental builder
+};
 ```
-go/go2nix/       Go CLI (generate, compile, resolve, test runner)
-nix/             Nix builders (dag/ for default mode, dynamic/ for experimental)
-packages/        Nix package definitions (go2nix, nix-plugin, test fixtures)
-tests/           Integration test fixtures and harnesses
-docs/            mdBook documentation
+
+The scope holds `buildGoApplication`, `buildGoApplicationExperimental`, `go`, `go2nix`, `stdlib`, `hooks`, `fetchers.fetchGoModule` and `helpers`. It is a `lib.makeScope`, so `goEnv.overrideScope` replaces any of them — for instance to wrap `fetchGoModule` with a proxy's authentication. The standard library is compiled once per scope and shared by every build in it.
+
+### `buildGoApplication`
+
+```nix
+goEnv.buildGoApplication {
+  pname = "server";
+  version = "1.4.0";
+  src = ./.;                         # a path or an eval-time fetch; a derivation here means import-from-derivation
+  goLock = ./go2nix.toml;            # omit for a lockfile-free build
+  subPackages = [ "./cmd/server" ];  # default [ "." ]
+  modRoot = ".";                     # where go.mod is, relative to src
+  tags = [ "netgo" ];
+  ldflags = [ "-s" "-w" "-X main.version=1.4.0" ];
+  gcflags = [ ];
+  CGO_ENABLED = null;                # null: per package, from its files
+  pgoProfile = null;
+  doCheck = true;
+  checkFlags = [ ];
+  packageOverrides = { };
+}
 ```
+
+- **`subPackages`** are the main packages to link, relative to `modRoot`; a missing `./` is added. Each becomes a binary in `$out/bin`, named after its directory (`pname` for `.`). Only packages reachable from them (plus, under `doCheck`, from their tests) are built.
+- **`modRoot`** is for a module inside a larger tree: `src` is the repository root, `modRoot = "services/api"` is where `go.mod` lives. That is what lets `replace example.com/lib => ../../lib` resolve — the builder needs the sibling directory inside `src`. `"./services/api"` and `"services/api"` are the same.
+- **Lockfile or not.** With `goLock`, module hashes come from `go2nix.toml` and the link step checks the lockfile against `go.mod`, failing on drift. Without it the plugin computes each module's hash from `go.sum` and `GOMODCACHE` while evaluating — nothing to regenerate, no reviewable pin file. Prefer the lockfile for anything you ship.
+- **`doCheck`** (default `true`, as in `buildGoModule`) runs the tests of the local packages in the build. Test-only third-party packages and local helper packages imported only from `_test.go` files get their own derivations. Tests see a filtered copy of `src`: Go files, resolved `//go:embed` targets and `testdata/`; add other runtime files with `extraMainSrcFiles`. See [Test Support](docs/src/test-support.md).
+- **`packageOverrides`**, keyed by import path or, for third-party packages, module path: `nativeBuildInputs` (cgo packages only), `env`, `srcOverlay`. See [Package Overrides](docs/src/package-overrides.md).
+- **`srcFilter`** is a `path: type: bool` ANDed into every filtered copy the builder makes of `src`, so `src` can stay the real tree.
+- **`contentAddressed`** needs the `ca-derivations` experimental feature; see [Incremental Builds](docs/src/incremental-builds.md).
+- Also: `goProxy`, `allowGoReference`, `nativeBuildInputs`, `meta`, `passthru`. The result's `passthru` exposes `packages`, `localPackages`, `depsImportcfg`, `mainSrc`, `modulePath` and, with `doCheck`, `testPackages`.
+
+### `-trimpath`
+
+go2nix always builds the way `go build -trimpath` does. Each compile passes `-trimpath` with two rewrites: the package's source directory becomes its import path for main-module packages, or `<module>@<version>/<subdir>` for third-party packages and for sibling modules behind a filesystem `replace` (the version from the `require` line), and the build's temporary directory becomes nothing. The standard library is installed with `--trimpath`, the recorded build settings say `-trimpath=true`, and the final derivation lists its filtered source tree — and the Go toolchain, unless `allowGoReference = true` — in `disallowedReferences`, so a path that escaped the rewrite fails the build instead of dragging the source into the binary's closure. File names in stack traces and `runtime.Caller` therefore match a vanilla `-trimpath` build.
+
+### The resolver contract
+
+`builtins.resolveGoPackages` is what the default builder is written against. It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch, cgoEnabled, goProxy, doCheck ? false, resolveHashes ? false, go ? <the toolchain baked into the plugin> }`, runs `go list -deps -json` (and a second `-test` pass under `doCheck`) with `GOFLAGS=-mod=readonly`, `GOWORK=off`, `GOENV=off` and the caller's `GOMODCACHE`, `GOPROXY` and `NETRC`, and returns:
+
+| Field | Content |
+|---|---|
+| `packages`, `testPackages` | third-party packages by import path: `modKey` (`path@version`), `subdir`, `imports` (third-party only), `drvName`, file lists, cgo flags |
+| `localPackages`, `testLocalPackages` | main-module and filesystem-replaced packages: `dir` (relative to `src`), `modPath`, `localImports`, `thirdPartyImports`, file lists, `mainSrcFiles` |
+| `modulePath`, `goVersion` | the main module's path and `go` directive |
+| `replacements` | `replace` directives with a version, by `modKey` |
+| `siblingModules`, `localReplaceDirs`, `nestedModuleRoots` | filesystem `replace` targets: identity per module, their directories, every directory holding a `go.mod` |
+| `subPackageClosures` | per main package: the modules it links (for module info) and whether it needs a C++ linker |
+| `moduleHashes` | with `resolveHashes`: NAR hash per module, for lockfile-free builds |
+| `apiLevel` | the contract's version; `builtins.go2nixApiLevel` reports the plugin's, and the builder warns when they differ |
+
+It is impure by nature (it runs a program and reads the module cache) and runs once per evaluation. You normally never call it yourself.
+
+### `buildGoApplicationExperimental`
+
+The same per-package build, with the graph discovered at build time inside a recursive-nix derivation instead of at evaluation time: no plugin, but it needs `nixPackage` in `mkGoEnv`, a lockfile, and Nix ≥ 2.34 with `recursive-nix`, `ca-derivations` and `dynamic-derivations`. It takes `pname` but not `version`, and no `doCheck`. See [Experimental Mode](docs/src/modes/experimental-mode.md).
+
+### The `go2nix` CLI
+
+`go2nix generate [dir]` writes `go2nix.toml` (also what bare `go2nix` does) and `go2nix check` validates one against `go.mod`. The other subcommands — `compile-package`, `link-binary`, `test-packages`, `resolve`, `list-packages`, `list-files`, `build-modinfo`, `generate-test-main` — are what the derivations run; see [CLI Reference](docs/src/cli-reference.md).
+
+## How it works
+
+1. **Resolve.** While Nix evaluates, the plugin runs `go list` over `src` and hands back the package graph: a Rust core that classifies packages as third-party (fetched modules) or local (the main module and filesystem `replace` targets), and a C++ shim that registers the primop. Build tags, `GOOS`/`GOARCH` and `CGO_ENABLED` are the build's, so the file lists match what will be compiled.
+1. **Fetch.** Every module is a fixed-output derivation that runs `go mod download` and keeps only the extracted source tree, so its hash does not depend on which proxy served it. `replace` directives with a version change where a module is fetched from, not what it is called.
+1. **Compile.** The builder maps the graph to derivations. A third-party package depends on its module's source and on the packages it imports; a local package gets a copy of only its own directory (nested packages and nested modules excluded), so editing a neighbour does not change its input. Pure-Go packages are compiled by a bare `derivation` that runs `go2nix compile-package` — no stdenv, no phases; cgo packages go through stdenv for the C compiler wrapper. Each compile reads an importcfg made of the standard library's and its dependencies' entries.
+1. **Link.** One small derivation concatenates every package's importcfg entry, so the final derivation depends on a bundle instead of on hundreds of packages. `go2nix link-binary` checks the lockfile, generates the module info `go build` would embed, compiles the main packages and runs `go tool link`.
+1. **Test.** Under `doCheck` the same derivation then runs `go2nix test-packages`: it generates the test mains, compiles internal and external test packages against the already-built archives, and runs them.
+
+More in [Architecture](docs/src/go2nix-architecture.md), [Default Mode](docs/src/modes/default-mode.md) and [Incremental Builds](docs/src/incremental-builds.md), which has numbers for what a change rebuilds and what evaluation costs.
+
+## Comparison
+
+| Tool | Model | Best at | Compared with go2nix |
+|---|---|---|---|
+| `buildGoModule` | one vendor fetch, one build derivation | standard nixpkgs packaging, least to learn | coarser caching; Nix does not see the package graph |
+| `gomod2nix` | lockfile of modules, `go build` in one derivation | offline, reproducible application builds with a mature workflow | per-module fetches, application-level build |
+| `gobuild.nix` | per-module derivations over `GOCACHEPROG` | incremental module builds, package-set composition | granularity is the module and Go's cache, not the package |
+| `nix-gocacheprog` | Go's own cache shared through a host daemon | fast local iteration on one machine | deliberately impure; an optimisation, not a builder |
+| `go2nix` | package graph, `go tool compile`/`link` per package | fine-grained caching and explicit rebuilds | more moving parts; the default mode needs the plugin |
 
 ## Development
 
 ```bash
-git clone https://github.com/numtide/go2nix
-cd go2nix
-direnv allow   # or: nix develop
+git clone https://github.com/numtide/go2nix && cd go2nix
+nix develop                                         # or: direnv allow — Go 1.26, golangci-lint, mdbook, hyperfine
+
+(cd go/go2nix && go test ./...)                     # CLI unit tests
+nix build .#go2nix-nix-plugin                       # the plugin; its build runs the resolver's unit tests
+nix build .#test-fixture-testify-basic              # one integration fixture (needs recursive-nix)
+nix flake check                                     # formatting, linters, clippy, plugin eval tests, godebug table
+nix fmt                                             # treefmt: nixfmt, deadnix, statix, gofumpt, shfmt, mdformat, ruff
+nix run .#bench-incremental -- -fixture light       # what an edit rebuilds, measured
 ```
 
-```bash
-cd go/go2nix && go test ./...                  # Go unit tests
-nix build .#test-fixture-testify-basic         # Nix integration test (one fixture)
-nix run .#bench-incremental -- -fixture light  # incremental rebuild benchmark
-nix fmt                                        # format all files
+The integration fixtures under `tests/fixtures/` each have a `packages/test-fixture-*` derivation that loads the freshly built plugin into Nix 2.34 and builds the fixture inside the sandbox with recursive-nix; add one when fixing a build bug. `go/go2nix/pkg/buildinfo/godebug.go` mirrors the Go toolchain's table of `GODEBUG` settings, which is what makes `DefaultGODEBUG` come out right for every `go` directive; `go run scripts/check-godebug-table.go` compares it with the toolchain on `PATH` and `--update` rewrites it. A weekly workflow runs the check against the latest stable Go and opens an issue when a release changes the table. The documentation is an mdBook under `docs/`, published at <https://numtide.github.io/go2nix>. See [Benchmarking](docs/src/benchmarking.md) for the benchmark harness.
+
+```
+go/go2nix/    the CLI: lockfile generation, compile, link, test runner, module info
+nix/          the builders: dag/ (default), dynamic/ (experimental), stdlib, scope
+packages/     flake packages: the CLI, the Nix plugin (Rust core + C++ shim), tests, benchmarks
+tests/        fixtures and Nix-level tests
+docs/         the mdBook
 ```
 
-See [Benchmarking](docs/src/benchmarking.md) for `bench-incremental` flags
-and fixtures.
+## Contributing
+
+Issues and pull requests are welcome. CI is numtide's buildbot, which builds every flake package and check — so every fixture — on each pull request, plus a benchmark regression job on GitHub Actions; `main` merges through a merge queue. Branches use a type prefix (`feat/`, `fix/`, `docs/`). A change to what the resolver returns has to keep `nix/dag` and the plugin compatible in both directions or bump the API level in both. A change to build behaviour should say what `go build` does in the same situation — parity with cmd/go is the specification.
+
+## Acknowledgments
+
+- The Go toolchain: go2nix drives `go list`, `go tool compile`, `go tool link` and friends directly and follows cmd/go's behaviour wherever the two could differ.
+- [rules_go](https://github.com/bazel-contrib/rules_go) for the model of building Go from an explicit package graph.
+- [`buildGoModule`](https://nixos.org/manual/nixpkgs/stable/#sec-language-go) and [gomod2nix](https://github.com/nix-community/gomod2nix), which established how Go is packaged with Nix — vendor hashes, a lockfile of module hashes — and [gobuild.nix](https://github.com/adisbladis/gobuild.nix) and [nix-gocacheprog](https://github.com/dnr/nix-gocacheprog), which explore finer-grained reuse from other directions.
+
+go2nix is a [numtide](https://numtide.com) project. Looking for help with Nix or with this project? <https://numtide.com/contact>
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](LICENSE)
