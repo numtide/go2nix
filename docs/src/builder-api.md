@@ -26,6 +26,11 @@ goEnv.buildGoApplicationExperimental {
 Requires `nixPackage` to be set in `mkGoEnv` and Nix >= 2.34 with
 `recursive-nix`, `ca-derivations`, and `dynamic-derivations` enabled.
 
+The result is a wrapper derivation whose output is a `.drv` file; the binary
+is its `.target` attribute (see [Experimental Mode](modes/experimental-mode.md)).
+Attributes marked "default only" below are not rejected by this builder, they
+are silently ignored.
+
 ## Required attributes
 
 ### `src` {#src}
@@ -44,7 +49,7 @@ time and emits an IFD warning.
 |-----------|------|-------|-------------|
 | `src` | path | both | See above. |
 | `pname` | string | both | Package name for the output derivation. |
-| `version` | string | default only | Package version. The experimental builder does not accept this attribute (its wrapper produces a CA `.drv` whose name is derived from `pname` alone). |
+| `version` | string | default only | Package version. The experimental builder ignores it (its wrapper produces a CA `.drv` whose name is derived from `pname` alone). |
 
 ## Optional attributes
 
@@ -56,18 +61,27 @@ time and emits an IFD warning.
 | `tags` | list of strings | `[]` | both | Go build tags. |
 | `ldflags` | list of strings | `[]` | both | Flags passed to `go tool link` (`-s`, `-w`, `-X`, etc.). |
 | `gcflags` | list of strings | `[]` | both | Extra flags passed to `go tool compile`. |
-| `CGO_ENABLED` | `0`, `1`, or `null` | `null` (auto) | both | Override CGO detection. When `null`, CGO is enabled per-package based on the presence of C/C++ files. |
+| `CGO_ENABLED` | `0`, `1`, or `null` | the scope's `goEnv.CGO_ENABLED` if set, else `null` (default mode); `null` (experimental) | both | Value of `CGO_ENABLED` for the eval-time `go list` and the build. With `null` the toolchain's default applies, and a package is built as cgo when `go list` reports `CgoFiles` for it, i.e. it has Go files that `import "C"`. |
 | `pgoProfile` | path or `null` | `null` | both | Path to a pprof CPU profile for profile-guided optimization. The profile is passed to every `go tool compile` invocation, so changing it invalidates all package derivations. See [Go's PGO docs](https://go.dev/doc/pgo) for producing a profile. |
-| `nativeBuildInputs` | list | `[]` | both | Extra build inputs for the final derivation. |
+| `nativeBuildInputs` | list | `[]` | both | Extra build inputs for the final derivation. In experimental mode they land on the wrapper that runs `go2nix resolve`, not on the link derivation; give link-time libraries through `packageOverrides`. |
 | `packageOverrides` | attrset | `{}` | both | Per-package customization (see below). |
 | `doCheck` | bool | `true` | default only | Run tests. Matches `buildGoModule`'s default. See [Test Support](test-support.md). |
-| `checkFlags` | list of strings | `[]` | default only | Flags passed to the compiled test binary (e.g., `-v`, `-count=1`). See [Test Support](test-support.md). |
+| `checkFlags` | list of strings | `[]` | default only | Flags passed verbatim to the compiled test binary, so in its own spelling: `-test.v`, `-test.run=^TestFoo$`, `-test.count=1` (not `go test`'s `-v`, `-run`). See [Test Support](test-support.md). |
 | `extraMainSrcFiles` | list of strings | `[]` | default only | Extra `src`-relative paths (files or directories) kept in the filtered test source tree. Escape hatch for tests that read runtime files outside `testdata/` and `//go:embed`. See [Test Support](test-support.md#extramainsrcfiles). |
 | `srcFilter` | function `path: type: bool` | keep everything | default only | Extra predicate, with `builtins.path`'s `filter` signature, ANDed into every filtered copy the builder makes of `src` (each local package's source and the test source tree). Pass the real source tree as `src` plus the membership a pre-filtered copy would have had (e.g. a `lib.fileset`'s files and their directories) instead of a `lib.fileset.toSource` / `builtins.path` copy: the builder walks and `go list`s `src` during evaluation, which over a store copy only works once that copy has been written, so a pre-copied `src` cannot be evaluated read-only against a store that has not seen it. Per-package store paths are unchanged as long as the predicate admits the same files. |
-| `goProxy` | string or `null` | `null` | default only | Custom GOPROXY URL. |
-| `allowGoReference` | bool | `false` | default only | Allow the output to reference the Go toolchain. |
+| `goProxy` | string or `null` | `null` | default only | `GOPROXY` for the module fetches and for the eval-time `go list`, written into the derivations. With `null` the fetches inherit `GOPROXY`/`NETRC` from the builder's environment (a daemon or a remote builder usually has none, and Go's default proxy applies). |
+| `allowGoReference` | bool | `false` | default only | Allow the output to reference the Go toolchain. The output may never reference the filtered source tree (`mainSrc`); both are enforced with `disallowedReferences`. |
 | `meta` | attrset | `{}` | default only | Nix meta attributes. |
-| `contentAddressed` | bool | `false` | default only | Make per-package and importcfg derivations floating-CA and add an `iface` (export-data) output so private-symbol-only edits don't cascade. Requires the `ca-derivations` experimental feature; the final binary stays input-addressed. See [Incremental Builds → Early cutoff](incremental-builds.md#early-cutoff-with-contentaddressed--true) for details and limitations. |
+| `contentAddressed` | bool | `false` | default only | Make the local-package derivations floating-CA with an extra `iface` (export-data) output, so private-symbol-only edits don't cascade, and the importcfg bundle floating-CA too. Third-party packages stay input-addressed. Requires the `ca-derivations` experimental feature; the final binary stays input-addressed. See [Incremental Builds → Early cutoff](incremental-builds.md#early-cutoff-with-contentaddressed--true) for details and limitations. |
+
+Anything else you pass to `buildGoApplication` goes to `stdenv.mkDerivation`
+unchanged (`preBuild`, `postInstall`, `outputs`, ...). `buildInputs`,
+`disallowedReferences`, `env` and `passthru` are merged with the builder's
+own. The result's `passthru` has `go`, `go2nix`, `goLock`, `packages`,
+`localPackages`, `depsImportcfg`, `mainSrc`, `modulePath` and, with `doCheck`,
+`testPackages` and `testDepsImportcfg`; see
+[Troubleshooting](troubleshooting.md) for how to use them. `extraMainSrcFiles`
+entries that do not exist under `src` are an error.
 
 ## `modRoot`
 
@@ -88,7 +102,7 @@ goEnv.buildGoApplication {
 
 This is necessary when the module uses `replace` directives pointing to sibling
 directories outside `modRoot`. The builder needs access to the full `src` tree,
-with `modRoot` telling it where `go.mod` lives. The filtered `mainSrc` for the
+with `modRoot` telling it where `go.mod` lives (a leading `./` is accepted). The filtered `mainSrc` for the
 final derivation unions in those sibling replace directories, so `doCheck`
 works regardless of `modRoot`.
 
@@ -127,7 +141,7 @@ goEnv = go2nix.lib.mkGoEnv {
   go2nix = go2nix.packages.${system}.go2nix;
 
   # Optional:
-  tags = [ "nethttpomithttp2" ];
+  goEnv = { CGO_ENABLED = "0"; };
   netrcFile = ./my-netrc;
   nixPackage = pkgs.nixVersions.nix_2_34;  # required for experimental mode
 };
@@ -138,8 +152,8 @@ goEnv = go2nix.lib.mkGoEnv {
 | `go` | derivation | required | Go toolchain. |
 | `go2nix` | derivation | required | go2nix CLI binary. |
 | `callPackage` | function | required | `pkgs.callPackage`. |
-| `tags` | list of strings | `[]` | Build tags applied to all builds in this scope. |
-| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and every `go tool` invocation in this scope (e.g. `GOEXPERIMENT`, `GOFIPS140`). Scope-level because the stdlib derivation is shared by every build in the scope. |
+| `tags` | list of strings | `[]` | Stored on the scope, but neither builder reads it: pass `tags` to each `buildGoApplication` call. |
+| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and, in default mode, to every compile and link in this scope (e.g. `GOEXPERIMENT`, `GOFIPS140`, `CGO_ENABLED`). In experimental mode they reach the stdlib and `go2nix resolve` only, not the per-package derivations. Of these only `CGO_ENABLED`, `GOOS` and `GOARCH` also reach the eval-time `go list`. Scope-level because the stdlib derivation is shared by every build in the scope. |
 | `netrcFile` | path or `null` | `null` | `.netrc` file for private module authentication (see below). |
 | `nixPackage` | derivation or `null` | `null` | Nix binary. Required for `buildGoApplicationExperimental`. |
 
@@ -148,14 +162,17 @@ goEnv = go2nix.lib.mkGoEnv {
 `GOOS` / `GOARCH` are read from `stdenv.hostPlatform.go`, so cross builds are
 driven the standard nixpkgs way — pass a cross `pkgs` (e.g.
 `pkgsCross.aarch64-multiplatform`) into `mkGoEnv` via `callPackage`, and the
-resulting scope produces binaries for that target. The
-[Nix plugin](nix-plugin.md) is told the target `goos`/`goarch` so build-tag
-evaluation matches the host platform.
+resulting scope produces binaries for that target. `goEnv.GOOS` / `goEnv.GOARCH`
+win over the platform's if you set them. Only `callPackage` has to come from
+the cross package set: `go` runs on the build machine, so keep passing a
+native one. The [Nix plugin](nix-plugin.md) is told the target `goos`/`goarch`
+so build-tag evaluation matches the host platform. Default mode only.
 
 ## FIPS 140 mode (`GOFIPS140`)
 
 Set `GOFIPS140` via the scope-level `goEnv` to build against the Go FIPS 140
-crypto module, equivalent to `GOFIPS140=latest go build`:
+crypto module, equivalent to `GOFIPS140=latest go build` (default mode; the
+experimental builder does not pass `goEnv` to its compile and link steps):
 
 ```nix
 goEnv = go2nix.lib.mkGoEnv {
@@ -196,10 +213,11 @@ login myuser
 password mytoken
 ```
 
-The file is copied to `$HOME/.netrc` inside each module fetch derivation.
-Go's default `GOPROXY` (`https://proxy.golang.org,direct`) falls back to
-direct VCS access when the proxy returns 404, so `netrcFile` covers both
-proxy-authenticated and direct-access private module setups.
+The file is copied to `$HOME/.netrc` inside each module fetch derivation, which
+covers a proxy that wants authentication (point `goProxy` at it). Go's
+`direct` fallback shells out to `git` or another VCS tool, and the fetch
+derivations have none on `PATH`, so do not count on it for private
+repositories: serve them through a proxy.
 
 In experimental mode, the file is passed as `--netrc-file` to
 `go2nix resolve`, which forwards it to the module FODs built inside
