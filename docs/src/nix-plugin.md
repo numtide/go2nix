@@ -39,7 +39,8 @@ opt-in IFD, still gated by `allow-import-from-derivation`.
 It runs `go list -json -deps` against `src` and returns:
 
 - `packages` — third-party package metadata (`modKey`, `subdir`,
-  `imports`, `drvName`, `isCgo`)
+  `imports`, `drvName`, `isCgo`, and `localImports` when the package
+  imports a module the main `go.mod` replaces with a directory)
 - `localPackages` — local package metadata (`dir`, `localImports`,
   `thirdPartyImports`, `isCgo`)
 - `modulePath` — the main module's import path

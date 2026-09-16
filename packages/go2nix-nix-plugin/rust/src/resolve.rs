@@ -693,11 +693,18 @@ fn parse_test_packages(
     // file or directory)". Filter raw_test_locals to packages reachable from
     // a build-closure local's test imports (and transitively via reached
     // test-only-locals' own imports + test imports, since the testrunner runs
-    // tests for everything in localArchives).
+    // tests for everything in localArchives). Test-only third-party packages
+    // are walked through as well: one can import a local when the main go.mod
+    // replaces a module it imports with a directory.
     let by_ip: BTreeMap<&str, &RawLocalPkg> = raw_test_locals
         .iter()
         .map(|r| (r.import_path.as_str(), r))
         .collect();
+    let test_tp_imports: BTreeMap<&str, &[String]> = test_packages
+        .iter()
+        .map(|p| (p.import_path.as_str(), p.imports.as_slice()))
+        .collect();
+    let mut walked_tp: BTreeSet<&str> = BTreeSet::new();
     let mut reachable: BTreeSet<String> = BTreeSet::new();
     let mut frontier: Vec<String> = local_paths
         .iter()
@@ -706,6 +713,12 @@ fn parse_test_packages(
         .cloned()
         .collect();
     while let Some(ip) = frontier.pop() {
+        if let Some((tp, imports)) = test_tp_imports.get_key_value(ip.as_str()) {
+            if walked_tp.insert(tp) {
+                frontier.extend(imports.iter().cloned());
+            }
+            continue;
+        }
         if !test_local_paths.contains(&ip) || !reachable.insert(ip.clone()) {
             continue;
         }
@@ -1185,6 +1198,14 @@ struct JsonOutput {
 struct JsonPkg {
     drv_name: String,
     imports: Vec<String>,
+    /// Imports that resolve to local packages: a third-party package reaches
+    /// one when the main go.mod replaces a module it imports with a directory
+    /// (`replace foo => ./foo`). Keys into `localPackages` (or
+    /// `testLocalPackages`), kept apart from `imports` so that list stays
+    /// keys into `packages`/`testPackages` only. Omitted when empty so
+    /// projects without such a replace see an unchanged JSON shape.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    local_imports: Vec<String>,
     mod_key: String,
     subdir: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1222,8 +1243,13 @@ struct JsonClosure {
 }
 
 /// Convert a `PkgData` to a `JsonPkg`, filtering imports to only include
-/// packages present in `allowed_imports`.
-fn pkg_data_to_json_pkg(p: &PkgData, allowed_imports: &dyn Fn(&str) -> bool) -> JsonPkg {
+/// packages present in `allowed_imports`; of the rest, those `is_local`
+/// accepts become `local_imports` and the others (stdlib) are dropped.
+fn pkg_data_to_json_pkg(
+    p: &PkgData,
+    allowed_imports: &dyn Fn(&str) -> bool,
+    is_local: &dyn Fn(&str) -> bool,
+) -> JsonPkg {
     let effective_version = if p.replace_version.is_empty() {
         &p.mod_version
     } else {
@@ -1236,17 +1262,21 @@ fn pkg_data_to_json_pkg(p: &PkgData, allowed_imports: &dyn Fn(&str) -> bool) -> 
     } else {
         String::new()
     };
-    let filtered_imports: Vec<String> = p
-        .imports
-        .iter()
-        .filter(|imp| allowed_imports(imp))
-        .cloned()
-        .collect();
+    let mut filtered_imports = Vec::new();
+    let mut local_imports = Vec::new();
+    for imp in &p.imports {
+        if allowed_imports(imp) {
+            filtered_imports.push(imp.clone());
+        } else if is_local(imp) {
+            local_imports.push(imp.clone());
+        }
+    }
     let drv_name = format!("gopkg-{}-{}", sanitize_name(&p.import_path), p.mod_version);
 
     JsonPkg {
         drv_name,
         imports: filtered_imports,
+        local_imports,
         mod_key,
         subdir,
         is_cgo: p.is_cgo,
@@ -1550,7 +1580,11 @@ pub(crate) fn package_graph_to_json(
         .packages
         .iter()
         .map(|p| {
-            let json_pkg = pkg_data_to_json_pkg(p, &|imp| graph.third_party_paths.contains(imp));
+            let json_pkg = pkg_data_to_json_pkg(
+                p,
+                &|imp| graph.third_party_paths.contains(imp),
+                &|imp| graph.local_paths.contains(imp),
+            );
             (p.import_path.clone(), json_pkg)
         })
         .collect();
@@ -1639,13 +1673,20 @@ pub(crate) fn package_graph_to_json(
     }
 
     // Build test_packages map.
+    let test_local_paths: BTreeSet<&str> = graph
+        .test_local_packages
+        .iter()
+        .map(|lp| lp.import_path.as_str())
+        .collect();
     let test_packages: BTreeMap<String, JsonPkg> = graph
         .test_packages
         .iter()
         .map(|p| {
-            let json_pkg = pkg_data_to_json_pkg(p, &|imp| {
-                graph.third_party_paths.contains(imp) || graph.test_only_paths.contains(imp)
-            });
+            let json_pkg = pkg_data_to_json_pkg(
+                p,
+                &|imp| graph.third_party_paths.contains(imp) || graph.test_only_paths.contains(imp),
+                &|imp| graph.local_paths.contains(imp) || test_local_paths.contains(imp),
+            );
             (p.import_path.clone(), json_pkg)
         })
         .collect();
@@ -1956,7 +1997,7 @@ mod tests {
         assert_eq!(f.swig_cxx_files, vec!["x.swigcxx"]);
         assert_eq!(f.embed_patterns, vec!["data/*"]);
 
-        let jp = pkg_data_to_json_pkg(&graph.packages[0], &|_| true);
+        let jp = pkg_data_to_json_pkg(&graph.packages[0], &|_| true, &|_| false);
         let json = serde_json::to_value(&jp).unwrap();
         let files = &json["files"];
         assert_eq!(files["goFiles"], serde_json::json!(["a.go", "b.go"]));
@@ -1987,7 +2028,7 @@ mod tests {
             is_cgo: false,
             files: PkgFiles::default(),
         };
-        let jp = pkg_data_to_json_pkg(&p, &|_| true);
+        let jp = pkg_data_to_json_pkg(&p, &|_| true, &|_| false);
         let json = serde_json::to_value(&jp).unwrap();
         assert!(
             json.get("files").is_none(),
@@ -2092,6 +2133,43 @@ mod tests {
         assert_eq!(lp.dir, "/src/testutil");
         assert_eq!(lp.local_imports, vec!["example.com/m/internal/app"]);
         assert_eq!(lp.third_party_imports, vec!["github.com/testify"]);
+    }
+
+    #[test]
+    fn test_parse_reaches_local_replace_through_test_only_third_party() {
+        // app_test.go imports testify; testify imports github.com/x/B, which
+        // the main go.mod replaces with ./forks/B. Nothing local imports B,
+        // so only the walk through testify keeps it.
+        let mut locals = BTreeSet::new();
+        locals.insert("example.com/m/app".to_owned());
+        let fork_b = r#"{"ImportPath":"github.com/x/B","Dir":"/src/forks/B","Module":{"Path":"github.com/x/B","Version":"v1.0.0","Replace":{"Path":"./forks/B"}},"Imports":[],"GoFiles":["b.go"]}"#;
+        let input = [
+            local_pkg_json_t(
+                "example.com/m/app",
+                "example.com/m",
+                "/src/app",
+                &[],
+                &["github.com/testify"],
+            ),
+            tp_with_imports(
+                "github.com/testify",
+                "github.com/testify",
+                "v1.9.0",
+                &["github.com/x/B"],
+                false,
+            ),
+            fork_b.to_owned(),
+        ]
+        .join("\n");
+
+        let r = ptp(&input, &BTreeSet::new(), &locals);
+        assert_eq!(r.test_packages.len(), 1);
+        let ips: Vec<&str> = r
+            .test_local_packages
+            .iter()
+            .map(|p| p.import_path.as_str())
+            .collect();
+        assert_eq!(ips, vec!["github.com/x/B"]);
     }
 
     #[test]
@@ -2284,7 +2362,7 @@ mod tests {
             is_cgo: false,
             files: PkgFiles::default(),
         };
-        let jp = pkg_data_to_json_pkg(&p, &|_| true);
+        let jp = pkg_data_to_json_pkg(&p, &|_| true, &|_| false);
         assert_eq!(jp.subdir, "sub/pkg");
         assert_eq!(jp.mod_key, "github.com/foo/bar@v1.2.3");
         assert_eq!(jp.drv_name, "gopkg-github.com-foo-bar-sub-pkg-v1.2.3");
@@ -2304,7 +2382,7 @@ mod tests {
             is_cgo: false,
             files: PkgFiles::default(),
         };
-        let jp = pkg_data_to_json_pkg(&p, &|_| true);
+        let jp = pkg_data_to_json_pkg(&p, &|_| true, &|_| false);
         assert_eq!(jp.mod_key, "github.com/foo/bar@v2.0.0");
     }
 
@@ -2361,8 +2439,47 @@ mod tests {
             is_cgo: false,
             files: PkgFiles::default(),
         };
-        let jp = pkg_data_to_json_pkg(&p, &|imp| imp == "github.com/keep");
+        let jp = pkg_data_to_json_pkg(&p, &|imp| imp == "github.com/keep", &|_| false);
         assert_eq!(jp.imports, vec!["github.com/keep"]);
+        let json = serde_json::to_value(&jp).unwrap();
+        assert!(
+            json.get("localImports").is_none(),
+            "empty localImports should be omitted, got {json}"
+        );
+    }
+
+    #[test]
+    fn json_pkg_third_party_importing_local_replace() {
+        // `replace github.com/x/B => ./forks/B` in the main go.mod makes
+        // github.com/x/B a local package; tp/a still imports it.
+        let fork_b = r#"{"ImportPath":"github.com/x/B","Dir":"/src/forks/B","Module":{"Path":"github.com/x/B","Version":"v1.0.0","Replace":{"Path":"./forks/B"}},"Imports":[]}"#;
+        let stdout = format!(
+            "{}\n{}\n{fork_b}\n{}\n",
+            local_pkg_json("m/cmd/a", "m", "/src/cmd/a", &["tp/a/pkg"]),
+            tp_with_imports(
+                "tp/a/pkg",
+                "tp/a",
+                "v1.0.0",
+                &["tp/c/pkg", "github.com/x/B", "fmt"],
+                false
+            ),
+            tp_with_imports("tp/c/pkg", "tp/c", "v3.0.0", &[], false),
+        );
+        let graph = parse_go_packages(stdout.as_bytes()).unwrap();
+        let tp_a = graph
+            .packages
+            .iter()
+            .find(|p| p.import_path == "tp/a/pkg")
+            .unwrap();
+        let jp = pkg_data_to_json_pkg(
+            tp_a,
+            &|imp| graph.third_party_paths.contains(imp),
+            &|imp| graph.local_paths.contains(imp),
+        );
+        assert_eq!(jp.imports, vec!["tp/c/pkg"]);
+        assert_eq!(jp.local_imports, vec!["github.com/x/B"]);
+        let json = serde_json::to_value(&jp).unwrap();
+        assert_eq!(json["localImports"], serde_json::json!(["github.com/x/B"]));
     }
 
     fn test_opts(go_proxy: Option<&str>) -> GoListOpts<'_> {

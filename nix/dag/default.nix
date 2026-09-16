@@ -521,7 +521,11 @@ let
       srcDir = if pkg.subdir == "" then minfo.dir else "${minfo.dir}/${pkg.subdir}";
 
       # Direct dependency derivations (resolved lazily via Nix's laziness).
-      deps = map (imp: packages.${imp}) pkg.imports;
+      # localImports are packages of a module the main go.mod replaces with
+      # a directory: the resolver lists those as local packages, and a
+      # third-party package can still import them.
+      deps =
+        map (imp: packages.${imp}) pkg.imports ++ map (imp: localPackages.${imp}) (pkg.localImports or [ ]);
 
       # Auto-add CC for CGO packages; use stdenvNoCC for pure Go packages.
       isCgo = pkg.isCgo or false;
@@ -784,10 +788,13 @@ let
         minfo = moduleInfo.${pkg.modKey};
         srcDir = if pkg.subdir == "" then minfo.dir else "${minfo.dir}/${pkg.subdir}";
 
-        # Dependencies: may reference both normal and test-only third-party packages.
-        deps = map (
-          imp: if builtins.hasAttr imp packages then packages.${imp} else testPackages.${imp}
-        ) pkg.imports;
+        # Dependencies: may reference both normal and test-only third-party
+        # packages, and local packages (see `packages` above).
+        deps =
+          map (
+            imp: if builtins.hasAttr imp packages then packages.${imp} else testPackages.${imp}
+          ) pkg.imports
+          ++ map (imp: localPackages.${imp}) (pkg.localImports or [ ]);
 
         isCgo = pkg.isCgo or false;
         cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
