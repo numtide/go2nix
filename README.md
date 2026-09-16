@@ -175,11 +175,23 @@ goEnv.buildGoApplication {
 
 ### `-trimpath`
 
-go2nix always builds the way `go build -trimpath` does. Each compile passes `-trimpath` with two rewrites: the package's source directory becomes its import path for main-module packages, or `<module>@<version>/<subdir>` for third-party packages and for sibling modules behind a filesystem `replace` (the version from the `require` line), and the build's temporary directory becomes nothing. The standard library is installed with `--trimpath`, the recorded build settings say `-trimpath=true`, and the final derivation lists its filtered source tree — and the Go toolchain, unless `allowGoReference = true` — in `disallowedReferences`, so a path that escaped the rewrite fails the build instead of dragging the source into the binary's closure. File names in stack traces and `runtime.Caller` therefore match a vanilla `-trimpath` build.
+go2nix always builds the way `go build -trimpath` does. File names in stack traces and `runtime.Caller` match a vanilla `-trimpath` build, and a path that escapes the rewrite fails the build instead of reaching the binary.
+
+<details>
+<summary>How the rewrite is done</summary>
+
+Each compile passes `-trimpath` with two rewrites: the package's source directory becomes its import path for main-module packages, or `<module>@<version>/<subdir>` for third-party packages and for sibling modules behind a filesystem `replace` (the version from the `require` line), and the build's temporary directory becomes nothing. The standard library is installed with `--trimpath`, the recorded build settings say `-trimpath=true`, and the final derivation lists its filtered source tree — and the Go toolchain, unless `allowGoReference = true` — in `disallowedReferences`, so a path that escaped the rewrite fails the build instead of dragging the source into the binary's closure.
+
+</details>
 
 ### The resolver contract
 
-`builtins.resolveGoPackages` is what the default builder is written against. It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch, cgoEnabled, goProxy, doCheck ? false, resolveHashes ? false, go ? <the toolchain baked into the plugin> }`, runs `go list -deps -json` (and a second `-test` pass under `doCheck`) with `GOFLAGS=-mod=readonly`, `GOWORK=off`, `GOENV=off` and the caller's `GOMODCACHE`, `GOPROXY` and `NETRC`, and returns:
+`builtins.resolveGoPackages` is what the default builder is written against. It is impure by nature (it runs a program and reads the module cache) and runs once per evaluation. You normally never call it yourself.
+
+<details>
+<summary>Inputs and the fields it returns</summary>
+
+It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch, cgoEnabled, goProxy, doCheck ? false, resolveHashes ? false, go ? <the toolchain baked into the plugin> }`, runs `go list -deps -json` (and a second `-test` pass under `doCheck`) with `GOFLAGS=-mod=readonly`, `GOWORK=off`, `GOENV=off` and the caller's `GOMODCACHE`, `GOPROXY` and `NETRC`, and returns:
 
 | Field | Content |
 |---|---|
@@ -192,7 +204,7 @@ go2nix always builds the way `go build -trimpath` does. Each compile passes `-tr
 | `moduleHashes` | with `resolveHashes`: NAR hash per module, for lockfile-free builds |
 | `apiLevel` | the contract's version; `builtins.go2nixApiLevel` reports the plugin's, and the builder warns when they differ |
 
-It is impure by nature (it runs a program and reads the module cache) and runs once per evaluation. You normally never call it yourself.
+</details>
 
 ### `buildGoApplicationExperimental`
 
