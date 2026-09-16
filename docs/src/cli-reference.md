@@ -28,9 +28,17 @@ Examples:
 
 ```bash
 go2nix generate .                       # write go2nix.toml in the current module
-go2nix                                  # same — generate is the default when no subcommand is given
+go2nix                                  # same — a completely bare invocation runs generate
 go2nix generate -o lock.toml ./a ./b    # merged lockfile for two modules
 ```
+
+`generate` reads each directory's `go.mod` (its `require` and `replace`
+lines, so tidy it first) and downloads every module to hash it: it needs
+`go` on `PATH` and access to your `GOPROXY`. An existing output file is used
+as a cache, so a re-run only downloads what changed. `-o` is relative to the
+current directory, not to `dir`. Only the bare `go2nix` defaults to
+`generate`; `go2nix ./dir` or `go2nix -o x.toml` is an unknown command, and
+there is no top-level `--help` (each subcommand has `-h`).
 
 See [Lockfile Format](lockfile-format.md) for the output schema.
 
@@ -46,18 +54,30 @@ go2nix check [flags] [dir]
 |------|---------|-------------|
 | `--lockfile` | `go2nix.toml` | Path to lockfile for consistency check |
 
-Verifies that all `go.mod` requirements are present in the lockfile with
-correct versions.
+Verifies that every `go.mod` requirement (filesystem replaces aside) has a
+`path@version` entry in the lockfile's `[mod]`. It does not recompute hashes,
+look at `[replace]`, or complain about entries that are no longer needed.
+It prints nothing and exits 0 on success; on failure it exits 1 with
+`check failed` and the missing modules. Notes: flags go before `dir`
+(`go2nix check --lockfile x.toml dir`), only one directory is taken, the
+default `--lockfile` is relative to the current directory, and a lockfile
+that does not exist reads as an empty one, so every module is reported
+missing.
 
-## Internal commands (invoked by the Nix builders)
+## Internal commands
 
-You won't run these directly; they are documented for debugging build
-failures.
+`compile-package`, `link-binary`, `test-packages` and `resolve` are what the
+derivations run. `list-files`, `list-packages`, `build-modinfo` and
+`generate-test-main` are not called by anything: they are inspection tools
+that show what the builders see. You won't normally run any of these; they
+are documented for debugging build failures.
 
 ### compile-package
 
-Compile a single Go package to an archive (`.a` file). Used internally by
-the default mode's setup hooks.
+Compile a single Go package to an archive (`.a` file). Every per-package
+derivation runs it, in both modes: directly from the raw builder for pure-Go
+packages, through the `compile-go-pkg.sh` hook for cgo ones, and from the
+derivations `go2nix resolve` registers in experimental mode.
 
 ```
 go2nix compile-package --manifest FILE --import-path PATH --src-dir DIR --output FILE [flags]
@@ -71,9 +91,11 @@ go2nix compile-package --manifest FILE --import-path PATH --src-dir DIR --output
 | `--output` | Yes | Output `.a` archive path |
 | `--iface-output` | No | Write export-data-only interface (`.x`) to this path; `--output` then receives the link object via `-linkobj` |
 | `--importcfg-output` | No | Write importcfg entry for consumers to this path |
-| `--trim-path` | No | Path prefix to trim |
+| `--trim-path` | No | Path prefix to trim (default: `$NIX_BUILD_TOP`) |
 | `--p` | No | Override `-p` flag (default: import-path) |
-| `--go-version` | No | Go language version for `-lang` |
+| `--go-version` | No | Go language version for `-lang` (default: read from `go.mod`) |
+| `--module-path` | No | Owning module's path; with `--module-version`, source paths are rewritten to `<module>@<version>/...` as `go build -trimpath` does |
+| `--module-version` | No | Owning module's version (from the `require` line); empty for main-module packages, which rewrite to the import path |
 
 ### list-files
 
@@ -154,6 +176,8 @@ go2nix build-modinfo [flags] <module-root>
 |------|----------|-------------|
 | `--lockfile` | Yes | Path to go2nix.toml lockfile |
 | `--go` | No | Path to go binary (default: from PATH) |
+| `--main-path` | No | Import path of the main package (default: the module path) |
+| `--main-dir` | No | Directory of the main package, read for `//go:debug` directives (default: `MODULE_ROOT`) |
 
 Outputs a `modinfo` directive for the linker's importcfg (embedding
 `debug/buildinfo` metadata), and optionally a `godebug` line with the
@@ -163,7 +187,8 @@ default GODEBUG value parsed from the module's `go.mod` (used for
 ### generate-test-main
 
 Generate a `_testmain.go` file that registers test, benchmark, fuzz, and
-example functions. Used internally by the test runner.
+example functions. Standalone: the test runner generates its mains in-process
+with the same code, nothing calls this subcommand.
 
 ```
 go2nix generate-test-main [flags]
@@ -172,14 +197,15 @@ go2nix generate-test-main [flags]
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--import-path` | Yes | Import path of the package under test |
+| `--module-path` | No | Module path of the main module |
 | `--test-files` | No | Comma-separated absolute paths to internal `_test.go` files |
 | `--xtest-files` | No | Comma-separated absolute paths to external `_test.go` files |
 | `--output` | No | Output file path (default: stdout) |
 
 ### test-packages
 
-Compile and run tests for all testable local packages in a module. Used
-internally by the default mode's check phase.
+Compile and run the tests of the local packages that are part of the build.
+Used internally by the default mode's check phase.
 
 ```
 go2nix test-packages --manifest FILE
@@ -189,8 +215,9 @@ go2nix test-packages --manifest FILE
 |------|----------|-------------|
 | `--manifest` | Yes | Path to test-manifest.json |
 
-Discovers local packages with `_test.go` files, compiles internal and
-external test archives, generates test mains, links test binaries, and
+Discovers local packages with `_test.go` files, keeps those whose archive is
+in the manifest (the `subPackages` closure plus test-only helpers; the rest
+are skipped), compiles internal and external test archives, generates test mains, links test binaries, and
 runs them. See [test-support.md](test-support.md) for details on the
 test pipeline.
 
