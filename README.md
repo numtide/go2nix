@@ -224,6 +224,10 @@ The manual is an mdBook under `docs/src`, published at <https://numtide.github.i
 
 ## How it works
 
+<img alt="The derivations of one go2nix build: module fetches (gomod) feed third-party package compiles (gopkg), which feed the compiles of your own packages (golocal), which feed the application derivation that links and runs the tests; the standard library is one derivation read by every compile, and an importcfg bundle collects the third-party entries for the link. Editing internal/web rebuilds internal/web, cmd/app and the application only." src="assets/how-it-works.svg" width="100%">
+
+Every box is a derivation and every arrow an input. The stages, in the order they happen:
+
 1. **Resolve.** While Nix evaluates, the plugin runs `go list` over `src` and hands back the package graph: a Rust core that classifies packages as third-party (fetched modules) or local (the main module and filesystem `replace` targets), and a C++ shim that registers the primop. Build tags, `GOOS`/`GOARCH` and `CGO_ENABLED` are the build's, so the file lists match what will be compiled.
 1. **Fetch.** Every module is a [fixed-output derivation](https://nix.dev/manual/nix/latest/glossary#gloss-fixed-output-derivation) that runs `go mod download` and keeps only the extracted source tree, so its hash does not depend on which proxy served it. `replace` directives with a version change where a module is fetched from, not what it is called.
 1. **Compile.** The builder maps the graph to derivations. A third-party package depends on its module's source and on the packages it imports; a local package gets a copy of only its own directory (nested packages and nested modules excluded), so editing a neighbour does not change its input. Pure-Go packages are compiled by a bare `derivation` that runs `go2nix compile-package` — no stdenv, no phases; cgo packages go through stdenv for the C compiler wrapper. Each compile reads an [importcfg](https://pkg.go.dev/cmd/compile#hdr-Command_Line) (the file that tells the compiler where each imported package's archive is) made of the standard library's and its dependencies' entries.
