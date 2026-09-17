@@ -8,6 +8,8 @@
 - [Recipes](recipes.md)
 - [Package Overrides](package-overrides.md)
 - [Test Support](test-support.md)
+- [Migrating](migrating.md)
+- [Debugging a Build](debugging.md)
 - [Troubleshooting](troubleshooting.md)
 
 # Reference

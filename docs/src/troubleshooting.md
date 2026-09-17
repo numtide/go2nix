@@ -238,6 +238,8 @@ reverse dependents. Use [bench-incremental](benchmarking.md) to measure.
 
 ## Inspecting the package graph
 
+[Debugging a Build](debugging.md) is the longer version of this section.
+
 The default-mode app derivation exposes the graph through `passthru`:
 
 ```bash
