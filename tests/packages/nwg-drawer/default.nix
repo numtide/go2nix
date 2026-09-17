@@ -1,4 +1,4 @@
-# Test: buildGoApplication (auto-selects mode) with many GTK cgo deps (15 packages using pkg-config).
+# Test: buildGoApplication (default mode) with many GTK cgo deps (15 packages using pkg-config).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;

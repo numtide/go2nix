@@ -11,7 +11,7 @@
   runCommandCC,
   lib,
   # Env vars forwarded to `go install std`. This is the only cmd/go
-  # invocation in go2nix — per-package compile and link use go tool
+  # invocation that compiles anything — per-package compile and link use go tool
   # directly, bypassing cmd/go's env-driven source selection (GOFIPS140
   # snapshot replacement, GOEXPERIMENT overlays, etc.). Settings that
   # change which stdlib sources get compiled belong here.

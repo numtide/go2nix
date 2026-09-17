@@ -1,4 +1,4 @@
-# Test: buildGoApplication (auto-selects mode) with local cgo package (xkbcommon via pkg-config).
+# Test: buildGoApplication (default mode) with local cgo package (xkbcommon via pkg-config).
 let
   pkgs = import <nixpkgs> { };
   inherit (pkgs) go;

@@ -9,7 +9,8 @@
 //!
 //! Pure Rust with no nix dependencies — the nix integration layer
 //! (`plugin/resolveGoPackages.cc`) handles primop registration and
-//! JSON ↔ nix value conversion via the nix C API.
+//! JSON ↔ nix value conversion via nix's C++ API, which is why a built
+//! plugin is tied to the nix version it was compiled against.
 
 mod module_hashes;
 mod nar;
@@ -28,7 +29,8 @@ pub extern "C" fn go2nix_api_level() -> u32 {
 ///
 /// Input JSON: `{ "go": "...", "src": "...", "tags": [], "doCheck": false, ... }`
 /// Output JSON: `{ "packages": {...}, "localPackages": {...}, "modulePath": "...",
-///   "replacements": {...}, "testPackages": {...} }`
+///   "replacements": {...}, "testPackages": {...}, ... }` — the full set of
+/// keys is `JsonOutput` in resolve.rs.
 ///
 /// Returns 0 on success, non-zero on error. Caller must free `*out` / `*err_out`
 /// with `go2nix_free_string`.

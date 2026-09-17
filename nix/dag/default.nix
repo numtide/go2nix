@@ -1,9 +1,10 @@
 # go2nix/nix/dag/default.nix — build a Go binary from source (default mode).
 #
-# Supports two modes for module hash resolution:
+# The package graph always comes from the nix plugin
+# (builtins.resolveGoPackages). Module hashes come from one of two places:
 #   1. Lockfile: pass goLock = ./go2nix.toml (hashes from checked-in file)
-#   2. Lockfile-free: omit goLock (hashes resolved at eval time from
-#      go.sum + GOMODCACHE via the nix plugin, cached on disk by h1: hash)
+#   2. Lockfile-free: omit goLock (the same plugin call also resolves hashes
+#      from go.sum + GOMODCACHE, cached on disk by h1: hash)
 #
 # Usage:
 #   # With lockfile:
@@ -69,13 +70,12 @@
   # without CA can't cut off anything (the input-addressed .x path
   # changes whenever src does).
   contentAddressed ? false,
-  # Defaults to true now that mainSrc includes sibling-replace dirs and
-  # test-only local packages get their own compile drvs — the two reasons
-  # the old (modRoot == ".") default existed. Matches buildGoModule.
+  # Matches buildGoModule.
   doCheck ? true,
   checkFlags ? [ ],
   # Extra src-relative paths (files or directories) to include in mainSrc.
-  # The post-#110 mainSrc is precise (.go + resolved //go:embed + testdata/),
+  # mainSrc holds only the files `go list` reports for the local packages,
+  # their resolved //go:embed targets and their testdata/ (see mainSrc below),
   # so a test that does os.ReadFile("../config.yaml") at runtime won't find
   # that file by default. Prefer the testdata/ convention; this is the
   # escape hatch for paths that can't easily move.
@@ -177,8 +177,7 @@ let
       "iface"
     ];
   };
-  # caOnly: CA without the iface output — for importcfg bundles.
-  # caMk: CA + iface split — for per-package compiles. Third-party packages
+  # caMk: CA + iface split — for local-package compiles. Third-party packages
   # stay input-addressed (fixed source, never rebuild — CA adds resolution
   # overhead without benefit).
   caMk = mk: attrs: mk (attrs // caAttrs // ifaceAttrs);
@@ -207,8 +206,8 @@ let
   # source + 4 no-op phases per derivation.
   #
   # Cgo packages still go through stdenv (they need cc-wrapper's env
-  # plumbing); the caMk wrapper picks rawGoCompile vs stdenv*.mkDerivation
-  # based on isCgo.
+  # plumbing); pickMk picks rawGoCompile or stdenv.mkDerivation based on
+  # isCgo.
   rawGoCompileScript = builtins.toFile "go2nix-compile.sh" ''
     set -eu
     export PATH="$goPath"
@@ -302,8 +301,9 @@ let
   # `deps` is the list of dependency derivations whose importcfg entries
   # need to be merged with stdlib's.
   # Passed as an env var (not builtins.toFile) because the manifest
-  # references store paths of other derivations. The shell hook writes
-  # it to a file before invoking go2nix.
+  # references store paths of other derivations. rawGoCompile gets it as a
+  # file through passAsFile; the cgo hook writes it to a file before invoking
+  # go2nix.
   mkCompileManifestJSON =
     {
       deps,
@@ -444,7 +444,8 @@ let
       {
         # `go` is intentionally omitted: the plugin uses the toolchain baked in
         # at its own build time. Passing "${go}/bin/go" would carry derivation
-        # context, which the plugin rejects to keep this path IFD-free.
+        # context, which the plugin would have to realise while evaluating
+        # (import from derivation); omitting it keeps this path IFD-free.
         inherit
           src
           tags
@@ -480,7 +481,8 @@ let
     else
       builtins.mapAttrs (modKey: hash: parseModEntry modKey hash) (goPackagesResult.moduleHashes or { });
 
-  # Merge: lockfile modules take precedence, plugin modules fill in the rest.
+  # Exactly one of the two is non-empty: lockfileModules with a lockfile,
+  # pluginModules without.
   allModules = pluginModules // lockfileModules;
 
   # --- Join: apply replace directives to module fetchPaths ---
@@ -527,7 +529,7 @@ let
       deps =
         map (imp: packages.${imp}) pkg.imports ++ map (imp: localPackages.${imp}) (pkg.localImports or [ ]);
 
-      # Auto-add CC for CGO packages; use stdenvNoCC for pure Go packages.
+      # Auto-add CC for CGO packages; pure Go packages use rawGoCompile.
       isCgo = pkg.isCgo or false;
       cgoBuildInputs = if isCgo then [ stdenv.cc ] else [ ];
       mkDeriv = pickMk isCgo;
@@ -691,7 +693,8 @@ let
       inherit (override) extraNativeBuildInputs extraEnv srcOverlay;
     in
     # Safety (defense-in-depth): reject paths with ".." path components.
-    # The plugin already validates via canonical()/relative(), but guard here too.
+    # The plugin already rejects directories that escape the source tree, but
+    # guard here too.
     assert
       !(builtins.any (c: c == "..") (splitString "/" relDir))
       || builtins.throw "go2nix: local package '${importPath}' has dir '${relDir}' outside source tree";
@@ -1185,7 +1188,7 @@ stdenv.mkDerivation (
     # Skip all the no-op phases. The hook sets configurePhase /
     # buildPhase / installPhase / checkPhase explicitly; the rest are
     # stdenv defaults that do nothing useful for a Go link:
-    #   patchPhase, updateAutotoolsGnuConfigScriptsPhase — no autotools
+    #   patchPhase — nothing to patch
     #   patchELF — no RPATH/RUNPATH (Go sets interpreter directly)
     #   auditTmpdir — -trimpath strips /build/ refs
     # Strip stays — it actually does work and is fast.

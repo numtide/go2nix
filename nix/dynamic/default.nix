@@ -1,8 +1,8 @@
 # go2nix/nix/dynamic/default.nix — experimental dynamic derivation builder.
 #
-# Uses recursive-nix + CA derivations + dynamic derivations to eliminate [pkg]
-# from the lockfile. Package graph is discovered at build time via `go list`,
-# then registered as CA derivations via `nix derivation add`.
+# Uses recursive-nix + CA derivations + dynamic derivations. The package graph
+# is discovered at build time via `go list`, then registered as CA derivations
+# over the nix-daemon socket (`nix derivation add` is the fallback).
 #
 # The wrapper derivation is text-mode CA: its output is a .drv file.
 # `builtins.outputOf` resolves it to the final binary at eval time.

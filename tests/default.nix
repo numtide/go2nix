@@ -1,4 +1,6 @@
-# tests/default.nix — build all tests with `nix-build tests/`
+# tests/default.nix — a selection of the package and fixture tests, for
+# `nix-build tests/`; the full set is the flake's test-fixture-* and
+# test-package-* packages.
 # Use `nix-build tests/ -A <pkg>.<mode>` for a specific mode (default, dag, dynamic).
 {
   yubikey-agent = {

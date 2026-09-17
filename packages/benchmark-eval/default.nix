@@ -23,7 +23,7 @@ let
 
   fixturePath = "${go2nixSrc}/tests/fixtures/torture-project";
 
-  # GOMODCACHE for default mode (plugin runs go list with GOPROXY=off).
+  # GOMODCACHE for default mode (the plugin's go list has no network here).
   goModules = pkgs.stdenvNoCC.mkDerivation {
     name = "benchmark-eval-gomodcache";
     outputHashMode = "recursive";

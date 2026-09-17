@@ -1,7 +1,6 @@
 # Verify godebugTable matches upstream Go toolchain.
 #
-# Replaces .github/workflows/check-godebug-table.yml.
-# Runs the same check script that compares
+# Runs the check script that compares
 # go/go2nix/pkg/buildinfo/godebug.go against
 # $GOROOT/src/internal/godebugs/table.go.
 { pkgs }:

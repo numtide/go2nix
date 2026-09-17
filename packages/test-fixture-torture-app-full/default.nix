@@ -25,8 +25,9 @@ else
     nixpkgsPath = pkgs.path;
     go2nixSrc = flake;
 
-    # Pre-populate GOMODCACHE: the plugin runs go list with GOPROXY=off,
-    # so all ~497 third-party modules must be available locally.
+    # Pre-populate GOMODCACHE: the plugin's go list runs inside this
+    # derivation's sandbox, without network, so all ~497 third-party modules
+    # must be available locally.
     goModules = pkgs.stdenvNoCC.mkDerivation {
       name = "torture-app-full-gomodcache";
       outputHashMode = "recursive";
