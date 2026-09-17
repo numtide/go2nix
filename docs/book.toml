@@ -7,3 +7,8 @@ src = "src"
 [build]
 build-dir = "book"
 create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/numtide/go2nix"
+edit-url-template = "https://github.com/numtide/go2nix/edit/main/docs/{path}"
+site-url = "/go2nix/"
