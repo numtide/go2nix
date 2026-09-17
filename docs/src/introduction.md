@@ -36,63 +36,20 @@ per-package reuse and explicit graph handling are worth the extra machinery.
 > to be loaded into your evaluator (Nix 2.34 or newer). Without it, `nix build`
 > fails with `error: attribute 'resolveGoPackages' missing`.
 
-### 1. Generate a lockfile
+[Getting Started](getting-started.md) goes from an empty directory to a built
+binary, with the output of every step. In short:
 
-```bash
-nix run github:numtide/go2nix -- generate .
-```
-
-This writes a `go2nix.toml` next to your `go.mod` — one NAR hash per module.
-It needs `go` on `PATH` to download the modules it hashes. See
-[Lockfile Format](lockfile-format.md). The lockfile is optional in default
-mode: leave `goLock` out and the hashes are derived from `go.sum` instead
-([lockfile-free builds](lockfile-format.md#lockfile-free-builds)).
-
-### 2. Add go2nix to your flake
-
-```nix
-{
-  inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    go2nix = {
-      url = "github:numtide/go2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-  };
-
-  outputs = { nixpkgs, go2nix, ... }:
-  let
-    system = "x86_64-linux";
-    pkgs = nixpkgs.legacyPackages.${system};
-    goEnv = go2nix.lib.mkGoEnv {
-      inherit (pkgs) go callPackage;
-      go2nix = go2nix.packages.${system}.go2nix;
-    };
-  in {
-    packages.${system}.default = goEnv.buildGoApplication {
-      src = ./.;
-      goLock = ./go2nix.toml;
-      pname = "my-app";
-      version = "0.1.0";
-    };
-  };
-}
-```
-
-### 3. Build
-
-Default mode needs the [Nix plugin](nix-plugin.md) loaded in the evaluator:
-
-```bash
-nix build \
-  --option plugin-files \
-  "$(nix build --no-link --print-out-paths github:numtide/go2nix#go2nix-nix-plugin)/lib/nix/plugins/libgo2nix_plugin.so"
-```
-
-For permanent setup, see [Nix Plugin → Loading the plugin](nix-plugin.md#loading-the-plugin).
+1. `nix run github:numtide/go2nix -- generate .` writes `go2nix.toml`, one
+   hash per module (optional: `goLock = null` derives them from `go.sum`).
+1. `go2nix.lib.mkGoEnv { … }` in your flake gives you a scope, and
+   `goEnv.buildGoApplication { src = ./.; goLock = ./go2nix.toml; pname = …; }`
+   describes the application.
+1. `nix build`, with the plugin loaded through `--option plugin-files` or
+   `nix.conf`.
 
 ## Where to next
 
+- [Getting Started](getting-started.md) — the first build, step by step
 - [Architecture](go2nix-architecture.md) — how the builder works
 - [Builder Modes](modes/README.md) — default vs experimental
 - [Incremental Builds](incremental-builds.md) — what gets cached
