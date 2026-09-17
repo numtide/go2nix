@@ -83,6 +83,25 @@ own. The result's `passthru` has `go`, `go2nix`, `goLock`, `packages`,
 [Troubleshooting](troubleshooting.md) for how to use them. `extraMainSrcFiles`
 entries that do not exist under `src` are an error.
 
+## What a call produces
+
+One `buildGoApplication` call evaluates to one derivation, the application,
+whose inputs are all the others:
+
+| Derivation name | How many |
+|-----------------|----------|
+| `go-stdlib-<go version>[-<hash of goEnv>]` | one per scope, shared by every build in it (see [The Scope](scope.md#stdlib)) |
+| `gomod-<module path>-<version>` | one per module the build uses |
+| `gopkg-<import path>-<module version>` | one per third-party package the build reaches |
+| `golocal-<import path>` | one per local package, and `golocal-<import path>-src` for its filtered source |
+| `<pname>-deps-importcfg`, and `<pname>-test-deps-importcfg` with `doCheck` | one each |
+| `<pname>-<version>` | the application: compiles the main packages, links, runs the tests |
+
+Characters that cannot appear in a store path are replaced (`/` by `-`, `@`
+by `_at_`, `~` by `_`). `result/bin/` holds one binary per entry of
+`subPackages`: the package at the module root is named `pname`, any other
+one after its directory (`./cmd/server` gives `bin/server`).
+
 ## `modRoot`
 
 When building one module inside a larger source tree (e.g., a monorepo), set

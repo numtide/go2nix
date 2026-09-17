@@ -5,12 +5,17 @@
 # Using go2nix
 
 - [Getting Started](getting-started.md)
-- [Builder API](builder-api.md)
 - [Package Overrides](package-overrides.md)
 - [Test Support](test-support.md)
-- [Lockfile Format](lockfile-format.md)
-- [CLI Reference](cli-reference.md)
 - [Troubleshooting](troubleshooting.md)
+
+# Reference
+
+- [Builder API](builder-api.md)
+- [The Scope](scope.md)
+- [Nix Plugin](nix-plugin.md)
+- [CLI Reference](cli-reference.md)
+- [Lockfile Format](lockfile-format.md)
 
 # How it works
 
@@ -18,7 +23,6 @@
 - [Builder Modes](modes/README.md)
   - [Default Mode](modes/default-mode.md)
   - [Experimental Mode](modes/experimental-mode.md)
-- [Nix Plugin](nix-plugin.md)
 - [Incremental Builds](incremental-builds.md)
 
 # Working on go2nix
