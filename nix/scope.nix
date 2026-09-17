@@ -1,11 +1,13 @@
 # go2nix/nix/scope.nix — base scope for Go toolchain.
 #
 # Creates a self-referential package set via lib.makeScope.
-# Provides: go, go2nix, stdlib, hooks, fetchers, helpers, buildGoApplication.
+# Provides: go, go2nix, goEnv, stdlib, hooks, fetchers, helpers,
+# buildGoApplication, buildGoApplicationExperimental.
 #
 # Two builder modes:
 #   - default:      eval-time per-package DAG (fine-grained caching)
-#   - experimental: recursive-nix + CA derivations (requires experimental nix features)
+#   - experimental: recursive-nix + CA derivations + dynamic derivations
+#                   (requires those experimental nix features)
 {
   go,
   go2nix,
@@ -73,7 +75,7 @@ lib.makeScope newScope (
     # Default builder: eval-time per-package DAG.
     inherit buildGoApplication;
 
-    # Experimental builder: recursive-nix + CA derivations.
+    # Experimental builder: recursive-nix + CA + dynamic derivations.
     buildGoApplicationExperimental = buildGoApplicationExperimental';
   }
 )

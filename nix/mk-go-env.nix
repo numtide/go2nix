@@ -1,10 +1,13 @@
 # go2nix/nix/mk-go-env.nix — creates a reusable Go toolchain scope.
 #
-# Returns a scope with:
-#   goEnv.buildGoApplication { ... }   — build a Go binary (99% of use cases)
-#   goEnv.go / go2nix / stdlib         — toolchain
-#   goEnv.hooks                        — setup hooks for compilation
-#   goEnv.fetchers                     — module fetchers
+# Returns a scope (conventionally bound to the name `goEnv`, not to be
+# confused with its `goEnv` member, the environment attrset below) with:
+#   goEnv.buildGoApplication { ... }               — build a Go binary (99% of use cases)
+#   goEnv.buildGoApplicationExperimental { ... }   — needs nixPackage
+#   goEnv.go / go2nix / stdlib                     — toolchain
+#   goEnv.hooks                                    — setup hooks for compilation
+#   goEnv.fetchers                                 — module fetchers
+#   goEnv.helpers                                  — pure functions shared by the builders
 {
   go,
   go2nix,

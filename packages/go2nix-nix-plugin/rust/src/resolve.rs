@@ -17,8 +17,9 @@ pub(crate) const DEFAULT_GO: Option<&str> = option_env!("GO2NIX_DEFAULT_GO");
 
 /// API level of the resolver output / Nix `nix/dag/default.nix` contract.
 /// Bump on any incompatible `JsonOutput` shape change; `nix/dag/default.nix`
-/// asserts equality via `builtins.go2nixApiLevel` before calling the
-/// resolver so skew surfaces with a clear message at the boundary.
+/// compares it with its own copy via `builtins.go2nixApiLevel` and warns
+/// (`lib.warn`) on a mismatch, so skew surfaces with a clear message at the
+/// boundary.
 pub const API_LEVEL: u32 = 1;
 
 // ---------------------------------------------------------------------------
@@ -151,8 +152,7 @@ struct LocalPkgData {
 /// treats these as distinct modules with their own `go` directive,
 /// `Module.Version` (the require-line version, used for `-trimpath`'s
 /// `module@version` rewrite — gc.go:271-276), and modinfo `dep`/`=>` lines
-/// (load/pkg.go:2334-2371). go2nix previously folded them into the main
-/// module, dropping all three.
+/// (load/pkg.go:2334-2371).
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct SiblingModule {
@@ -1060,7 +1060,8 @@ pub(crate) fn find_gomodcache(go_bin: &str) -> Result<std::path::PathBuf> {
 ///
 /// The first pass (`go list -deps`) discovers build-time packages.
 /// When `do_check` is set and local packages exist, a second pass
-/// (`go list -deps -test`) discovers test-only third-party dependencies.
+/// (`go list -deps -test`) discovers test-only dependencies, third-party
+/// and local.
 pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
     let go_bin = input
         .go
@@ -1177,7 +1178,6 @@ struct JsonOutput {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     module_hashes: BTreeMap<String, String>,
     /// Precomputed per-subPackage import closure (modKeys + cxx).
-    /// Replaces the Nix-side `genericClosure` walk.
     sub_package_closures: BTreeMap<String, JsonClosure>,
     /// Per-sibling module identity (require version, go directive, replace
     /// dir) keyed by module path. Threaded to per-package compile drvs for
@@ -1186,10 +1186,9 @@ struct JsonOutput {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     sibling_modules: BTreeMap<String, SiblingModule>,
     /// Transitive local-replace target dirs (src-relative, normalized).
-    /// Replaces the Nix-side go.mod readFile + regex walk.
     local_replace_dirs: Vec<String>,
-    /// All src-relative directories containing a go.mod. Replaces per-filter
-    /// `pathExists (path + "/go.mod")` syscalls.
+    /// All src-relative directories containing a go.mod, so the Nix-side
+    /// filters need no `pathExists (path + "/go.mod")` per directory.
     nested_module_roots: Vec<String>,
 }
 
@@ -1226,9 +1225,8 @@ struct JsonReplacement {
     version: String,
 }
 
-/// Per-subPackage transitive closure summary so `nix/dag` can skip its
-/// `genericClosure` walk: the modKey set (for modinfo `dep` lines) and the
-/// CXX flag (for `-extld`).
+/// Per-subPackage transitive closure summary for `nix/dag`: the modKey set
+/// (for modinfo `dep` lines) and the CXX flag (for `-extld`).
 #[derive(Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct JsonClosure {
@@ -1288,7 +1286,7 @@ fn pkg_data_to_json_pkg(
 }
 
 /// Map `["./cmd/foo", "."]` → import paths under `module_path`, matching
-/// dag.nix's `spImportPath`.
+/// `spImportPath` in nix/dag/default.nix.
 fn sub_package_import_path(module_path: &str, sp: &str) -> String {
     let clean = sp.strip_prefix("./").unwrap_or(sp);
     if sp == "." || clean.is_empty() {
@@ -1300,7 +1298,7 @@ fn sub_package_import_path(module_path: &str, sp: &str) -> String {
 
 /// BFS the import graph from each subPackage's import path, collecting the
 /// set of third-party modKeys and whether any reached package has C++/SWIG-C++
-/// sources. Mirrors dag.nix's `closureOf` + `modKeysOf` + `hasCxx`.
+/// sources.
 fn compute_sub_package_closures(
     graph: &PackageGraph,
     sub_packages: &[String],
@@ -1378,8 +1376,7 @@ fn compute_sub_package_closures(
     out
 }
 
-/// Normalize `a/b/../c` → `a/c` in pure string space (mirrors dag.nix's
-/// `normalizeRelPath`).
+/// Normalize `a/b/../c` → `a/c` in pure string space.
 fn normalize_rel(p: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     for seg in p.split('/') {
@@ -1404,7 +1401,6 @@ fn normalize_rel(p: &str) -> String {
 /// Transitively walk local-replace directives (`=> ./X` / `=> ../X`) starting
 /// from `mod_root`, returning normalized src-relative target dirs (excluding
 /// `mod_root` itself, `"."`, and any that escape `src` via `..`).
-/// Mirrors dag.nix's `replaceDirsOf` + the post-filter.
 fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
     fn parse_local_replaces(text: &str) -> Vec<String> {
         // `=>` only appears in `replace` directives; a local target is one
@@ -1484,7 +1480,7 @@ fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
 /// Descent stops at the first go.mod *strictly below* a seed (matches the
 /// `builtins.path` filter, which rejects a nested-module dir and so never
 /// recurses into it). Seeds themselves always have a go.mod and are
-/// included; the dag-side mainSrc filter exempts allowedDirs explicitly.
+/// included.
 fn find_nested_module_roots(src: &Path, starts: &[String]) -> Result<Vec<String>> {
     fn rel_of(src: &Path, p: &Path) -> String {
         let r = p.strip_prefix(src).unwrap_or(p);

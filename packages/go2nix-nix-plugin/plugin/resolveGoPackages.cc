@@ -146,9 +146,10 @@ static RegisterPrimOp rp(PrimOp {
     modules from go.sum + GOMODCACHE, enabling lockfile-free builds.
     Returns `moduleHashes` in the output (default: false)
 
-  Returns: { packages, localPackages, modulePath, goVersion, replacements,
-    testPackages, testLocalPackages (when doCheck=true and non-empty),
-    moduleHashes (when resolveHashes=true) }
+  Returns: { apiLevel, packages, localPackages, modulePath, goVersion,
+    replacements, subPackageClosures, siblingModules, localReplaceDirs,
+    nestedModuleRoots, testPackages, testLocalPackages (when doCheck=true and
+    non-empty), moduleHashes (when resolveHashes=true) }
 )",
 #ifdef NIX_PRIMOP_HAS_IMPL
     .impl = prim_resolveGoPackages,
