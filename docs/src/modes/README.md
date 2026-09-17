@@ -11,6 +11,8 @@ package graph is discovered and what that requires of your Nix setup.
 | **[Default](default-mode.md)** | `go tool compile/link` per-package | optional (module hashes) | Per-package | [go2nix-nix-plugin](../nix-plugin.md), built against the evaluating Nix (>= 2.34) |
 | **[Experimental](experimental-mode.md)** | Recursive-nix at build time | required (`[mod]` + optional `[replace]`) | Per-package | Nix >= 2.34 with `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
+<img alt="The two modes side by side. Default: builtins.resolveGoPackages runs go list during evaluation, so every per-package derivation exists before the build, which fetches, compiles, links and tests. Experimental: evaluation yields one wrapper derivation and a .target resolved with builtins.outputOf; at build time go2nix resolve runs inside recursive-nix, fetches modules, runs go list and registers one content-addressed derivation per package, then Nix builds the resulting .drv." src="../assets/modes.svg" width="100%">
+
 - **Default** (`buildGoApplication`): every *package* (not just every module)
   gets its own derivation. go2nix calls `go tool compile` and `go tool link`
   directly, bypassing `go build`. The import graph is discovered at eval time

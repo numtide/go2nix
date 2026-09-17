@@ -13,6 +13,8 @@ lockfile; `replace` directives that point at another module change where a
 module is fetched from. When a single dependency changes, only it and its
 reverse dependencies rebuild.
 
+<img alt="Default mode in two lanes. Evaluation: the optional go2nix.toml, then builtins.resolveGoPackages running go list (and a -test pass with doCheck), then the package graph, then one derivation per module, package and bundle plus the application. Build: module fetches and the standard library both feed the per-package compiles, then the importcfg bundle, then the application derivation, which links and runs the tests." src="../assets/eval-vs-build.svg" width="100%">
+
 ## Lockfile
 
 The lockfile is optional. With one, module hashes are pinned in a file you

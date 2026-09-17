@@ -21,6 +21,11 @@ want to maximize Nix store reuse. When only part of the Go package graph
 changes, go2nix reuses the rest of the graph instead of rebuilding the whole
 application derivation.
 
+<img alt="The derivations of one go2nix build: module fetches (gomod) feed third-party package compiles (gopkg), which feed the compiles of your own packages (golocal), which feed the application derivation that links and runs the tests; the standard library is one derivation read by every compile, and an importcfg bundle collects the third-party entries for the link. Editing internal/web rebuilds internal/web, cmd/app and the application only." src="assets/how-it-works.svg" width="100%">
+
+Every box above is a derivation; [Incremental Builds](incremental-builds.md)
+explains what each one is keyed on.
+
 If you just want the simplest way to package a Go program in nixpkgs,
 `buildGoModule` is still the default choice. go2nix is aimed at cases where
 per-package reuse and explicit graph handling are worth the extra machinery.
