@@ -5,6 +5,7 @@
 # Using go2nix
 
 - [Getting Started](getting-started.md)
+- [Recipes](recipes.md)
 - [Package Overrides](package-overrides.md)
 - [Test Support](test-support.md)
 - [Troubleshooting](troubleshooting.md)

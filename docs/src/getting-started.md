@@ -217,6 +217,8 @@ nothing to forget.)
 
 ## Where next
 
+- [Recipes](recipes.md): a module inside a larger repository, private
+  modules, cgo, static binaries.
 - [Builder API](builder-api.md): every attribute, tests, cross-compilation,
   private modules.
 - [Test Support](test-support.md): what `doCheck` runs.
