@@ -7,12 +7,16 @@ Technical reference for the go2nix build system.
 go2nix builds Go applications in Nix with two modes that share the same
 Go CLI and lockfile infrastructure but differ in how they create derivations.
 
-The system has two components:
+The system has three components:
 
-1. **A Go CLI** (`go2nix`) that generates lockfiles, discovers packages and
-   files, compiles packages, and validates lockfile consistency.
-1. **A Nix library** that reads lockfiles and builds Go applications using
-   one of two modes.
+1. **A Go CLI** (`go2nix`) that generates and validates lockfiles and is what
+   the derivations run: it compiles one package, links a binary, and builds
+   and runs the tests.
+1. **A Nix library** (`nix/`) that turns the package graph into derivations,
+   in one of two modes.
+1. **A Nix plugin** (`packages/go2nix-nix-plugin/`, a Rust core and a C++
+   shim) that gives the default mode its package graph at eval time. It is
+   built separately and has to be loaded into the evaluator.
 
 ## Design context
 
@@ -57,7 +61,7 @@ nix/
 ├── helpers.nix            # Shared: sanitizeName, escapeModPath, etc.
 ├── dag/                   # Default mode (eval-time DAG)
 │   ├── default.nix        #   buildGoApplication
-│   ├── fetch-go-module.nix #  FOD fetcher (GOMODCACHE layout)
+│   ├── fetch-go-module.nix #  FOD fetcher (one module's extracted source tree)
 │   └── hooks/             #   Setup hooks (compile, link, env)
 └── dynamic/               # Experimental mode (recursive-nix)
     └── default.nix        #   buildGoApplicationExperimental
@@ -67,10 +71,11 @@ nix/
 
 ```nix
 goEnv = go2nix.lib.mkGoEnv {        # == import ./nix/mk-go-env.nix inside this repo
-  inherit go go2nix;
-  inherit (pkgs) callPackage;
-  tags = [ "nethttpomithttp2" ];    # optional
-  nixPackage = pkgs.nix_234;        # optional, enables experimental mode
+  inherit (pkgs) go callPackage;
+  go2nix = go2nix.packages.${system}.go2nix;   # the CLI, not the flake
+  goEnv = { CGO_ENABLED = "0"; };              # optional, env for stdlib and every go tool call
+  netrcFile = null;                            # optional, for private modules
+  nixPackage = pkgs.nixVersions.nix_2_34;      # optional, enables experimental mode
 };
 ```
 
@@ -80,37 +85,48 @@ toolchain.
 ### Package scope: scope.nix
 
 Uses `lib.makeScope newScope` to create a self-referential package set.
-Everything within the scope shares the same Go version, build tags, and
-go2nix binary.
+Everything within the scope shares the same Go toolchain, `goEnv`, standard
+library and go2nix binary. (`mkGoEnv` also accepts `tags` and stores it on the
+scope, but neither builder reads it: build tags are the per-call `tags`
+argument.)
 
 Exposes:
 
 - `buildGoApplication` — default mode (eval-time per-package DAG)
 - `buildGoApplicationExperimental` — experimental mode (recursive-nix)
-- `go`, `go2nix`, `stdlib`, `hooks`, `fetchers`, `helpers`
+- `go`, `go2nix`, `stdlib`, `hooks`, `fetchers` (`fetchGoModule`), `helpers`,
+  and `goEnv` (the env attrset, with `GOOS`/`GOARCH` defaulted in when
+  cross-compiling)
 
 ### Shared: stdlib.nix
 
 Compiles the entire Go standard library:
 
 ```
-GODEBUG=installgoroot=all GOROOT=. go install -v --trimpath std
+GODEBUG=installgoroot=all GOROOT="$NIX_BUILD_TOP" go install -v --trimpath std
 ```
 
-Output: `$out/<pkg>.a` for each stdlib package + `$out/importcfg`. Shared by
-both modes.
+after copying the toolchain's `src`, `pkg` and `lib` there. Output:
+`$out/<pkg>.a` for each stdlib package + `$out/importcfg`. There is one such
+derivation per toolchain and scope `goEnv` (the variables are exported before
+the build and a hash of them is part of the name), shared by every build in
+the scope and by both modes.
 
 ### Shared: helpers.nix
 
 Pure Nix utility functions:
 
-- `sanitizeName` — Whitelist `[a-zA-Z0-9+-._?=]`, `/` → `-`, `~` → `_`, `@` → `_at_` for derivation names.
+- `sanitizeName` — `/` → `-`, `~` → `_`, `@` → `_at_` for derivation names, and anything longer than 160 characters is cut and given an 8-hex-digit hash suffix. The Go and Rust counterparts (`pkg/nixdrv/sanitize.go`, `resolve.rs`) additionally replace characters outside `[a-zA-Z0-9+-._?=]`; the three agree on valid import paths and must be kept in sync.
 - `removePrefix` — Substring after a known prefix.
 - `escapeModPath` — Go module case-escaping (`A` → `!a`).
+- `normalizeSubPackages` — adds the missing `./` to `subPackages` entries.
+- `goModLocalReplaceDirs`, `parseLocalReplaces` — read the filesystem `replace` targets out of a `go.mod`, for callers that build their own source filter.
 
 ## Staleness detection
 
-The lockfile is validated at generation, eval, and build time — see
+A lockfile is checked when it is generated and again at build time, by
+`link-binary`; a module the graph needs and the lockfile lacks already fails
+evaluation — see
 [Lockfile Format → Staleness detection](lockfile-format.md#staleness-detection)
 for the full table. The `go2nix check` subcommand can also be used standalone
 to verify a lockfile without building.

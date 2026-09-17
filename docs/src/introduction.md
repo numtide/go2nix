@@ -28,17 +28,20 @@ per-package reuse and explicit graph handling are worth the extra machinery.
 ## Quick start
 
 > **Heads up:** the default builder requires the go2nix [Nix plugin](nix-plugin.md)
-> to be loaded into your evaluator. Without it, `nix build` fails with
-> `error: attribute 'resolveGoPackages' missing`.
+> to be loaded into your evaluator (Nix 2.34 or newer). Without it, `nix build`
+> fails with `error: attribute 'resolveGoPackages' missing`.
 
 ### 1. Generate a lockfile
 
 ```bash
-go2nix generate .
+nix run github:numtide/go2nix -- generate .
 ```
 
 This writes a `go2nix.toml` next to your `go.mod` — one NAR hash per module.
-See [Lockfile Format](lockfile-format.md).
+It needs `go` on `PATH` to download the modules it hashes. See
+[Lockfile Format](lockfile-format.md). The lockfile is optional in default
+mode: leave `goLock` out and the hashes are derived from `go.sum` instead
+([lockfile-free builds](lockfile-format.md#lockfile-free-builds)).
 
 ### 2. Add go2nix to your flake
 

@@ -8,10 +8,14 @@ a representative project before adopting them.
 ## Running it
 
 ```bash
-nix run github:numtide/go2nix#bench-incremental -- -fixture light
+nix run .#bench-incremental -- -fixture light
 ```
 
-(or `nix run .#bench-incremental -- ...` from a checkout).
+Run it from a go2nix checkout: the harness takes the fixtures, the plugin and
+`lib.nix` from the git repository around the current directory (it calls
+`git rev-parse --show-toplevel`), so that checkout is what gets measured.
+It needs `git` and `go` on `PATH` and uses your `GOMODCACHE`; `NIXPKGS_PATH`
+selects the nixpkgs it evaluates with.
 
 The harness spins up a rooted local store
 (`NIX_REMOTE=local?root=$TMPDIR/...`), loads the
@@ -25,13 +29,14 @@ verifies that the binary links.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `-runs N` | `3` | Runs per scenario; the median is reported |
+| `-runs N` | `3` | Runs per scenario; mean ± stddev and min..max are reported |
 | `-scenario S` | `all` | One of `no_change`, `leaf`, `mid`, `deep`, `all` |
 | `-touch-mode M` | `private` | `private` edits an unexported symbol; `exported` edits an exported one |
-| `-tools L` | `nix-nocgo,nix-ca-nocgo` | Comma-separated tool variants: `nix`, `nix-ca`, `nix-nocgo`, `nix-ca-nocgo` |
+| `-tools L` | `nix-nocgo,nix-ca-nocgo` | Comma-separated tool variants: `nix`, `nix-ca`, `nix-nocgo`, `nix-ca-nocgo`, and `bazel` (torture fixture only) |
 | `-fixture F` | `light` | `light` or `torture` (see below) |
 | `-json PATH` | — | Write raw results as JSON |
 | `-assert-cascade N` | — | Fail (non-zero exit) if any tool builds more than `N` derivations on a touch scenario |
+| `-stderr-tail N` | `500` | Bytes of a failing command's stderr kept in the error message |
 
 The `nix-ca*` variants set `contentAddressed = true`; the `*-nocgo`
 variants set `CGO_ENABLED = 0`. Comparing `nix-nocgo` against
@@ -65,12 +70,19 @@ This fails if a private-symbol edit to a mid-graph package causes more than
 five derivations to rebuild — a regression check for the early-cutoff
 machinery.
 
+The repository's own CI does something else: `.github/workflows/benchmark.yml`
+runs the harness with `--json` on the base branch and on the pull request and
+compares them with `scripts/compare-benchmarks.py --threshold 20`, which
+flags a mean time more than 20% worse or any increase in derivations built.
+
 ## Other benchmarks
 
 The flake also exposes coarser-grained harnesses:
 
-- `benchmark-build` — wall-clock time for a full cold build of a fixture.
-- `benchmark-eval` — wall-clock time for a pure `nix eval` of the package
-  graph (plugin + instantiation cost).
+- `benchmark-build` — `buildGoModule` vs go2nix vs the experimental builder
+  with hyperfine, over three phases: clean build, cached rebuild, rebuild
+  after a source change.
+- `benchmark-eval` — `nix-instantiate` time of the default builder vs the
+  experimental one (plugin + instantiation cost).
 - `benchmark-build-cross-app-isolation` — verifies that two apps sharing
   third-party packages reuse each other's per-package store paths.

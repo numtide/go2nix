@@ -26,8 +26,13 @@ overrides. See the [Builder API](builder-api.md) table for the other
 
 ## What gets tested
 
-The test runner discovers all local packages (under `modRoot`) that contain
-`_test.go` files and runs their tests. Third-party packages are not tested.
+The test runner runs the tests of the local packages that are part of the
+build: the packages `subPackages` reach, including packages of sibling
+modules behind a filesystem `replace`, plus local helper packages that only
+their tests import. A package with `_test.go` files that nothing in
+`subPackages` reaches is skipped (the test binary could not be linked
+without compiling it, and nothing else asked for it). Third-party packages
+are not tested.
 
 Each testable package goes through these steps:
 
@@ -70,10 +75,15 @@ When `doCheck = true`, the [Nix plugin](nix-plugin.md) runs a second
 to discover third-party packages that are only reachable through test
 imports (e.g., `github.com/stretchr/testify`). These are built as separate
 `testPackages` derivations and included in a `testDepsImportcfg` bundle
-that is a superset of the build importcfg.
+that is a superset of the build importcfg. The same pass finds local packages
+that only tests import (an `internal/testutil`, say): they get their own
+compile derivations like any other local package, and their own tests run
+too.
 
-This means test-only dependencies don't affect the build derivation or its
-cache key — they only appear in the check phase.
+Test-only dependencies do not touch the per-package compile derivations or
+the build importcfg. The check phase, however, is part of the same
+derivation that links the binary, so bumping a test-only dependency changes
+that derivation: it relinks and re-runs the tests.
 
 ## `//go:embed` in tests
 
@@ -89,9 +99,13 @@ Embed directives in test files are supported:
 ## `extraMainSrcFiles`
 
 Tests run against a filtered copy of `src` that keeps only what the build
-needs: `.go` sources, resolved `//go:embed` targets, and every `testdata/`
-directory under a tested package. Anything else is dropped so unrelated
-edits don't invalidate the test derivation.
+needs: for every local package in the build, the files `go list` reports
+(`.go` including `_test.go`, assembly, C/C++ and header files, `.syso`),
+its resolved `//go:embed` targets and its `testdata/` directory; plus
+`go.mod`/`go.sum` at `modRoot` and at the root of each replaced sibling
+module. `srcFilter` applies on top. Anything else is dropped so unrelated
+edits don't invalidate the test derivation. (With `doCheck = false` the copy
+shrinks to the main packages.)
 
 A test that reads a file at runtime *without* `//go:embed` and *outside*
 `testdata/` — e.g. `os.ReadFile("../config.yaml")` — will not find it.
@@ -123,12 +137,14 @@ goEnv.buildGoApplication {
   goLock = ./go2nix.toml;
   pname = "my-app";
   version = "0.1.0";
-  checkFlags = [ "-v" "-count=1" ];
+  checkFlags = [ "-test.v" "-test.count=1" ];
 }
 ```
 
-These map to the standard `testing` package flags (`-v`, `-run`, `-count`,
-`-bench`, `-timeout`, etc.).
+The flags are handed to the test binary as they are, so they take the
+`testing` package's own spelling: `-test.v`, `-test.run`, `-test.count`,
+`-test.bench`, `-test.timeout`. The short forms (`-v`, `-run`) are `go test`
+rewrites and the binary rejects them.
 
 ## Limitations
 
@@ -136,5 +152,12 @@ These map to the standard `testing` package flags (`-v`, `-run`, `-count`,
 - **No per-package test caching.** All local tests re-run whenever the final
   app derivation rebuilds; go2nix does not skip individual test packages
   whose inputs are unchanged (unlike `go test`'s cache).
-- **Third-party tests are not run.** Only local packages under the module
-  root are tested.
+- **Third-party tests are not run**, and neither are local packages outside
+  the `subPackages` closure (see [What gets tested](#what-gets-tested)).
+- **The working directory is read-only.** Each test runs in its package's
+  directory inside the filtered source copy, which is a store path: a test
+  that writes next to its sources fails. Use `t.TempDir()`.
+- **No `go test` extras.** No coverage instrumentation, no `vet` pass, no
+  default 10-minute timeout, and packages are tested one after another.
+- **`ldflags` do not reach test binaries**; they are linked with the
+  importcfg only.

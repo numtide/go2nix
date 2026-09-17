@@ -23,27 +23,27 @@ derivation; any `go.sum` change re-downloads the entire vendor tree.
 ### go2nix (default mode)
 
 ```
-┌────────────┐  ┌────────────┐         ┌────────────┐
-│ module FOD │  │ module FOD │   ...   │ module FOD │   one fixed-output derivation
-└─────┬──────┘  └─────┬──────┘         └─────┬──────┘   (FOD) per go.sum entry
-      │               │                      │
-┌─────▼──────┐  ┌─────▼──────┐         ┌─────▼──────┐
-│ pkg drv    │  │ pkg drv    │   ...   │ pkg drv    │   one per Go package
-│ (.a/.x)    │  │ (.a/.x)    │         │ (.a/.x)    │   (third-party + local)
-└─────┬──────┘  └─────┬──────┘         └─────┬──────┘
-      └───────────────┴──┬───────────────────┘
-                   ┌─────▼─────┐    ┌───────────┐
-                   │ importcfg │    │ stdlib    │     stdlib is independent
-                   │ bundle    │    │ drv       │     (Go toolchain only)
-                   └─────┬─────┘    └─────┬─────┘
-                         └────────┬───────┘
-                            ┌─────▼─────┐
-                            │ app drv   │             link only
-                            │ (link)    │
-                            └───────────┘
+  module FODs                        one fixed-output derivation (FOD)
+       │                             per module@version the build uses
+       ▼
+  third-party package drvs (.a)      one per imported third-party package
+       │                  │
+       ▼                  ▼
+  local package drvs     importcfg bundle     bundle = stdlib + third-party
+  (.a; plus .x with      (one per app)        entries, no local packages
+   contentAddressed)          │
+       │                      │
+       └──────────┬───────────┘
+                  ▼
+              app drv                compiles the main package(s), links,
+                                     and runs the tests (doCheck)
+
+  stdlib drv ──► an input of every compile and of the bundle
+                 (Go toolchain + scope goEnv only)
 ```
 
-`.a` = compiled package archive; `.x` = export-data interface (see
+`.a` = compiled package archive; `.x` = export-data interface, which only
+local packages get and only with `contentAddressed = true` (see
 [Early cutoff](#early-cutoff-with-contentaddressed--true) below). The
 *importcfg* is a file that maps each import path to its compiled `.a`
 archive in the store — `go tool compile` and `go tool link` read it instead
@@ -56,12 +56,12 @@ instead of two — but almost all of them are reusable across rebuilds.
 
 | Layer | One derivation per | Cache key (informally) | Rebuilds when |
 |-------|--------------------|------------------------|---------------|
-| stdlib | Go toolchain | Go version + GOOS/GOARCH + tags | Go is bumped |
-| module FOD | `go.sum` line | module path@version + NAR hash | that module is bumped in `go.sum` |
-| third-party package | imported package | module FOD + import deps + gcflags | the module or any of its transitive deps change |
-| local package | local Go package | filtered package directory + import deps | a `.go` file in that directory or a dep changes |
-| importcfg bundle | app | the set of compiled package outputs | any package output changes |
-| app | app | importcfg bundle + main package source | anything above changes |
+| stdlib | Go toolchain and scope `goEnv` | Go version + `goEnv` (`GOOS`/`GOARCH` when cross-compiling, `CGO_ENABLED`, `GOFIPS140`, ...) | Go is bumped or `goEnv` changes |
+| module FOD | module `path@version` the build uses | module path@version + NAR hash | that module is bumped |
+| third-party package | imported package | module FOD + import deps + tags + gcflags | the module or any of its transitive deps change |
+| local package | local Go package | the package's directory (every file in it, `_test.go` and `testdata/` included, nested packages excluded) + import deps | any file in that directory or a dep changes |
+| importcfg bundle | app | the stdlib and the third-party package outputs | a third-party package output changes |
+| app | app | importcfg bundle + local package archives + the filtered source (`mainSrc`: with `doCheck`, every local package's sources, tests and `testdata/`) | anything above changes |
 
 Third-party module FODs and third-party package derivations are shared
 between every application in the flake (and across flakes, via the binary
@@ -69,11 +69,13 @@ cache). Bumping a single module re-fetches one FOD and recompiles only the
 packages that transitively import it.
 
 Local package derivations use a `builtins.path`-filtered source: only the
-package's own directory (plus its parent `go.mod`/`go.sum`, and any files
-matched by `//go:embed` patterns in that package) is hashed, so editing
+package's own directory is hashed — its whole subtree, minus nested package
+directories and nested modules, and whatever `srcFilter` rejects — so editing
 `pkg/a/a.go` does not change the input hash of the `pkg/b` derivation unless
-`b` imports `a`. Embedded assets therefore participate in the per-package
-cache key.
+`b` imports `a`. No `go.mod` comes along (the `go` directive is passed in
+separately). Everything in the directory counts, not just what gets compiled:
+embedded assets, but also `_test.go` files, `testdata/` and a README next to
+the sources participate in the package's cache key.
 
 ## Rebuild propagation
 
@@ -82,10 +84,24 @@ of that package rebuilds:
 
 1. The edited package recompiles.
 1. Each package that imports it (directly or transitively) recompiles.
-1. The importcfg bundle and the final link derivation rebuild.
+1. The final derivation rebuilds: it compiles the main package, links, and
+   runs the tests. The importcfg bundle does not: it only holds standard
+   library and third-party entries, which a local edit does not touch.
 
 Packages outside the cone keep their existing store paths and are not
 rebuilt.
+
+The same reasoning for other kinds of change:
+
+| You change | What rebuilds |
+|------------|---------------|
+| a file in a local package's directory (source, test or `testdata/`) | that package, the local packages that import it directly or transitively, and the app. With `contentAddressed = true` the dependents are skipped when the package's export data came out the same, which is always the case for a test-only edit |
+| an import between packages that already exist | the importing package and its cone. Nothing to regenerate: the lockfile pins modules, not the graph |
+| one module's version | its FOD, the packages of that module, everything that imports them, the importcfg bundle and the app |
+| a test-only dependency | its `testPackages` derivations, the test importcfg bundle and the app (relink, tests re-run) |
+| `ldflags`, `checkFlags` | the app only |
+| `tags`, `gcflags`, `pgoProfile` | every package compile (they are part of each compile manifest), then the bundle and the app. The stdlib is not affected |
+| the scope's `goEnv`, or the Go toolchain | the stdlib, and everything after it |
 
 To get a feel for how big the cone is in your project, see
 [Benchmarking](benchmarking.md).
@@ -98,10 +114,12 @@ the compiled output happens to be byte-identical.
 
 Setting `contentAddressed = true` opts into two coupled mechanisms:
 
-- **Floating-CA outputs.** Per-package and importcfg derivations become
-  content-addressed, so a rebuild that produces a byte-identical `.a`
+- **Floating-CA outputs.** Local-package derivations and the importcfg bundle
+  become content-addressed, so a rebuild that produces a byte-identical `.a`
   resolves to the same store path and short-circuits downstream rebuilds.
-- **`iface` output split.** Each per-package derivation gains a second
+  Third-party packages stay input-addressed: their source never changes, so
+  CA would only add resolution overhead.
+- **`iface` output split.** Each local-package derivation gains a second
   `iface` output containing only the export data (the `.x` file produced by
   `go tool compile -linkobj`). Downstream compiles depend on `iface`
   instead of the full `.a`, so changes to private symbols that don't alter
@@ -125,7 +143,8 @@ the input-addressed `.x` path still changes whenever `src` changes.
 go2nix trades build time for eval time. Every `nix build` evaluation:
 
 1. Calls `builtins.resolveGoPackages` (the [Nix plugin](nix-plugin.md)),
-   which runs `go list -json -deps` against your source tree.
+   which runs `go list -json -deps` against your source tree — and a second
+   `go list -deps -test` pass when `doCheck` is on, which is the default.
 1. Instantiates one derivation per package in the resulting graph.
 
 For a large application (~3,500 packages) the warm-cache `go list` step

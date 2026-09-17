@@ -8,14 +8,14 @@ package graph is discovered and what that requires of your Nix setup.
 
 | Mode | How it works | Lockfile | Caching | Requires |
 |------|-------------|----------|---------|----------|
-| **[Default](default-mode.md)** | `go tool compile/link` per-package | `[mod]` + optional `[replace]` | Per-package | [go2nix-nix-plugin](../nix-plugin.md) |
-| **[Experimental](experimental-mode.md)** | Recursive-nix at build time | `[mod]` + optional `[replace]` | Per-package | `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
+| **[Default](default-mode.md)** | `go tool compile/link` per-package | optional (module hashes) | Per-package | [go2nix-nix-plugin](../nix-plugin.md), built against the evaluating Nix (>= 2.34) |
+| **[Experimental](experimental-mode.md)** | Recursive-nix at build time | required (`[mod]` + optional `[replace]`) | Per-package | Nix >= 2.34 with `dynamic-derivations`, `ca-derivations`, `recursive-nix` |
 
 - **Default** (`buildGoApplication`): every *package* (not just every module)
   gets its own derivation. go2nix calls `go tool compile` and `go tool link`
   directly, bypassing `go build`. The import graph is discovered at eval time
   by the go2nix-nix-plugin (`builtins.resolveGoPackages`), so the lockfile
-  stays small (`[mod]` hashes plus optional `[replace]`). When one package
+  holds module hashes only, and can be left out altogether. When one package
   changes, only it and its reverse dependencies rebuild.
 
 - **Experimental** (`buildGoApplicationExperimental`): same per-package

@@ -7,7 +7,8 @@ Per-package CA derivations at build time, via recursive-nix.
 The experimental mode moves package graph discovery from Nix eval time to build
 time. A single recursive-nix wrapper derivation runs `go2nix resolve`, which
 calls `go list -json -deps` to discover the import graph, then registers one
-content-addressed (CA) derivation per package via `nix derivation add`. The
+content-addressed (CA) derivation per package with the Nix daemon (over its
+socket; `nix derivation add` is the fallback when no daemon is reachable). The
 wrapper's output is a `.drv` file; `builtins.outputOf` resolves it to the
 final binary at eval time.
 
@@ -23,6 +24,23 @@ enabled:
 ```
 extra-experimental-features = recursive-nix ca-derivations dynamic-derivations
 ```
+
+`mkGoEnv` must also be given `nixPackage` — the Nix that runs inside the
+wrapper derivation, and the one the ">= 2.34" check is made against;
+`buildGoApplicationExperimental` throws without it. The wrapper asks for the
+`recursive-nix` system feature, so the machine that builds it has to offer
+it.
+
+What this builder does not do (none of it is an error, the attributes are
+simply ignored): it runs no tests (`doCheck`, `checkFlags`), has no
+lockfile-free mode (`goLock` is required), and ignores `version`, `meta`,
+`goProxy`, `allowGoReference`, `contentAddressed`, `extraMainSrcFiles`,
+`srcFilter`, `env` and `passthru`. `CGO_ENABLED` does not default to the
+scope's `goEnv.CGO_ENABLED`, and the scope's `goEnv` reaches the standard
+library and `go2nix resolve` but not the per-package derivations. The whole
+`src` is an input of the wrapper, so any change to it re-runs
+`go2nix resolve`, even though the per-package derivations it registers are
+then reused.
 
 ## Lockfile requirements
 
@@ -49,8 +67,12 @@ source, lockfile) are captured as derivation inputs.
 
 `go2nix resolve` reads `[mod]` from the lockfile and creates fixed-output
 derivations for each module, then builds them inside the recursive-nix
-sandbox. Each FOD runs `go mod download` and produces a GOMODCACHE directory.
-The `netrcFile` option supports private module authentication.
+sandbox. Each FOD runs `go mod download` and keeps the module's extracted
+source tree, the same output as the default mode's fetcher; `go2nix resolve`
+then assembles a module cache from them. The `netrcFile` option (an argument
+of `mkGoEnv`) supports private module authentication; like any input of a
+fixed-output derivation it ends up in the store, see
+[Private modules](../builder-api.md#private-modules-netrcfile).
 
 ### 3. Package graph discovery (build time)
 
@@ -61,8 +83,7 @@ recursive-nix sandbox.
 
 ### 4. CA derivation registration (build time)
 
-For each package, `go2nix resolve` calls `nix derivation add` to register a
-content-addressed derivation that compiles one Go package to an archive
+For each package, `go2nix resolve` registers a content-addressed derivation that compiles one Go package to an archive
 (`.a` file). Dependencies between packages are expressed as derivation inputs.
 Local packages are also individual CA derivations.
 
