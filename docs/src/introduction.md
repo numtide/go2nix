@@ -51,7 +51,7 @@ binary, with the output of every step. In short:
 
 - [Getting Started](getting-started.md) — the first build, step by step
 - [Architecture](go2nix-architecture.md) — how the builder works
-- [Builder Modes](modes/README.md) — default vs experimental
+- [Builder Modes](modes/) — default vs experimental
 - [Incremental Builds](incremental-builds.md) — what gets cached
 - [Builder API](builder-api.md) — full attribute reference
 - [Troubleshooting](troubleshooting.md) — when something doesn't work

@@ -48,7 +48,7 @@ go2nix ships two builders that share the same lockfile and CLI but differ in
   using recursive-nix and content-addressed derivations. Dependency
   discovery is deferred to the build, so no plugin is required.
 
-See [Builder Modes](modes/README.md) for the full comparison, requirements,
+See [Builder Modes](modes/) for the full comparison, requirements,
 and how to choose between them.
 
 ## Nix directory layout
@@ -133,7 +133,7 @@ to verify a lockfile without building.
 
 ## Further reading
 
-- [Builder Modes](modes/README.md)
+- [Builder Modes](modes/)
 - [Nix Plugin](nix-plugin.md)
 - [Incremental Builds](incremental-builds.md)
 - [Builder API](builder-api.md)

@@ -222,6 +222,6 @@ nothing to forget.)
 - [Test Support](test-support.md): what `doCheck` runs.
 - [Package Overrides](package-overrides.md): cgo packages that need system
   libraries.
-- [Builder Modes](modes/README.md): the default builder against the
+- [Builder Modes](modes/): the default builder against the
   experimental one.
 - [Troubleshooting](troubleshooting.md): the errors above and the rest.
