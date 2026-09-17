@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The two builder modes side by side: in default mode the plugin discovers
+  the package graph while Nix evaluates, in experimental mode go2nix resolve
+  discovers it inside a recursive-nix build and registers the per-package
+  derivations there. Self-contained (system fonts), light by default, dark
+  under prefers-color-scheme: dark. Plain SVG, meant to be edited by hand.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="t d">
+  <title id="t">go2nix builder modes</title>
+  <desc id="d">Default mode: builtins.resolveGoPackages runs go list during evaluation, so every per-package derivation exists before the build, which fetches modules, compiles packages, links and runs tests. Experimental mode: evaluation yields one wrapper derivation whose target is resolved with builtins.outputOf; at build time go2nix resolve runs inside recursive-nix, fetches modules, runs go list, registers one content-addressed derivation per package and emits a .drv that Nix then builds.</desc>
+  <style>
+    .bg { fill: #ffffff; stroke: #e6ddd3; }
+    text { font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+    .title { fill: #000000; font-size: 19px; font-weight: 700; }
+    .kind { fill: #000000; font: 600 16px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .what { fill: #6b625a; font-size: 14px; }
+    .legend { fill: #303030; font-size: 15px; }
+    .node rect { fill: #ffffff; stroke: #b9aa9b; stroke-width: 1.5; }
+    .node text { fill: #4a433c; font-size: 15px; }
+    .node text.mono, text.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .lane { fill: #faf6f1; stroke: #e6ddd3; }
+    .edge { stroke: #b9aa9b; stroke-width: 1.5; fill: none; }
+    .dash { stroke: #b9aa9b; stroke-width: 1.5; stroke-dasharray: 4 4; fill: none; }
+    .node.hot rect { stroke: url(#warm); stroke-width: 2.5; }
+    .node.hot text { fill: #000000; }
+    .edge.hot { stroke: url(#warm-abs); stroke-width: 2.5; }
+    .node.cool rect { stroke-dasharray: 5 4; }
+    .pill rect { fill: #ff1063; }
+    .pill text { fill: #ffffff; font-size: 13px; font-weight: 600; }
+    .arrow { fill: #b9aa9b; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0b0b0c; stroke: #2a2622; }
+      .title, .kind { fill: #ffffff; }
+      .what { fill: #a59a90; }
+      .legend { fill: #d0d0d0; }
+      .node rect { fill: #0b0b0c; stroke: #5d544c; }
+      .node text { fill: #c9beb3; }
+      .lane { fill: #121010; stroke: #2a2622; }
+      .edge, .dash { stroke: #5d544c; }
+      .arrow { fill: #5d544c; }
+      .node.hot text { fill: #ffffff; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="warm" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff7bca"/>
+      <stop offset="0.5" stop-color="#ff1063"/>
+      <stop offset="1" stop-color="#f79224"/>
+    </linearGradient>
+    <linearGradient id="warm-abs" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1200" y2="0">
+      <stop offset="0" stop-color="#ff7bca"/>
+      <stop offset="0.5" stop-color="#ff1063"/>
+      <stop offset="1" stop-color="#f79224"/>
+    </linearGradient>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="1199" height="519" rx="14"/>
+  <text class="title" x="32" y="50">Default: buildGoApplication</text>
+  <text class="what" x="32" y="72">needs the go2nix Nix plugin loaded in the evaluator (Nix 2.34 or newer)</text>
+  <rect class="lane" x="24" y="88" width="564" height="150" rx="12"/>
+  <rect class="lane" x="24" y="276" width="564" height="190" rx="12"/>
+  <text class="kind" x="42" y="114">evaluation</text>
+  <text class="kind" x="42" y="302">build</text>
+  <g class="node hot"><rect x="42" y="130" width="280" height="62" rx="8"/><text x="182" y="156.5" text-anchor="middle">builtins.resolveGoPackages</text><text x="182" y="175.5" text-anchor="middle">runs go list: the package graph</text></g>
+  <path class="edge" d="M322 161 H353"/><path class="arrow" d="M360 161 l-9 -5 v10 z"/>
+  <g class="node"><rect x="360" y="130" width="210" height="62" rx="8"/><text x="465" y="156.5" text-anchor="middle">every derivation,</text><text x="465" y="175.5" text-anchor="middle">one per package</text></g>
+  <text class="what" x="42" y="222">the whole graph is known before anything is built, and nix can show it</text>
+  <path class="dash" d="M306 240 V268"/><path class="arrow" d="M306 275 l-5 -9 h10 z"/>
+  <g class="node"><rect x="42" y="318" width="150" height="62" rx="8"/><text x="117" y="344.5" text-anchor="middle">fetch</text><text x="117" y="363.5" text-anchor="middle">per module</text></g>
+  <path class="edge" d="M192 349 H213"/><path class="arrow" d="M220 349 l-9 -5 v10 z"/>
+  <g class="node"><rect x="220" y="318" width="170" height="62" rx="8"/><text x="305" y="344.5" text-anchor="middle">compile</text><text x="305" y="363.5" text-anchor="middle">per package</text></g>
+  <path class="edge" d="M390 349 H411"/><path class="arrow" d="M418 349 l-9 -5 v10 z"/>
+  <g class="node"><rect x="418" y="318" width="152" height="62" rx="8"/><text x="494" y="354" text-anchor="middle">link, then tests</text></g>
+  <text class="what" x="42" y="412">lockfile optional; tests, cross-compilation, srcFilter, contentAddressed</text>
+  <text class="what" x="42" y="434">evaluation is impure and pays for go list every time</text>
+  <text class="title" x="620" y="50">Experimental: buildGoApplicationExperimental</text>
+  <text class="what" x="620" y="72">needs recursive-nix, ca-derivations and dynamic-derivations (Nix 2.34 or newer)</text>
+  <rect class="lane" x="612" y="88" width="564" height="150" rx="12"/>
+  <rect class="lane" x="612" y="276" width="564" height="190" rx="12"/>
+  <text class="kind" x="630" y="114">evaluation</text>
+  <text class="kind" x="630" y="302">build</text>
+  <g class="node"><rect x="630" y="130" width="280" height="62" rx="8"/><text x="770" y="156.5" text-anchor="middle">one wrapper derivation</text><text x="770" y="175.5" text-anchor="middle">src, lockfile, toolchain as inputs</text></g>
+  <path class="edge" d="M910 161 H941"/><path class="arrow" d="M948 161 l-9 -5 v10 z"/>
+  <g class="node"><rect x="948" y="130" width="210" height="62" rx="8"/><text x="1053" y="156.5" text-anchor="middle">.target =</text><text x="1053" y="175.5" text-anchor="middle">builtins.outputOf wrapper</text></g>
+  <text class="what" x="630" y="222">evaluation is pure and cheap; the graph is not known yet</text>
+  <path class="dash" d="M894 240 V268"/><path class="arrow" d="M894 275 l-5 -9 h10 z"/>
+  <g class="node hot"><rect x="630" y="318" width="280" height="62" rx="8"/><text x="770" y="344.5" text-anchor="middle">go2nix resolve, inside recursive-nix:</text><text x="770" y="363.5" text-anchor="middle">fetch, go list, register the derivations</text></g>
+  <path class="edge" d="M910 349 H931"/><path class="arrow" d="M938 349 l-9 -5 v10 z"/>
+  <g class="node"><rect x="938" y="318" width="104" height="62" rx="8"/><text x="990" y="354" text-anchor="middle">a .drv</text></g>
+  <path class="edge" d="M1042 349 H1063"/><path class="arrow" d="M1070 349 l-9 -5 v10 z"/>
+  <g class="node"><rect x="1070" y="318" width="88" height="62" rx="8"/><text x="1114" y="344.5" text-anchor="middle">compile,</text><text x="1114" y="363.5" text-anchor="middle">link</text></g>
+  <text class="what" x="630" y="412">every package is a content-addressed derivation; lockfile required</text>
+  <text class="what" x="630" y="434">no tests, no lockfile-free builds; any change to src re-runs resolve</text>
+  <g class="node hot"><rect x="40" y="484" width="28" height="20" rx="5"/></g>
+  <text class="legend" x="78" y="499">where the package graph is discovered</text>
+</svg>

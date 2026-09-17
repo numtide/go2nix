@@ -224,7 +224,7 @@ The manual is an mdBook under `docs/src`, published at <https://numtide.github.i
 
 ## How it works
 
-<img alt="The derivations of one go2nix build: module fetches (gomod) feed third-party package compiles (gopkg), which feed the compiles of your own packages (golocal), which feed the application derivation that links and runs the tests; the standard library is one derivation read by every compile, and an importcfg bundle collects the third-party entries for the link. Editing internal/web rebuilds internal/web, cmd/app and the application only." src="assets/how-it-works.svg" width="100%">
+<img alt="The derivations of one go2nix build: module fetches (gomod) feed third-party package compiles (gopkg), which feed the compiles of your own packages (golocal), which feed the application derivation that links and runs the tests; the standard library is one derivation read by every compile, and an importcfg bundle collects the third-party entries for the link. Editing internal/web rebuilds internal/web, cmd/app and the application only." src="docs/src/assets/how-it-works.svg" width="100%">
 
 Every box is a derivation and every arrow an input. The stages, in the order they happen:
 

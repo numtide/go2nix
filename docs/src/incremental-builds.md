@@ -22,6 +22,10 @@ derivation; any `go.sum` change re-downloads the entire vendor tree.
 
 ### go2nix (default mode)
 
+<img alt="The derivations of one go2nix build: module fetches (gomod) feed third-party package compiles (gopkg), which feed the compiles of your own packages (golocal), which feed the application derivation that links and runs the tests; the standard library is one derivation read by every compile, and an importcfg bundle collects the third-party entries for the link. Editing internal/web rebuilds internal/web, cmd/app and the application only." src="assets/how-it-works.svg" width="100%">
+
+The same thing by layer:
+
 ```
   module FODs                        one fixed-output derivation (FOD)
        │                             per module@version the build uses
@@ -125,6 +129,8 @@ Setting `contentAddressed = true` opts into two coupled mechanisms:
   instead of the full `.a`, so changes to private symbols that don't alter
   the package's exported API don't cascade. This mirrors the `.x` model
   used by Bazel's `rules_go`.
+
+<img alt="The same private edit to internal/web built twice. Input-addressed, the default: internal/web, cmd/app and the application all rebuild. With contentAddressed = true, internal/web has an archive output (.a), which changes, and an interface output (.x), which comes out byte-identical and keeps its store path; cmd/app compiles against the .x and is reused, and only the link, which needs the .a, runs again." src="assets/early-cutoff.svg" width="100%">
 
 The two are coupled by design: CA without `iface` only short-circuits
 comment-only edits, and `iface` without CA can't cut off anything because

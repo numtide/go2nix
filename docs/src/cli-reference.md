@@ -64,13 +64,14 @@ default `--lockfile` is relative to the current directory, and a lockfile
 that does not exist reads as an empty one, so every module is reported
 missing.
 
-## Internal commands
+## Commands the builders run
 
-`compile-package`, `link-binary`, `test-packages` and `resolve` are what the
-derivations run. `list-files`, `list-packages`, `build-modinfo` and
-`generate-test-main` are not called by anything: they are inspection tools
-that show what the builders see. You won't normally run any of these; they
-are documented for debugging build failures.
+`compile-package`, `link-binary` and `test-packages` are what the default
+mode's derivations run; `resolve` is what the experimental mode's wrapper
+runs (and it calls `compile-package` from the derivations it registers). You
+won't normally run these; they are documented for debugging build failures.
+The manifests they read are JSON files the Nix side writes into the build
+directory.
 
 ### compile-package
 
@@ -97,29 +98,40 @@ go2nix compile-package --manifest FILE --import-path PATH --src-dir DIR --output
 | `--module-path` | No | Owning module's path; with `--module-version`, source paths are rewritten to `<module>@<version>/...` as `go build -trimpath` does |
 | `--module-version` | No | Owning module's version (from the `require` line); empty for main-module packages, which rewrite to the import path |
 
-### list-files
+### link-binary
 
-List Go source files for a package directory, respecting build tags and
-constraints.
-
-```
-go2nix list-files [-tags=...] [-go-version=...] <package-dir>
-```
-
-Outputs JSON with categorized file lists (Go files, C files, assembly, etc.).
-
-`-go-version` sets the target Go toolchain version (e.g. `1.25`) used to
-evaluate `//go:build go1.N` constraints; defaults to `go env GOVERSION`.
-
-### list-packages
-
-List all local packages in a Go module with their import dependencies.
+Link Go application binaries. Reads a link manifest that declares all
+inputs (importcfg parts, local archives, ldflags, etc.), validates the
+lockfile, generates modinfo, compiles main packages, and invokes the
+linker. Used internally by the default mode's build phase.
 
 ```
-go2nix list-packages [-tags=...] [-go-version=...] <module-root>
+go2nix link-binary --manifest FILE --output DIR
 ```
 
-Outputs JSON with each package's import path and dependencies.
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--manifest` | Yes | Path to link-manifest.json |
+| `--output` | Yes | Output directory (binaries written to `<output>/bin/`) |
+
+### test-packages
+
+Compile and run the tests of the local packages that are part of the build.
+Used internally by the default mode's check phase.
+
+```
+go2nix test-packages --manifest FILE
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--manifest` | Yes | Path to test-manifest.json |
+
+Discovers local packages with `_test.go` files, keeps those whose archive is
+in the manifest (the `subPackages` closure plus test-only helpers; the rest
+are skipped), compiles internal and external test archives, generates test mains, links test binaries, and
+runs them. See [test-support.md](test-support.md) for details on the
+test pipeline.
 
 ### resolve
 
@@ -162,6 +174,36 @@ go2nix resolve [flags]
 This command is not intended for direct use — it is invoked by the
 experimental-mode Nix builder inside a recursive-nix build.
 
+## Inspection tools
+
+Not called by anything. They show what the builders see: which files `go`
+would pick in a directory, which packages a module has, what build
+information a binary would embed, what a generated test main looks like.
+
+### list-files
+
+List Go source files for a package directory, respecting build tags and
+constraints.
+
+```
+go2nix list-files [-tags=...] [-go-version=...] <package-dir>
+```
+
+Outputs JSON with categorized file lists (Go files, C files, assembly, etc.).
+
+`-go-version` sets the target Go toolchain version (e.g. `1.25`) used to
+evaluate `//go:build go1.N` constraints; defaults to `go env GOVERSION`.
+
+### list-packages
+
+List all local packages in a Go module with their import dependencies.
+
+```
+go2nix list-packages [-tags=...] [-go-version=...] <module-root>
+```
+
+Outputs JSON with each package's import path and dependencies.
+
 ### build-modinfo
 
 Generate a `modinfo` linker directive for embedding `debug/buildinfo`
@@ -201,38 +243,3 @@ go2nix generate-test-main [flags]
 | `--test-files` | No | Comma-separated absolute paths to internal `_test.go` files |
 | `--xtest-files` | No | Comma-separated absolute paths to external `_test.go` files |
 | `--output` | No | Output file path (default: stdout) |
-
-### test-packages
-
-Compile and run the tests of the local packages that are part of the build.
-Used internally by the default mode's check phase.
-
-```
-go2nix test-packages --manifest FILE
-```
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--manifest` | Yes | Path to test-manifest.json |
-
-Discovers local packages with `_test.go` files, keeps those whose archive is
-in the manifest (the `subPackages` closure plus test-only helpers; the rest
-are skipped), compiles internal and external test archives, generates test mains, links test binaries, and
-runs them. See [test-support.md](test-support.md) for details on the
-test pipeline.
-
-### link-binary
-
-Link Go application binaries. Reads a link manifest that declares all
-inputs (importcfg parts, local archives, ldflags, etc.), validates the
-lockfile, generates modinfo, compiles main packages, and invokes the
-linker. Used internally by the default mode's build phase.
-
-```
-go2nix link-binary --manifest FILE --output DIR
-```
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--manifest` | Yes | Path to link-manifest.json |
-| `--output` | Yes | Output directory (binaries written to `<output>/bin/`) |

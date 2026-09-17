@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  go2nix default mode: what happens while Nix evaluates and what is left for
+  the build. Top lane, left to right: the optional lockfile, the plugin's
+  builtin running go list, the package graph it returns, the derivations
+  nix/dag makes from it. Bottom lane: those derivations being built. The
+  highlighted box is the part only go2nix has. Self-contained (system fonts),
+  light by default, dark under prefers-color-scheme: dark. Plain SVG, meant to
+  be edited by hand.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="t d">
+  <title id="t">go2nix default mode: evaluation and build</title>
+  <desc id="d">While Nix evaluates, go2nix reads the optional lockfile, calls builtins.resolveGoPackages, which runs go list, and turns the returned package graph into one derivation per module, package and bundle plus the application. The build then fetches each module, compiles the standard library once, compiles each package, assembles the importcfg bundle, and in the application derivation links the binary and runs the tests.</desc>
+  <style>
+    .bg { fill: #ffffff; stroke: #e6ddd3; }
+    text { font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+    .title { fill: #000000; font-size: 19px; font-weight: 700; }
+    .kind { fill: #000000; font: 600 16px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .what { fill: #6b625a; font-size: 14px; }
+    .legend { fill: #303030; font-size: 15px; }
+    .node rect { fill: #ffffff; stroke: #b9aa9b; stroke-width: 1.5; }
+    .node text { fill: #4a433c; font-size: 15px; }
+    .node text.mono, text.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .lane { fill: #faf6f1; stroke: #e6ddd3; }
+    .edge { stroke: #b9aa9b; stroke-width: 1.5; fill: none; }
+    .dash { stroke: #b9aa9b; stroke-width: 1.5; stroke-dasharray: 4 4; fill: none; }
+    .node.hot rect { stroke: url(#warm); stroke-width: 2.5; }
+    .node.hot text { fill: #000000; }
+    .edge.hot { stroke: url(#warm-abs); stroke-width: 2.5; }
+    .node.cool rect { stroke-dasharray: 5 4; }
+    .pill rect { fill: #ff1063; }
+    .pill text { fill: #ffffff; font-size: 13px; font-weight: 600; }
+    .arrow { fill: #b9aa9b; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0b0b0c; stroke: #2a2622; }
+      .title, .kind { fill: #ffffff; }
+      .what { fill: #a59a90; }
+      .legend { fill: #d0d0d0; }
+      .node rect { fill: #0b0b0c; stroke: #5d544c; }
+      .node text { fill: #c9beb3; }
+      .lane { fill: #121010; stroke: #2a2622; }
+      .edge, .dash { stroke: #5d544c; }
+      .arrow { fill: #5d544c; }
+      .node.hot text { fill: #ffffff; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="warm" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff7bca"/>
+      <stop offset="0.5" stop-color="#ff1063"/>
+      <stop offset="1" stop-color="#f79224"/>
+    </linearGradient>
+    <linearGradient id="warm-abs" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1200" y2="0">
+      <stop offset="0" stop-color="#ff7bca"/>
+      <stop offset="0.5" stop-color="#ff1063"/>
+      <stop offset="1" stop-color="#f79224"/>
+    </linearGradient>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="1199" height="519" rx="14"/>
+  <rect class="lane" x="24" y="56" width="1152" height="164" rx="12"/>
+  <rect class="lane" x="24" y="272" width="1152" height="224" rx="12"/>
+  <text class="title" x="44" y="86">Evaluation</text>
+  <text class="what" x="150" y="86">runs on every nix build or nix eval, inside the evaluator, never cached</text>
+  <text class="title" x="44" y="302">Build</text>
+  <text class="what" x="102" y="302">sandboxed, in parallel as far as the graph allows, each derivation cached in the store or a binary cache</text>
+  <g class="node"><rect x="44" y="106" width="210" height="62" rx="8"/><text x="149" y="132.5" text-anchor="middle">go2nix.toml</text><text x="149" y="151.5" text-anchor="middle">module hashes (optional)</text></g>
+  <g class="node hot"><rect x="290" y="106" width="330" height="62" rx="8"/><text x="455" y="132.5" text-anchor="middle">builtins.resolveGoPackages</text><text x="455" y="151.5" text-anchor="middle">go list -deps, and -test with doCheck</text></g>
+  <g class="node"><rect x="656" y="106" width="190" height="62" rx="8"/><text x="751" y="132.5" text-anchor="middle">the package graph</text><text x="751" y="151.5" text-anchor="middle">files, imports, modules</text></g>
+  <g class="node"><rect x="882" y="106" width="274" height="62" rx="8"/><text x="1019" y="132.5" text-anchor="middle">one derivation per module,</text><text x="1019" y="151.5" text-anchor="middle">package and bundle, plus the app</text></g>
+  <path class="edge" d="M254 137 H283"/><path class="arrow" d="M290 137 l-9 -5 v10 z"/>
+  <path class="edge" d="M620 137 H649"/><path class="arrow" d="M656 137 l-9 -5 v10 z"/>
+  <path class="edge" d="M846 137 H875"/><path class="arrow" d="M882 137 l-9 -5 v10 z"/>
+  <text class="what" x="290" y="196">impure: it runs go from the plugin and reads the Go module cache. This is the floor on every rebuild.</text>
+  <path class="dash" d="M1019 168 V265"/><path class="arrow" d="M1019 272 l-5 -9 h10 z"/>
+  <text class="what" x="1031" y="252">.drv files</text>
+  <g class="node"><rect x="44" y="322" width="210" height="54" rx="8"/><text x="149" y="344.5" text-anchor="middle">fetch each module</text><text x="149" y="363.5" text-anchor="middle">go mod download (FOD)</text></g>
+  <g class="node"><rect x="44" y="390" width="210" height="54" rx="8"/><text x="149" y="412.5" text-anchor="middle">standard library</text><text x="149" y="431.5" text-anchor="middle">go install std, once</text></g>
+  <g class="node"><rect x="316" y="352" width="236" height="62" rx="8"/><text x="434" y="378.5" text-anchor="middle">compile each package</text><text x="434" y="397.5" text-anchor="middle">go2nix compile-package</text></g>
+  <path class="edge" d="M254 349 C285 349 285 375 316 375"/>
+  <path class="edge" d="M254 417 C285 417 285 391 316 391"/>
+  <path class="edge" d="M552 383 H601"/><path class="arrow" d="M608 383 l-9 -5 v10 z"/>
+  <g class="node"><rect x="608" y="352" width="160" height="62" rx="8"/><text x="688" y="378.5" text-anchor="middle">importcfg bundle</text><text x="688" y="397.5" text-anchor="middle">stdlib + third-party</text></g>
+  <path class="edge" d="M768 383 H823"/><path class="arrow" d="M830 383 l-9 -5 v10 z"/>
+  <g class="node"><rect x="830" y="352" width="150" height="62" rx="8"/><text x="905" y="378.5" text-anchor="middle">link</text><text x="905" y="397.5" text-anchor="middle">go2nix link-binary</text></g>
+  <path class="edge" d="M980 383 H999"/><path class="arrow" d="M1006 383 l-9 -5 v10 z"/>
+  <g class="node"><rect x="1006" y="352" width="140" height="62" rx="8"/><text x="1076" y="378.5" text-anchor="middle">tests</text><text x="1076" y="397.5" text-anchor="middle">with doCheck</text></g>
+  <rect class="dash" x="820" y="342" width="336" height="82" rx="10"/>
+  <text class="what" x="988" y="446" text-anchor="middle">one derivation: the application</text>
+  <text class="what" x="316" y="446">a package whose inputs did not change is not compiled again</text>
+  <text class="what" x="44" y="474">nothing here looks at the graph: each derivation compiles exactly what its inputs say</text>
+</svg>

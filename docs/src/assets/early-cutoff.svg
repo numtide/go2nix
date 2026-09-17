@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The same edit to an unexported symbol of internal/web, built twice. Left:
+  the default, where every dependent recompiles. Right: contentAddressed =
+  true, where local packages have an archive (.a) and an interface (.x)
+  output; dependents compile against the .x, which did not change, so they
+  are reused and only the link, which needs the .a, runs again.
+  Self-contained (system fonts), light by default, dark under
+  prefers-color-scheme: dark. Plain SVG, meant to be edited by hand.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="484" viewBox="0 0 1200 484" role="img" aria-labelledby="t d">
+  <title id="t">Early cutoff with contentAddressed</title>
+  <desc id="d">Two builds after the same private edit to internal/web. Input-addressed: internal/web, cmd/app and the application all rebuild. With contentAddressed = true, internal/web's archive changes but its export-data interface is byte-identical, so cmd/app, which compiles against the interface, is reused; only internal/web and the final link run.</desc>
+  <style>
+    .bg { fill: #ffffff; stroke: #e6ddd3; }
+    text { font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+    .title { fill: #000000; font-size: 19px; font-weight: 700; }
+    .kind { fill: #000000; font: 600 16px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .what { fill: #6b625a; font-size: 14px; }
+    .legend { fill: #303030; font-size: 15px; }
+    .node rect { fill: #ffffff; stroke: #b9aa9b; stroke-width: 1.5; }
+    .node text { fill: #4a433c; font-size: 15px; }
+    .node text.mono, text.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .lane { fill: #faf6f1; stroke: #e6ddd3; }
+    .edge { stroke: #b9aa9b; stroke-width: 1.5; fill: none; }
+    .dash { stroke: #b9aa9b; stroke-width: 1.5; stroke-dasharray: 4 4; fill: none; }
+    .node.hot rect { stroke: url(#warm); stroke-width: 2.5; }
+    .node.hot text { fill: #000000; }
+    .edge.hot { stroke: url(#warm-abs); stroke-width: 2.5; }
+    .node.cool rect { stroke-dasharray: 5 4; }
+    .pill rect { fill: #ff1063; }
+    .pill text { fill: #ffffff; font-size: 13px; font-weight: 600; }
+    .arrow { fill: #b9aa9b; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0b0b0c; stroke: #2a2622; }
+      .title, .kind { fill: #ffffff; }
+      .what { fill: #a59a90; }
+      .legend { fill: #d0d0d0; }
+      .node rect { fill: #0b0b0c; stroke: #5d544c; }
+      .node text { fill: #c9beb3; }
+      .lane { fill: #121010; stroke: #2a2622; }
+      .edge, .dash { stroke: #5d544c; }
+      .arrow { fill: #5d544c; }
+      .node.hot text { fill: #ffffff; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="warm" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff7bca"/>
+      <stop offset="0.5" stop-color="#ff1063"/>
+      <stop offset="1" stop-color="#f79224"/>
+    </linearGradient>
+    <linearGradient id="warm-abs" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1200" y2="0">
+      <stop offset="0" stop-color="#ff7bca"/>
+      <stop offset="0.5" stop-color="#ff1063"/>
+      <stop offset="1" stop-color="#f79224"/>
+    </linearGradient>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="1199" height="483" rx="14"/>
+  <rect class="lane" x="24" y="56" width="564" height="344" rx="12"/>
+  <text class="title" x="44" y="88">Input-addressed (the default)</text>
+  <text class="what" x="44" y="110">a package's store path is a function of its inputs</text>
+  <path class="edge" d="M220 170 C253 170 253 214 286 214"/>
+  <path class="edge hot" d="M220 258 C253 258 253 222 286 222"/>
+  <path class="edge hot" d="M416 218 C440 218 440 218 464 218"/>
+  <g class="node"><rect x="60" y="150" width="160" height="40" rx="8"/><text class="mono" x="140" y="175" text-anchor="middle">internal/db</text></g>
+  <g class="node hot"><rect x="60" y="238" width="160" height="40" rx="8"/><text class="mono" x="140" y="263" text-anchor="middle">internal/web</text></g>
+  <g class="node hot"><rect x="286" y="198" width="130" height="40" rx="8"/><text class="mono" x="351" y="223" text-anchor="middle">cmd/app</text></g>
+  <g class="node hot"><rect x="464" y="198" width="96" height="40" rx="8"/><text class="mono" x="512" y="223" text-anchor="middle">app</text></g>
+  <g class="pill"><rect x="78" y="286" width="124" height="24" rx="12"/><text x="140" y="303" text-anchor="middle">private edit</text></g>
+  <text class="what" x="44" y="360">internal/web gets a new path, so cmd/app sees a new input and recompiles,</text>
+  <text class="what" x="44" y="380">even though nothing it can see of internal/web changed.</text>
+  <rect class="lane" x="612" y="56" width="564" height="344" rx="12"/>
+  <text class="title" x="632" y="88">contentAddressed = true</text>
+  <text class="what" x="632" y="110">local packages get two outputs, addressed by their content</text>
+  <g class="node"><rect x="648" y="150" width="160" height="40" rx="8"/><text class="mono" x="728" y="175" text-anchor="middle">internal/db</text></g>
+  <rect class="dash" x="640" y="226" width="176" height="78" rx="10"/>
+  <text class="what mono" x="728" y="246" text-anchor="middle">internal/web</text>
+  <g class="node hot"><rect x="650" y="254" width="74" height="40" rx="8"/><text class="mono" x="687" y="279" text-anchor="middle">.a</text></g>
+  <g class="node"><rect x="732" y="254" width="74" height="40" rx="8"/><text class="mono" x="769" y="279" text-anchor="middle">.x</text></g>
+  <g class="pill"><rect x="710" y="310" width="124" height="24" rx="12"/><text x="772" y="327" text-anchor="middle">private edit</text></g>
+  <path class="edge" d="M808 170 C845 170 845 210 882 210"/>
+  <path class="edge" d="M806 274 C844 274 844 226 882 226"/>
+  <path class="edge" d="M1012 218 C1035 218 1035 218 1058 218"/>
+  <path class="edge hot" d="M687 294 V334 Q687 354 707 354 H1086 Q1106 354 1106 334 V238"/>
+  <g class="node"><rect x="882" y="198" width="130" height="40" rx="8"/><text class="mono" x="947" y="223" text-anchor="middle">cmd/app</text></g>
+  <g class="node hot"><rect x="1058" y="198" width="96" height="40" rx="8"/><text class="mono" x="1106" y="223" text-anchor="middle">app</text></g>
+  <text class="what" x="947" y="186" text-anchor="middle">reused</text>
+  <text class="what" x="1106" y="186" text-anchor="middle">relinks</text>
+  <text class="what" x="632" y="384">the .a changed; the .x (export data) came out byte-identical, so it keeps its store path</text>
+  <g class="node hot"><rect x="40" y="428" width="28" height="20" rx="5"/></g>
+  <text class="legend" x="78" y="443">rebuilt</text>
+  <g class="node"><rect x="160" y="428" width="28" height="20" rx="5"/></g>
+  <text class="legend" x="198" y="443">reused from the store</text>
+  <text class="legend" x="400" y="443">Dependents compile against .x; the link needs every .a. Third-party packages stay input-addressed either way.</text>
+</svg>

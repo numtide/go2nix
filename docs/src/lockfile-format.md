@@ -52,7 +52,7 @@ versions.
 
 The lockfile stores only module NAR hashes; the package graph is discovered
 separately (eval-time plugin in default mode, build-time `go list` in
-experimental mode — see [Builder Modes](modes/README.md)).
+experimental mode — see [Builder Modes](modes/)).
 
 ## Monorepo support
 
