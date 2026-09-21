@@ -615,8 +615,11 @@ fn parse_test_packages(
                 // not actionable here — only fail for packages already in
                 // the build graph or a test variant of one.
                 let bare = strip_variant_suffix(&jpkg.import_path);
-                if local_paths.contains(bare)
-                    || (!jpkg.for_test.is_empty() && local_paths.contains(&jpkg.for_test))
+                // a "P.test" record can be the test main go generates for P (a real package may share the path);
+                // its errors can quote P's _test.go files, and 'go test' reports them itself
+                if !bare.ends_with(".test")
+                    && (local_paths.contains(bare)
+                        || (!jpkg.for_test.is_empty() && local_paths.contains(&jpkg.for_test)))
                 {
                     pkg_errors.push(pkg_error_text(&jpkg, err));
                 }
@@ -2767,7 +2770,10 @@ mod tests {
 
         std::fs::rename(dir.path().join("bad.go"), dir.path().join("p_test.go")).unwrap();
         let stdout = run_go_list_test(go, src, &["./...".into()], &test_opts(Some("off"))).unwrap();
-        let local: BTreeSet<String> = ["example.com/p.testkit".to_owned()].into();
+        // a local package may also be called "P.test", go's name for P's test main
+        let local = ["example.com/p.testkit", "example.com/p.testkit.test"]
+            .map(String::from)
+            .into();
         let msg = parse_test_packages(&stdout, &BTreeSet::new(), &local, &mut BTreeMap::new())
             .err()
             .unwrap()
