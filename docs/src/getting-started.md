@@ -55,10 +55,10 @@ require (
 
 One thing to watch in that file: `go mod init` wrote the version of the `go`
 you ran into the `go` line. Keep it at or below the Go of the nixpkgs you
-build with (`nix eval --raw nixpkgs#go.version`). A newer directive makes the
-evaluation-time `go list` try to download that toolchain, and it stops with
-`go: download go1.99.0 for linux/amd64: toolchain not available`. Using
-`nix shell nixpkgs#go` from the same nixpkgs for this step avoids the
+build with (`nix eval --raw nixpkgs#go.version`). With a newer directive the
+evaluation-time `go list` stops with
+`go: go.mod requires go >= 1.99.0 (running go 1.26.5; GOTOOLCHAIN=local)`.
+Using `nix shell nixpkgs#go` from the same nixpkgs for this step avoids the
 question.
 
 ## 2. Pin the modules, or don't

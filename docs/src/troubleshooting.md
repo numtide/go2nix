@@ -52,11 +52,11 @@ case below.
   not apply (`GOENV=off`). `goProxy` on the build overrides `GOPROXY`. Run
   `go mod download` in the module, or fix the proxy and credentials (see
   [Private modules](#private-modules-404-or-auth-failures-in-module-fods)).
-- `go: download go1.N for linux/amd64: toolchain not available` (or a toolchain
-  being downloaded at all): the `go` line of `go.mod` asks for a newer Go
-  than the one in your scope. Lower the directive or use a newer `go` in
-  `mkGoEnv`; `nix eval --raw nixpkgs#go.version` tells you what you have.
-- `go: errors parsing go.mod`: exactly that.
+- `go: go.mod requires go >= 1.N (running go 1.M; GOTOOLCHAIN=local)`: the
+  `go` line of `go.mod` asks for a newer Go than the one in your scope. Lower
+  the directive or use a newer `go` in `mkGoEnv`;
+  `nix eval --raw nixpkgs#go.version` tells you what you have.
+- `go.mod does not parse: N error(s), the first at line L; …`: exactly that.
 
 ## `resolveGoPackages: package errors:`
 

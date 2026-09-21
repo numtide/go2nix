@@ -32,16 +32,14 @@ builtins.resolveGoPackages {
 `goos`, `goarch` and `cgoEnabled` are strings: leave them out rather than
 passing `null`.
 
-`go` is intentionally omitted: the plugin defaults to the Go toolchain baked
-in at its own build time, so the call carries no derivation context and the
-default-mode evaluation stays IFD-free. You may pass
-`go = "/path/to/bin/go"` to override the toolchain (e.g. a `nix-shell` Go).
-A derivation-backed value like `"${pkgs.go}/bin/go"` is accepted but emits a
-warning and forces the plugin to realise the derivation at eval time — i.e.
-opt-in IFD, still gated by `allow-import-from-derivation`. The same goes
-for a derivation-backed `src`. Note that the baked-in toolchain is the
-plugin's own `pkgs.go`, which need not be the `go` you hand to `mkGoEnv`
-for compiling.
+The Go toolchain is the plugin's own `pkgs.go`, baked in when the plugin is
+built (override `pkgs.go` to use another; it need not be the `go` you hand to
+`mkGoEnv`), and it runs with `GOTOOLCHAIN=local`. A `go` attribute is
+ignored with a warning, because `go list` runs at evaluation time with the
+evaluator's privileges. A source-path `src` carries no derivation context, so
+default-mode evaluation stays IFD-free; a derivation-backed `src` is accepted
+but emits a warning and forces the plugin to realise the derivation at eval
+time — i.e. opt-in IFD, still gated by `allow-import-from-derivation`.
 
 It runs `go list -deps -json` for `subPackages` in `src/modRoot` and, when
 `doCheck` is set and the build has local packages, a second
@@ -180,9 +178,9 @@ What `go list` sees is fixed by the plugin, not by your shell. The
 environment is cleared and only `GOMODCACHE`, `GOPATH`, `HOME`, `GOPROXY`
 and `NETRC` are passed through (`goProxy` overrides `GOPROXY`), plus `PATH`,
 `TMPDIR` and the certificate variables unless `goProxy = "off"`. It then
-sets `GOFLAGS=-mod=readonly`, `GOENV=off`, `GOWORK=off` and
-`GONOSUMCHECK=*`, and `GOOS`/`GOARCH`/`CGO_ENABLED` from the arguments.
-Everything else — `GOPRIVATE`, `GONOPROXY`, `GOTOOLCHAIN`, `GOEXPERIMENT`,
+sets `GOFLAGS=-mod=readonly`, `GOENV=off`, `GOWORK=off`, `GOTOOLCHAIN=local`
+and `GONOSUMCHECK=*`, and `GOOS`/`GOARCH`/`CGO_ENABLED` from the arguments.
+Everything else — `GOPRIVATE`, `GONOPROXY`, `GOEXPERIMENT`,
 `GOFIPS140`, your own `GOFLAGS`, the scope's `goEnv` — does not reach it.
 Modules are read from `GOMODCACHE`; one that is missing is downloaded
 through `GOPROXY` if the network allows, otherwise `go list` fails and the

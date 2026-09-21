@@ -2,7 +2,7 @@
 //
 // Serializes the input attrset to JSON via printValueAsJSON, calls the
 // Rust resolve_go_packages_json(), and parses the result back via
-// parseJSON. Handles chroot store path remapping for src/go attributes.
+// parseJSON. Handles chroot store path remapping for the src attribute.
 
 #include <nix/expr/eval.hh>
 #include <nix/expr/primops.hh>
@@ -54,6 +54,10 @@ static void prim_resolveGoPackages(EvalState &state, const PosIdx pos,
     NixStringContext context;
     auto inputJson = printValueAsJSON(state, true, *args[0], pos, context, false);
 
+    // Never run a `go` the expression names: it would run as the evaluator.
+    if (inputJson.is_object() && inputJson.erase("go") > 0)
+        warn("resolveGoPackages: the 'go' attribute is ignored; the plugin's built-in Go toolchain is used");
+
     // The default-mode call site (nix/dag/default.nix) passes only source
     // paths, so this loop sees Opaque context only and evaluation stays
     // IFD-free. When a caller passes a derivation-backed value
@@ -93,10 +97,8 @@ static void prim_resolveGoPackages(EvalState &state, const PosIdx pos,
         }
     }
 
-    for (const auto &key : {"src", "go"}) {
-        if (inputJson.contains(key) && inputJson[key].is_string()) {
-            inputJson[key] = remapStorePath(*state.store, inputJson[key].get<std::string>());
-        }
+    if (inputJson.contains("src") && inputJson["src"].is_string()) {
+        inputJson["src"] = remapStorePath(*state.store, inputJson["src"].get<std::string>());
     }
 
     auto inputStr = inputJson.dump();
@@ -126,10 +128,10 @@ static RegisterPrimOp rp(PrimOp {
     .doc = R"(
   Discover the Go package graph at eval time by running `go list`.
 
+  The Go toolchain is the one baked into the plugin at build time, run
+  with GOTOOLCHAIN=local; a `go` attribute is ignored with a warning.
+
   Accepts an attrset with:
-  - `go` (optional): Path to the Go binary. Defaults to the toolchain
-    baked into the plugin at build time; omit it to keep evaluation
-    IFD-free.
   - `src`: Path to the Go source directory. Source paths (./. or
     builtins.fetchTarball/fetchGit) keep evaluation IFD-free; a
     derivation-backed value (pkgs.fetchFromGitHub) is realised at eval

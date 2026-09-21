@@ -442,10 +442,7 @@ let
   goPackagesResult = apiLevelGuard (
     builtins.resolveGoPackages (
       {
-        # `go` is intentionally omitted: the plugin uses the toolchain baked in
-        # at its own build time. Passing "${go}/bin/go" would carry derivation
-        # context, which the plugin would have to realise while evaluating
-        # (import from derivation); omitting it keeps this path IFD-free.
+        # no `go`: the plugin always runs the toolchain baked in at its build time
         inherit
           src
           tags
