@@ -98,6 +98,8 @@ struct GoPackage {
     x_test_imports: Vec<String>,
     #[serde(rename = "ForTest")]
     for_test: String,
+    #[serde(rename = "InvalidGoFiles")]
+    invalid_go_files: Vec<String>,
     #[serde(rename = "Error")]
     error: Option<GoPackageError>,
 }
@@ -113,23 +115,51 @@ struct GoPackageError {
     err: String,
 }
 
-/// A parse error in the package's own files quotes them (go/parser's "found <token>"); keep only line and column.
-fn pkg_error_text(import_path: &str, err: &GoPackageError) -> String {
+/// go quotes a file that does not parse ("expected 'package', found <word>"), and the file may be a symlink to
+/// something private. go list does not mark such an error, but it always has the file in InvalidGoFiles and the
+/// package itself on top of ImportStack. Report those by file and position only; go/build's few other complaints
+/// about a file begin with words no go/scanner or go/parser message begins with, and keep go's wording.
+fn pkg_error_text(pkg: &GoPackage, err: &GoPackageError) -> String {
+    let import_path = &pkg.import_path;
+    let verbatim = || format!("{import_path}: {}", without_modfile_text(&err.err));
     let own = err
         .import_stack
         .last()
-        .is_none_or(|p| strip_variant_suffix(p) == strip_variant_suffix(import_path));
-    // go's one other own-file error with a position is //go:embed's "pattern P: ..."; pass it on
-    if !own || err.pos.is_empty() || err.err.starts_with("pattern ") {
-        return format!("{import_path}: {}", err.err);
+        .is_some_and(|p| strip_variant_suffix(p) == strip_variant_suffix(import_path));
+    let file = match pkg.invalid_go_files.first() {
+        Some(file) if own => file,
+        _ => return verbatim(),
+    };
+    // go/build's other complaints about a file, told from a parse error by their first words (no go/scanner or
+    // go/parser message begins with these; a file name can). Pos and ImportStack cannot make the distinction: go list
+    // replaces the import stack with the package's own, shorter one when it reaches the package again by another
+    // path, and moves Pos to a //go:embed pattern it cannot resolve, wherever a //line comment in that file says.
+    const GO_BUILD: [&str; 5] = [
+        "found packages ",
+        "found import comments ",
+        "use of cgo in test ",
+        "open ",
+        "read ",
+    ];
+    let own_name = err.err.starts_with(&format!("{file}:"));
+    if !own_name && GO_BUILD.iter().any(|p| err.err.starts_with(p)) {
+        return verbatim();
     }
-    let name = err
+    // Pos is "dir/file:line:col", or whatever a //line comment made it
+    let at = err
         .pos
-        .trim_end_matches(|c: char| c.is_ascii_digit() || c == ':');
-    let at = err.pos[name.len()..].trim_start_matches(':');
-    format!(
-        "{import_path}: a source file does not parse (at {at}); run 'go vet' in the package to see the error"
-    )
+        .rsplit('/')
+        .next()
+        .and_then(|p| p.strip_prefix(file.as_str())?.strip_prefix(':'))
+        .filter(|p| p.bytes().all(|b| b.is_ascii_digit() || b == b':'));
+    match at {
+        Some(at) => {
+            format!("{import_path}: {file}:{at} does not parse; run 'gofmt -e' on it to see why")
+        }
+        None => {
+            format!("{import_path}: go cannot load {file}; run 'go vet' on the package to see why")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +472,7 @@ fn run_go_list(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,InvalidGoFiles,Error");
     cmd.arg("-deps");
     cmd.arg("-e");
     cmd.arg("-buildvcs=false");
@@ -480,30 +510,28 @@ fn run_go_list(
     Ok(output.stdout)
 }
 
-/// go reports a go.mod that does not parse by quoting from each offending line; keep only the count and first position.
-fn without_modfile_text(stderr: &str) -> String {
-    const HEADER: &str = "go: errors parsing ";
-    let Some(at) = stderr.find(HEADER) else {
-        return stderr.to_owned();
+/// go reports each error in a go.mod that does not parse as "<dir>go.mod:<line>: <text>", and <text> can quote
+/// the file: "go: errors parsing go.mod:\ngo.mod:4: unknown directive: word", or for a dependency, inside a package
+/// error, "... parsing ../d/go.mod: /abs/d/go.mod:4: usage: ...". Keep what precedes "parsing", the file name and the
+/// first line number; drop the rest.
+fn without_modfile_text(msg: &str) -> String {
+    const MOD: &str = "go.mod:";
+    // nothing is quoted before the first "go.mod:<line>:" that follows a "parsing "
+    let cut = |at: usize| {
+        let digits = msg[at..].bytes().take_while(u8::is_ascii_digit).count();
+        let p = msg[..at - MOD.len()].rfind("parsing ")?;
+        (digits > 0 && msg[at + digits..].starts_with(':')).then_some((at, p))
     };
-    let mut lines = stderr[at + HEADER.len()..].lines();
-    let file = lines.next().unwrap_or_default().trim_end_matches(':');
-    let errors: Vec<&str> = lines.collect();
-    // digits and colons only, so that nothing else on the line can come through
-    let pos: String = errors
-        .first()
-        .and_then(|l| l.strip_prefix(file)?.strip_prefix(':'))
-        .map(|l| {
-            l.chars()
-                .take_while(|c| c.is_ascii_digit() || *c == ':')
-                .collect()
-        })
-        .unwrap_or_default();
-    format!(
-        "{file} does not parse: {} error(s), the first at line {}; run 'go list' in the module directory to see them\n",
-        errors.len(),
-        pos.trim_end_matches(':')
-    )
+    let Some((at, p)) = msg.match_indices(MOD).find_map(|(i, _)| cut(i + MOD.len())) else {
+        return msg.to_owned();
+    };
+    let line = msg[at..].split(':').next().unwrap_or_default();
+    let head = &msg[..at - MOD.len()];
+    let before = head[..p].strip_suffix("errors ").unwrap_or(&head[..p]);
+    let path = &head[p + "parsing ".len()..];
+    let dir = &path[..path.find(MOD).unwrap_or(path.len())];
+    let nl = if msg.ends_with('\n') { "\n" } else { "" };
+    format!("{before}{dir}go.mod does not parse (first error on line {line}); run 'go list -m' in its directory to see why{nl}")
 }
 
 fn run_go_list_test(
@@ -514,7 +542,7 @@ fn run_go_list_test(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,TestImports,XTestImports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,ForTest,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,TestImports,XTestImports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,ForTest,InvalidGoFiles,Error");
     cmd.arg("-deps");
     cmd.arg("-test");
     cmd.arg("-e");
@@ -587,10 +615,13 @@ fn parse_test_packages(
                 // not actionable here — only fail for packages already in
                 // the build graph or a test variant of one.
                 let bare = strip_variant_suffix(&jpkg.import_path);
-                if local_paths.contains(bare)
-                    || (!jpkg.for_test.is_empty() && local_paths.contains(&jpkg.for_test))
+                // a "P.test" record can be the test main go generates for P (a real package may share the path);
+                // its errors can quote P's _test.go files, and 'go test' reports them itself
+                if !bare.ends_with(".test")
+                    && (local_paths.contains(bare)
+                        || (!jpkg.for_test.is_empty() && local_paths.contains(&jpkg.for_test)))
                 {
-                    pkg_errors.push(pkg_error_text(&jpkg.import_path, err));
+                    pkg_errors.push(pkg_error_text(&jpkg, err));
                 }
                 continue;
             }
@@ -892,7 +923,7 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
 
         if let Some(ref err) = jpkg.error {
             if !err.err.is_empty() {
-                pkg_errors.push(pkg_error_text(&jpkg.import_path, err));
+                pkg_errors.push(pkg_error_text(&jpkg, err));
                 continue;
             }
         }
@@ -2022,22 +2053,67 @@ mod tests {
 
     #[test]
     fn source_parse_errors_are_not_quoted() {
-        let input = r#"{"ImportPath":"m","Error":{"ImportStack":["m"],"Pos":"x.go:1:1","Err":"expected 'package', found SECRET"}}
-{"ImportPath":"m/dep","Error":{"ImportStack":["m"],"Pos":"x.go:3:8","Err":"cannot find module providing package m/dep"}}
-{"ImportPath":"m/e","Error":{"ImportStack":["m","m/e"],"Pos":"e/e.go:5:12","Err":"pattern assets/*: no matching files found"}}"#;
+        // records shaped like go 1.26 'go list -e -json' output; some Pos and names forged the way a source tree can
+        let input = r#"{"ImportPath":"m","Dir":"/s","InvalidGoFiles":["main.go"],"Error":{"ImportStack":["m"],"Pos":"main.go:1:1","Err":"expected 'package', found SECRET"}}
+{"ImportPath":"m/sub","Dir":"/s/sub","InvalidGoFiles":["sub.go"],"Error":{"ImportStack":["m","m/sub"],"Pos":"sub/sub.go:4:14","Err":"expected 'IDENT', found \"open sesame SECRET\""}}
+{"ImportPath":"m/e5","Dir":"/s/e5","InvalidGoFiles":["bad.go"],"Error":{"ImportStack":["m","m/e5"],"Pos":"main.go:3:8","Err":"expected 'package', found SECRET"}}
+{"ImportPath":"m/lf","Dir":"/s/lf","GoFiles":["a.go","bad.go"],"InvalidGoFiles":["bad.go"],"EmbedPatterns":["nothere.txt"],"Error":{"ImportStack":["m","m/lf"],"Pos":"zzfake.txt:77","Err":"expected 'package', found SECRET"}}
+{"ImportPath":"m/tw","Dir":"/s/tw","InvalidGoFiles":["a.go","c.go"],"Error":{"ImportStack":["m","m/tw"],"Pos":"tw/a.go:1:1","Err":"expected 'package', found SECRET"}}
+{"ImportPath":"m/g","Dir":"/s/g","InvalidGoFiles":["g.go"],"Error":{"ImportStack":["m","m/g"],"Pos":"g/g.go:SECRET:7","Err":"missing import path"}}
+{"ImportPath":"m/c","Dir":"/s/c","InvalidGoFiles":["a_test.go"],"Error":{"ImportStack":["m","m/c"],"Pos":"deep/deep.go:3:8","Err":"readme.go: invalid #cgo line: #cgo !"}}
+{"ImportPath":"m/i","Dir":"/s/i","Error":{"ImportStack":["m","m/i"],"Pos":"i/i.go:3:8","Err":"use of internal package net/http/internal not allowed"}}
+{"ImportPath":"m/ct","Dir":"/s/ct","InvalidGoFiles":["ct_test.go"],"Error":{"ImportStack":["m"],"Pos":"main.go:7:8","Err":"ct_test.go: cgo in a test"}}
+{"ImportPath":"m/e","Dir":"/s/e","Error":{"ImportStack":["m","m/e"],"Pos":"e/e.go:5:12","Err":"pattern assets/*: no matching files found"}}
+{"ImportPath":"m/two","Dir":"/s/two","InvalidGoFiles":["b.go"],"Error":{"ImportStack":[],"Pos":"two/a.go:5:12","Err":"b.go: two package names"}}
+{"ImportPath":"m/x","Dir":"/s/x","InvalidGoFiles":["b.go"],"Error":{"ImportStack":["m","m/x"],"Pos":"deep/deep.go:3:8","Err":"found packages x (a.go) and b (b.go) in /s/x"}}
+{"ImportPath":"m/sh","Dir":"/s/sh","GoFiles":["shared.go"],"InvalidGoFiles":["shared.go"],"Error":{"ImportStack":["m","m/sh"],"Pos":"deep/shared.go:3:8","Err":"found packages other (b.go) and sh (shared.go) in /s/sh"}}
+{"ImportPath":"m/ic","Dir":"/s/ic","InvalidGoFiles":["b.go"],"Error":{"ImportStack":["m","m/ic"],"Pos":"deep/deep.go:3:8","Err":"found import comments \"p\" (a.go) and \"q\" (b.go) in /s/ic"}}
+{"ImportPath":"m/y","Dir":"/s/y","InvalidGoFiles":["y_test.go"],"Error":{"ImportStack":["m","m/y"],"Pos":"deep/deep.go:4:8","Err":"use of cgo in test y_test.go not supported"}}
+{"ImportPath":"m/o","Dir":"/s/o","InvalidGoFiles":["gone.go"],"Error":{"ImportStack":["m","m/o"],"Pos":"deep/deep.go:5:8","Err":"open /s/o/gone.go: no such file or directory"}}
+{"ImportPath":"m/om","Dir":"/s/om","InvalidGoFiles":["open me.go"],"Error":{"ImportStack":["m","m/om"],"Pos":"deep/deep.go:6:8","Err":"open me.go: invalid #cgo verb: #cgo X"}}
+{"ImportPath":"m/n","Dir":"/s/n","InvalidGoFiles":["nul.go"],"Error":{"ImportStack":["m","m/n"],"Pos":"deep/deep.go:6:8","Err":"read /s/n/nul.go: unexpected NUL in input"}}
+{"ImportPath":"x.org/r","Error":{"ImportStack":["m"],"Pos":"main.go:6:8","Err":"module ../r: parsing ../r/go.mod: /s/r/go.mod:3: invalid go version 'SECRET': must match format 1.23.0\n/s/r/go.mod:4: usage: require module/path v1.2.3"}}"#;
         let msg = format!("{}", parse_go_packages(input.as_bytes()).err().unwrap());
-        assert!(!msg.contains("SECRET") && !msg.contains("x.go:1"), "{msg}");
-        assert!(msg.contains("m: a source file does not parse (at 1:1)"), "{msg}");
-        assert!(msg.contains("m/dep: cannot find module providing package m/dep"));
-        assert!(msg.contains("m/e: pattern assets/*: no matching files found"));
-        let variant = GoPackageError {
+        assert!(!msg.contains("SECRET"), "{msg}");
+        for want in [
+            "- m: main.go:1:1 does not parse; run 'gofmt -e' on it to see why\n",
+            "- m/sub: sub.go:4:14 does not parse;",
+            // Pos moved by go to a failing //go:embed in another file, as is or under a //line comment
+            "- m/e5: go cannot load bad.go; run 'go vet' on the package to see why\n",
+            "- m/lf: go cannot load bad.go;",
+            "- m/tw: a.go:1:1 does not parse;",
+            "- m/g: go cannot load g.go;",
+            // import stack cut down to the package, Pos in the importer: go/build's five openings or not
+            "- m/x: found packages x (a.go) and b (b.go) in /s/x\n",
+            "- m/sh: found packages other (b.go) and sh (shared.go) in /s/sh\n",
+            "- m/ic: found import comments \"p\" (a.go) and \"q\" (b.go) in /s/ic\n",
+            "- m/y: use of cgo in test y_test.go not supported\n",
+            "- m/o: open /s/o/gone.go: no such file or directory\n",
+            "- m/n: read /s/n/nul.go: unexpected NUL in input\n",
+            "- m/c: go cannot load a_test.go;",
+            "- m/om: go cannot load open me.go;",
+            // importer on top of ImportStack, or a root package's empty stack
+            "- m/i: use of internal package net/http/internal not allowed\n",
+            "- m/ct: ct_test.go: cgo in a test\n",
+            "- m/e: pattern assets/*: no matching files found\n",
+            "- m/two: b.go: two package names\n",
+            "- x.org/r: module ../r: ../r/go.mod does not parse (first error on line 3); run 'go list -m' in its directory to see why\n",
+        ] {
+            assert!(msg.contains(want), "{want}\n--- not in ---\n{msg}");
+        }
+        let variant = GoPackage {
+            import_path: "m [m.test]".into(),
+            invalid_go_files: vec!["x_test.go".into()],
+            ..Default::default()
+        };
+        let err = GoPackageError {
             import_stack: vec!["m".into()],
             pos: "x_test.go:2:9".into(),
             err: "expected 'package', found SECRET".into(),
         };
         assert_eq!(
-            pkg_error_text("m [m.test]", &variant),
-            "m [m.test]: a source file does not parse (at 2:9); run 'go vet' in the package to see the error"
+            pkg_error_text(&variant, &err),
+            "m [m.test]: x_test.go:2:9 does not parse; run 'gofmt -e' on it to see why"
         );
     }
 
@@ -2500,18 +2576,32 @@ mod tests {
 
     #[test]
     fn modfile_errors_are_not_quoted() {
-        let out = without_modfile_text(
-            "go: errors parsing ../go.mod:\n../go.mod:2:5: unknown directive: SECRET1\n../go.mod:3: usage: go 1.23\n",
-        );
-        assert!(!out.contains("SECRET"), "{out}");
-        assert!(
-            out.contains("../go.mod does not parse: 2 error(s), the first at line 2:5;"),
-            "{out}"
+        assert_eq!(
+            without_modfile_text(
+                "go: errors parsing ../go.mod:\n../go.mod:2:5: unknown directive: SECRET1\n../go.mod:3: usage: go 1.23\n"
+            ),
+            "go: ../go.mod does not parse (first error on line 2); run 'go list -m' in its directory to see why\n"
         );
         assert_eq!(
-            without_modfile_text("go: no such module\n"),
-            "go: no such module\n"
+            without_modfile_text("go: parsing $GOFLAGS: unknown flag -x\ngo: errors parsing go.mod:\ngo.mod:7: unknown directive: SECRET\n"),
+            "go: parsing $GOFLAGS: unknown flag -x\ngo: go.mod does not parse (first error on line 7); run 'go list -m' in its directory to see why\n"
         );
+        assert_eq!(
+            without_modfile_text("module ../d.go.mod: parsing ../d.go.mod/go.mod: /s/d.go.mod/go.mod:3: usage: go SECRET"),
+            "module ../d.go.mod: ../d.go.mod/go.mod does not parse (first error on line 3); run 'go list -m' in its directory to see why"
+        );
+        assert_eq!(
+            without_modfile_text("module ./go.mod:1:x: parsing go.mod:1:x/go.mod: /s/go.mod:1:x/go.mod:3: usage: go SECRET"),
+            "module ./go.mod:1:x: go.mod does not parse (first error on line 1); run 'go list -m' in its directory to see why"
+        );
+        for verbatim in [
+            "go: no such module\n",
+            "go: error loading go.mod:\ngo.mod:4: unknown godebug \"httpmuxgo121x\"\n",
+            "x.org/d@v1.0.0: parsing go.mod: missing module line",
+            "x.org/d@v1.0.0: parsing go.mod:\n\tmodule declares its path as: x.org/e\n\t        but was required as: x.org/d",
+        ] {
+            assert_eq!(without_modfile_text(verbatim), verbatim);
+        }
     }
 
     #[test]
@@ -2657,6 +2747,39 @@ mod tests {
         assert_eq!(f.m_files, vec!["x.m"], "MFiles missing from go list output");
         assert_eq!(f.swig_files, vec!["x.swig"], "SwigFiles missing");
         assert_eq!(f.swig_cxx_files, vec!["x.swigcxx"], "SwigCXXFiles missing");
+    }
+
+    #[test]
+    fn run_go_list_does_not_quote_a_file_that_does_not_parse() {
+        let Some(go) = DEFAULT_GO else {
+            eprintln!("skip: GO2NIX_DEFAULT_GO unset at build time");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module example.com/p.testkit\n").unwrap();
+        std::fs::write(dir.path().join("p.go"), "package p\n").unwrap();
+        std::fs::write(dir.path().join("bad.go"), "SECRET tokens\n").unwrap();
+        let stdout = run_go_list(go, src, &["./...".into()], &test_opts(Some("off"))).unwrap();
+        let msg = parse_go_packages(&stdout).err().unwrap().to_string();
+        assert!(
+            msg.contains("p.testkit: bad.go:1:1 does not parse;"),
+            "{msg}"
+        );
+        assert!(!msg.contains("SECRET"), "{msg}");
+
+        std::fs::rename(dir.path().join("bad.go"), dir.path().join("p_test.go")).unwrap();
+        let stdout = run_go_list_test(go, src, &["./...".into()], &test_opts(Some("off"))).unwrap();
+        // a local package may also be called "P.test", go's name for P's test main
+        let local = ["example.com/p.testkit", "example.com/p.testkit.test"]
+            .map(String::from)
+            .into();
+        let msg = parse_test_packages(&stdout, &BTreeSet::new(), &local, &mut BTreeMap::new())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(msg.contains("p_test.go:1:1 does not parse;"), "{msg}");
+        assert!(!msg.contains("SECRET"), "{msg}");
     }
 
     // --- Tier-3 offload: closures ---
