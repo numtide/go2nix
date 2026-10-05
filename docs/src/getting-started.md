@@ -93,8 +93,9 @@ One hash per module, nothing about packages. Commit it next to `go.mod`.
 
 The lockfile is optional in default mode. With `goLock = null` the plugin
 reads `go.sum` and computes the same hashes while Nix evaluates, caching them
-under `~/.cache/go2nix/nar/`. The derivations come out identical either way:
-building this module both ways fetched and compiled every dependency once.
+under `~/.cache/go2nix/nar/`. Every fetch and compile comes out as the same
+derivation either way: building this module both ways fetched and compiled
+every dependency once, and only the final link ran twice.
 What the lockfile adds is a list of hashes that lives in the repository and
 is reviewed like any other change, plus a check of `go.mod` against it at
 build time; without one the hashes are recomputed from `go.sum` and the

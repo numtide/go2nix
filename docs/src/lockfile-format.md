@@ -83,35 +83,55 @@ go2nix check .      # verify go2nix.toml still matches go.mod, no rewrite
 
 ## Lockfile-free builds
 
-Default mode can build without a lockfile by setting `goLock = null`:
+The lockfile is optional in default mode: leave `goLock` out (or set it to
+`null`).
 
 ```nix
 goEnv.buildGoApplication {
   src = ./.;
-  goLock = null;
   pname = "my-app";
   version = "0.1.0";
 }
 ```
 
-When no lockfile is present, the [Nix plugin](nix-plugin.md) is invoked
-with `resolveHashes = true` and computes a NAR hash for each module from
-`go.sum` + `GOMODCACHE`, returning a `moduleHashes` attrset that fills the
-role of the `[mod]` section. Module FODs are then keyed on those hashes.
+The [Nix plugin](nix-plugin.md) is then invoked with `resolveHashes = true`
+and computes a NAR hash for each module from `go.sum` and `GOMODCACHE`,
+returning a `moduleHashes` attrset that fills the role of the `[mod]` section.
+The hashes are cached under `$XDG_CACHE_HOME/go2nix/nar/`, so only the first
+evaluation pays for them. Module fetches are keyed on those hashes, and they
+are the hashes `go2nix generate` would have written: every fetch and every
+compile is the same derivation with or without a lockfile, and a binary cache
+filled one way serves the other. Only the final derivation differs, because
+with a lockfile it also checks `go.mod` against it; switching costs one link.
 
-This trades a checked-in pin file for zero lockfile maintenance. The build
-is still reproducible as long as `go.sum` is unchanged, but you lose the
-explicit, reviewable hash list.
+What building without a lockfile gives you:
 
-> **Note:** the build-time staleness check (`mvscheck`, see below) is
-> **skipped** when `goLock = null` — there is no lockfile for `go.mod` to
-> drift from. Module versions are read live from `go.sum` via the plugin on
-> every evaluation, so a `go get` is reflected on the next `nix build` with
-> nothing to regenerate. The standalone `go2nix check` subcommand compares
-> `go.mod` with a lockfile and is not applicable in this mode.
+- Nothing to regenerate after `go get` or `go mod tidy`, and the "lockfile is
+  stale" failure cannot happen.
+- A change that only touches `go.mod` and `go.sum` builds as it is — a
+  Dependabot or Renovate update, a contributor who does not use go2nix. With a
+  lockfile such a change fails until someone runs `go2nix generate`.
+- `go.sum` stays the only pin: there is no second file to fall behind and no
+  merge conflicts in `go2nix.toml`.
+- Nothing to install to start: an existing Go module builds with `src = ./.`
+  and no other change to the repository.
+- Packaging code you do not own needs no generated file kept next to your
+  expression, and none to regenerate when you bump its revision.
+- A repository with many `go.mod` files has nothing extra to maintain per
+  module.
 
-Prefer a committed lockfile for anything you ship; lockfile-free is useful
-for ad-hoc builds and during early development.
+What you give up:
+
+- the list of hashes that lives in the repository and is read in review;
+- the check of `go.mod` against it at build time (`mvscheck`, see below) and
+  the standalone `go2nix check`, which have nothing to compare with — module
+  versions are read from `go.sum` on every evaluation instead;
+- `buildGoApplicationExperimental`, which requires a lockfile;
+- a `go.sum` has to exist next to `go.mod`.
+
+Commit a lockfile for what you ship or build in CI, where a hash that changes
+should show up in a diff. Build without one for a new project, an experiment,
+upstream code, or a repository that already treats `go.sum` as the pin.
 
 ## Staleness detection
 
