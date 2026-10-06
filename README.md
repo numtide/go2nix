@@ -14,7 +14,7 @@ A Nix builder for Go that compiles every package in its own derivation, so a cha
 
 ## About
 
-go2nix builds Go programs with Nix one package at a time. It pins *modules* (the versioned units in `go.mod`) in a small lockfile, asks `go list` for the graph of *packages* (the importable directories inside them), compiles every package — standard library, third-party, your own — in its own derivation with `go tool compile`, and links with `go tool link`. `go build` is never called.
+go2nix builds Go programs with Nix one package at a time. It pins *modules* (the versioned units in `go.mod`) by hash, from a small lockfile or from `go.sum` alone, asks `go list` for the graph of *packages* (the importable directories inside them), compiles every package — standard library, third-party, your own — in its own derivation with `go tool compile`, and links with `go tool link`. `go build` is never called.
 
 It exists for repositories where building everything in one derivation throws away too much work: monorepos, services that share internal packages, anything where one edited file should not recompile four hundred untouched dependencies. Each package is a store path, so Nix caches, substitutes and shares it on its own, and the result is held to what `go build -trimpath` produces: same module info, same `GODEBUG` defaults, no build paths in the binary.
 
@@ -23,7 +23,7 @@ It is an alternative to nixpkgs' `buildGoModule` and to `gomod2nix`, which build
 ## Features
 
 - **One derivation per package.** Third-party packages are keyed on their module's source and their own dependencies, local packages on their own directory only, so touching `internal/web` rebuilds `internal/web` and what imports it, nothing else.
-- **A lockfile of modules, not packages.** `go2nix.toml` holds one [NAR](https://nix.dev/manual/nix/latest/glossary#gloss-nar) hash per module and changes only when `go.mod` does; the package graph is discovered when Nix evaluates. Or no lockfile at all: hashes can be derived from `go.sum` and the module cache.
+- **Modules pinned with a lockfile, or without one.** `go2nix.toml` holds one [NAR](https://nix.dev/manual/nix/latest/glossary#gloss-nar) hash per module and changes only when `go.mod` does; leave it out and the plugin derives the same hashes from `go.sum` while Nix evaluates. Either way the package graph is discovered at evaluation and never written down: see [With or without a lockfile](#with-or-without-a-lockfile).
 - **`go build` parity.** `-trimpath` rewrites, per-module `-lang`, `dep`/`=>` module info including filesystem `replace` targets, `DefaultGODEBUG` per toolchain and `go` directive, `GOFIPS140`, PGO, the platform's default build mode (PIE on darwin): `go version -m` on a go2nix binary reads like one from `go build -trimpath`.
 - **Tests as part of the build.** `doCheck` compiles and runs the tests of every local package in the build, including test-only dependencies and helper packages, with `checkFlags` passed to the test binaries.
 - **cgo without ceremony.** cgo packages are detected from `go list` and compiled with a C toolchain — C, C++ and Fortran sources, Go and gcc assembly — while pure-Go packages skip stdenv altogether; `packageOverrides` adds libraries per package or per module.
@@ -75,7 +75,7 @@ The flake's `nixConfig` adds `nix-community.cachix.org` as a substituter. The CL
 A module with one dependency:
 
 ```go
-// main.go, next to a go.mod with `module example.com/my-app` and `require github.com/fatih/color v1.18.0`
+// main.go, next to a go.mod with `module example.com/my-app` and `require github.com/fatih/color v1.18.0`, and its go.sum
 package main
 
 import "github.com/fatih/color"
@@ -83,22 +83,6 @@ import "github.com/fatih/color"
 func main() {
 	color.Green("hello from go2nix")
 }
-```
-
-Pin its modules:
-
-```bash
-cd my-app
-nix run github:numtide/go2nix -- generate .
-```
-
-```toml
-# go2nix.toml — one NAR hash per module; regenerate when go.mod changes
-[mod]
-  "github.com/fatih/color@v1.18.0" = "sha256-pP5y72FSbi4j/BjyVq/XbAOFjzNjMxZt2R/lFFxGWvY="
-  "github.com/mattn/go-colorable@v0.1.13" = "sha256-qb3Qbo0CELGRIzvw7NVM1g/aayaz4Tguppk9MD2/OI8="
-  "github.com/mattn/go-isatty@v0.0.20" = "sha256-qhw9hWtU5wnyFyuMbKx+7RB8ckQaFQ8D+8GKPkN3HHQ="
-  "golang.org/x/sys@v0.25.0" = "sha256-PXZ9EQZ7SFpcL7d3E1+KGTxziYlHEIZPfoXEbnaVD3I="
 ```
 
 Describe the build in `flake.nix`, next to the inputs above:
@@ -118,12 +102,28 @@ Describe the build in `flake.nix`, next to the inputs above:
         pname = "my-app";
         version = "0.1.0";
         src = ./.;
-        goLock = ./go2nix.toml;
       };
     };
 ```
 
 Build it with the plugin loaded (see [Installation](#installation)) and run `./result/bin/my-app`. What Nix built: the standard library (`go-stdlib-…`), one fetch per module (four `gomod-…`), one compile per package `main.go` reaches (`gopkg-github.com-fatih-color-v1.18.0`, `gopkg-github.com-mattn-go-colorable-v0.1.13`, `gopkg-github.com-mattn-go-isatty-v0.0.20`, `gopkg-golang.org-x-sys-unix-v0.25.0` — one package of `x/sys`, not the module — and `golocal-example.com-my-app`), an importcfg bundle (`my-app-deps-importcfg`), and the link. Edit `main.go` and build again: only `golocal-example.com-my-app` and the link change.
+
+That build had no lockfile: the plugin read `go.sum` and hashed each module while Nix evaluated. To keep those hashes in the repository instead, where they are reviewed like any other change and checked against `go.mod` at build time, generate a lockfile:
+
+```bash
+nix run github:numtide/go2nix -- generate .
+```
+
+```toml
+# go2nix.toml — one NAR hash per module; regenerate when go.mod changes
+[mod]
+  "github.com/fatih/color@v1.18.0" = "sha256-pP5y72FSbi4j/BjyVq/XbAOFjzNjMxZt2R/lFFxGWvY="
+  "github.com/mattn/go-colorable@v0.1.13" = "sha256-qb3Qbo0CELGRIzvw7NVM1g/aayaz4Tguppk9MD2/OI8="
+  "github.com/mattn/go-isatty@v0.0.20" = "sha256-qhw9hWtU5wnyFyuMbKx+7RB8ckQaFQ8D+8GKPkN3HHQ="
+  "golang.org/x/sys@v0.25.0" = "sha256-PXZ9EQZ7SFpcL7d3E1+KGTxziYlHEIZPfoXEbnaVD3I="
+```
+
+and add `goLock = ./go2nix.toml;` to the `buildGoApplication` call. Only the link runs again: both routes key each module on the same hash, so every fetch and compile is reused. [With or without a lockfile](#with-or-without-a-lockfile) says when to pick which.
 
 ## Usage
 
@@ -150,7 +150,7 @@ goEnv.buildGoApplication {
   pname = "server";
   version = "1.4.0";
   src = ./.;                         # a path or an eval-time fetch; a derivation here means import-from-derivation
-  goLock = ./go2nix.toml;            # omit for a lockfile-free build
+  goLock = ./go2nix.toml;            # optional: leave it out to build without a lockfile
   subPackages = [ "./cmd/server" ];  # default [ "." ]
   modRoot = ".";                     # where go.mod is, relative to src
   tags = [ "netgo" ];
@@ -166,12 +166,59 @@ goEnv.buildGoApplication {
 
 - **`subPackages`** are the main packages to link, relative to `modRoot`; a missing `./` is added. Each becomes a binary in `$out/bin`, named after its directory (`pname` for `.`). Only packages reachable from them (plus, under `doCheck`, from their tests) are built.
 - **`modRoot`** is for a module inside a larger tree: `src` is the repository root, `modRoot = "services/api"` is where `go.mod` lives. That is what lets `replace example.com/lib => ../../lib` resolve — the builder needs the sibling directory inside `src`. `"./services/api"` and `"services/api"` are the same.
-- **Lockfile or not.** With `goLock`, module hashes come from `go2nix.toml` and the link step checks the lockfile against `go.mod`, failing on drift. Without it the plugin computes each module's hash from `go.sum` and `GOMODCACHE` while evaluating — nothing to regenerate, no reviewable pin file. Prefer the lockfile for anything you ship.
+- **`goLock`** is optional; see [With or without a lockfile](#with-or-without-a-lockfile).
 - **`doCheck`** (default `true`, as in `buildGoModule`) runs the tests of the local packages in the build. Test-only third-party packages and local helper packages imported only from `_test.go` files get their own derivations. Tests see a filtered copy of `src`: Go files, resolved `//go:embed` targets and `testdata/`; add other runtime files with `extraMainSrcFiles`. See [Test Support](docs/src/test-support.md).
 - **`packageOverrides`**, keyed by import path or, as a fallback, module path: `nativeBuildInputs` (cgo packages only), `env`, `srcOverlay`. See [Package Overrides](docs/src/package-overrides.md).
 - **`srcFilter`** is a `path: type: bool` ANDed into every filtered copy the builder makes of `src`, so `src` can stay the real tree.
 - **`contentAddressed`** needs the `ca-derivations` experimental feature; see [Incremental Builds](docs/src/incremental-builds.md).
 - Also: `goProxy`, `allowGoReference`, `nativeBuildInputs`, `meta`, `passthru`. The result's `passthru` exposes `packages`, `localPackages`, `depsImportcfg`, `mainSrc`, `modulePath` and, with `doCheck`, `testPackages`.
+
+### With or without a lockfile
+
+`goLock` is optional. These two calls build the same program:
+
+```nix
+goEnv.buildGoApplication {
+  pname = "server";
+  version = "1.4.0";
+  src = ./.;
+  goLock = ./go2nix.toml;   # hashes from the committed file
+}
+```
+
+```nix
+goEnv.buildGoApplication {
+  pname = "server";
+  version = "1.4.0";
+  src = ./.;                # hashes from go.sum, computed while Nix evaluates
+}
+```
+
+| | with `goLock` | without |
+|---|---|---|
+| Module hashes come from | `go2nix.toml`, written by `go2nix generate` | `go.sum` and the Go module cache; cached under `$XDG_CACHE_HOME/go2nix/nar/` |
+| After `go get` or `go mod tidy` | run `go2nix generate` again | nothing |
+| `go.mod` and the pins disagree | the build fails and says the lockfile is stale | cannot happen |
+| Review sees | the changed hashes | `go.mod` and `go.sum` only |
+| Needs | — | a `go.sum` next to `go.mod` |
+| Builders | both | `buildGoApplication` only |
+
+**Why build without one**
+
+- Nothing to regenerate after `go get` or `go mod tidy`, and no stale-lockfile failure.
+- A change that only touches `go.mod` and `go.sum` builds as it is: a Dependabot or Renovate update, a contributor who does not use go2nix.
+- `go.sum` stays the only pin: no second file to fall behind, no merge conflicts in `go2nix.toml`.
+- Nothing to install to start: an existing module builds with `src = ./.`.
+- Code you do not own, or a repository with many `go.mod` files, needs no generated file per module or per bump.
+- Same cache: every fetch and compile is the same derivation by both routes, so a binary cache filled one way serves the other. Only the final link differs.
+
+**What a lockfile adds**
+
+- The hashes live in the repository, so a changed one shows up in review.
+- The link step checks `go.mod` against it; `go2nix check .` does the same by hand.
+- No hashing during the first evaluation, and `buildGoApplicationExperimental` requires one.
+
+Commit a lockfile for what you ship or build in CI. Build without one for a new project, an experiment, upstream code, or a repository that already treats `go.sum` as the pin. More in [Lockfile-free builds](docs/src/lockfile-format.md#lockfile-free-builds).
 
 ### `-trimpath`
 

@@ -29,7 +29,7 @@ package graph is discovered and what that requires of your Nix setup.
 ## Choosing a mode
 
 Use `buildGoApplication` (the default) for the best balance of caching and
-simplicity — the lockfile is small (just module hashes), and the
+simplicity — the lockfile is small (just module hashes) or absent, and the
 go2nix-nix-plugin resolves the package graph at eval time.
 
 Use `buildGoApplicationExperimental` only if you have Nix >= 2.34 with

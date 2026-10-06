@@ -7,7 +7,7 @@ Both builders accept a shared set of attributes. Differences are noted below.
 ```nix
 goEnv.buildGoApplication {
   src = ./.;
-  goLock = ./go2nix.toml;
+  goLock = ./go2nix.toml;   # optional in default mode
   pname = "my-app";
   version = "0.1.0";
 }

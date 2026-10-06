@@ -9,10 +9,11 @@ modules, then build everything in one derivation" model.
 
 In Go, a *module* is the versioned unit you depend on (one `go.mod`, one
 entry in `go.sum`); a *package* is a single importable directory of `.go`
-files. One module typically contains many packages. go2nix locks modules but
+files. One module typically contains many packages. go2nix pins modules but
 builds packages:
 
-- the lockfile pins **modules**, not the package graph
+- **modules** are pinned by hash, from a lockfile you commit or straight from
+  `go.sum` with no lockfile; the package graph is never written down
 - the builder discovers the **package graph** and compiles it at package granularity
 - Nix can cache and rebuild **individual Go packages**, not just the whole app
 
@@ -39,11 +40,12 @@ per-package reuse and explicit graph handling are worth the extra machinery.
 [Getting Started](getting-started.md) goes from an empty directory to a built
 binary, with the output of every step. In short:
 
-1. `nix run github:numtide/go2nix -- generate .` writes `go2nix.toml`, one
-   hash per module (optional: `goLock = null` derives them from `go.sum`).
 1. `go2nix.lib.mkGoEnv { … }` in your flake gives you a scope, and
-   `goEnv.buildGoApplication { src = ./.; goLock = ./go2nix.toml; pname = …; }`
-   describes the application.
+   `goEnv.buildGoApplication { src = ./.; pname = …; }` describes the
+   application.
+1. Optionally, `nix run github:numtide/go2nix -- generate .` writes
+   `go2nix.toml`, one hash per module, and `goLock = ./go2nix.toml` makes the
+   build use it; without it the same hashes are derived from `go.sum`.
 1. `nix build`, with the plugin loaded through `--option plugin-files` or
    `nix.conf`.
 
