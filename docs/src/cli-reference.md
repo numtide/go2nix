@@ -168,7 +168,6 @@ go2nix resolve [flags]
 | `--overrides` | No | JSON-encoded packageOverrides |
 | `--cacert` | No | Path to CA certificate bundle |
 | `--netrc-file` | No | Path to .netrc for private modules |
-| `--nix-jobs` | No | Max concurrent derivation registrations |
 | `--daemon-socket` | No | nix-daemon Unix socket; default `$NIX_DAEMON_SOCKET_PATH`. When reachable, derivations are registered over the socket instead of via `nix` CLI subprocesses |
 
 This command is not intended for direct use — it is invoked by the

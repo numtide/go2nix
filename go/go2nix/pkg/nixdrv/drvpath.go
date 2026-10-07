@@ -15,9 +15,9 @@ import (
 // without calling `nix derivation add`. Uses go-nix's ATerm serialization
 // and hashing, which implements the same algorithm Nix uses internally.
 //
-// This enables computing all .drv paths up front (in topo order), then
-// registering derivations with the store in parallel — eliminating the
-// sequential subprocess bottleneck.
+// This enables computing all .drv paths up front (in topo order): a dependent
+// needs the .drv paths of its inputs and would otherwise have to wait for
+// `nix derivation add` to return each of them.
 func (d *Derivation) DrvPath() (*storepath.StorePath, error) {
 	gnd, err := d.toGoNixDerivation()
 	if err != nil {

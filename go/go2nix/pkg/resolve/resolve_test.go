@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/numtide/go2nix/pkg/nixdrv"
@@ -402,15 +404,45 @@ func TestBuildLinkDrvClosureOnly(t *testing.T) {
 	}
 }
 
-// fakeStore is a minimal nixdrv.Store for unit-testing stageLocalSources.
+// fakeStore is a minimal nixdrv.Store for unit tests. It fails the test when
+// two operations overlap (see newStore for why resolve must not do that) and,
+// like Nix, refuses a derivation whose input derivations it has not seen.
 type fakeStore struct {
-	mu    sync.Mutex
-	calls int32
-	added map[string]string // name → source dir
+	t        *testing.T
+	inFlight atomic.Int32
+	mu       sync.Mutex
+	added    map[string]string // StoreAdd: name → source dir
+	drvs     []string          // DerivationAdd: .drv paths in call order
 }
 
-func (s *fakeStore) DerivationAdd(*nixdrv.Derivation) (*storepath.StorePath, error) {
-	return nil, fmt.Errorf("not implemented")
+func (s *fakeStore) enter(op string) (leave func()) {
+	if n := s.inFlight.Add(1); n > 1 {
+		s.t.Errorf("%s: %d store operations in flight, want 1", op, n)
+	}
+	// Stay in flight long enough for a concurrent caller to run into us.
+	time.Sleep(time.Millisecond)
+	return func() { s.inFlight.Add(-1) }
+}
+
+func (s *fakeStore) DerivationAdd(drv *nixdrv.Derivation) (*storepath.StorePath, error) {
+	defer s.enter("DerivationAdd")()
+	sp, err := drv.DrvPath()
+	if err != nil {
+		return nil, err
+	}
+	_, refs, err := drv.ATerm()
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ref := range refs {
+		if strings.HasSuffix(ref, ".drv") && !slices.Contains(s.drvs, ref) {
+			return nil, fmt.Errorf("%s: input derivation %s is not valid", sp.Absolute(), ref)
+		}
+	}
+	s.drvs = append(s.drvs, sp.Absolute())
+	return sp, nil
 }
 
 func (s *fakeStore) Build(...string) ([]*storepath.StorePath, error) {
@@ -418,7 +450,7 @@ func (s *fakeStore) Build(...string) ([]*storepath.StorePath, error) {
 }
 
 func (s *fakeStore) StoreAdd(name, path string) (*storepath.StorePath, error) {
-	atomic.AddInt32(&s.calls, 1)
+	defer s.enter("StoreAdd")()
 	s.mu.Lock()
 	if s.added == nil {
 		s.added = map[string]string{}
@@ -429,8 +461,8 @@ func (s *fakeStore) StoreAdd(name, path string) (*storepath.StorePath, error) {
 	return storepath.FromAbsolutePath("/nix/store/" + hash + "-" + name)
 }
 
-// TestStageLocalSources verifies that local-package sources are staged in
-// parallel and that third-party packages are skipped.
+// TestStageLocalSources verifies that local-package sources are staged one
+// at a time and that third-party packages are skipped.
 func TestStageLocalSources(t *testing.T) {
 	root := t.TempDir()
 	mkPkg := func(subdir string) {
@@ -446,8 +478,8 @@ func TestStageLocalSources(t *testing.T) {
 		{ImportPath: "m/c", IsLocal: true, Subdir: "c", GoFiles: []string{"main.go"}},
 		{ImportPath: "ext/d", IsLocal: false},
 	}
-	fs := &fakeStore{}
-	cfg := Config{Src: root, NixJobs: 4}
+	fs := &fakeStore{t: t}
+	cfg := Config{Src: root}
 	n, err := stageLocalSources(cfg, fs, pkgs)
 	if err != nil {
 		t.Fatalf("stageLocalSources: %v", err)
@@ -455,8 +487,8 @@ func TestStageLocalSources(t *testing.T) {
 	if n != 3 {
 		t.Fatalf("staged count = %d, want 3", n)
 	}
-	if fs.calls != 3 {
-		t.Fatalf("StoreAdd calls = %d, want 3", fs.calls)
+	if len(fs.added) != 3 {
+		t.Fatalf("StoreAdd calls = %d, want 3", len(fs.added))
 	}
 	for _, p := range pkgs[:3] {
 		if p.SrcStorePath == nil {
@@ -465,6 +497,73 @@ func TestStageLocalSources(t *testing.T) {
 	}
 	if pkgs[3].SrcStorePath != nil {
 		t.Error("third-party package should not be staged")
+	}
+}
+
+// TestRegisterDerivations verifies that independent derivations (module FODs)
+// are registered one at a time, each exactly once.
+func TestRegisterDerivations(t *testing.T) {
+	var drvs []*nixdrv.Derivation
+	var want []string
+	for _, mod := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		drv := nixdrv.NewDerivation("gomod-example.com-"+mod, "x86_64-linux", "/bin/sh")
+		drv.AddFODOutput("out", "nar", "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+		drv.SetEnv("out", "")
+		sp, err := drv.DrvPath()
+		if err != nil {
+			t.Fatal(err)
+		}
+		drvs = append(drvs, drv)
+		want = append(want, sp.Absolute())
+	}
+	fs := &fakeStore{t: t}
+	if err := registerDerivations(fs, drvs); err != nil {
+		t.Fatalf("registerDerivations: %v", err)
+	}
+	if got := slices.Sorted(slices.Values(fs.drvs)); !slices.Equal(got, slices.Sorted(slices.Values(want))) {
+		t.Errorf("registered %v, want %v in any order", fs.drvs, want)
+	}
+}
+
+// TestRegisterPackageDerivations verifies that package derivations are
+// registered one at a time, in topological order: the fake store rejects a
+// derivation whose input derivations have not been registered yet.
+func TestRegisterPackageDerivations(t *testing.T) {
+	graph := map[string]*ResolvedPkg{
+		"m/cmd/app":  {ImportPath: "m/cmd/app", Imports: []string{"fmt", "m/lib/a", "m/lib/b", "m/lib/c"}},
+		"m/lib/a":    {ImportPath: "m/lib/a", Imports: []string{"m/lib/base", "m/lib/util"}},
+		"m/lib/b":    {ImportPath: "m/lib/b", Imports: []string{"m/lib/a", "m/lib/base"}},
+		"m/lib/c":    {ImportPath: "m/lib/c", Imports: []string{"os", "m/lib/util"}},
+		"m/lib/base": {ImportPath: "m/lib/base"},
+		"m/lib/leaf": {ImportPath: "m/lib/leaf"},
+		"m/lib/util": {ImportPath: "m/lib/util", Imports: []string{"strings"}},
+	}
+	sorted, err := topoSort(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var drvs []*nixdrv.Derivation
+	var want []string
+	for _, pkg := range sorted {
+		drv := nixdrv.NewDerivation("gopkg-"+nixdrv.SanitizeName(pkg.ImportPath), "x86_64-linux", "/bin/sh")
+		drv.AddCAOutput("out", "sha256", "nar")
+		for _, imp := range pkg.Imports {
+			if dep, ok := graph[imp]; ok {
+				drv.AddInputDrv(dep.DrvPath.Absolute(), "out")
+			}
+		}
+		if pkg.DrvPath, err = drv.DrvPath(); err != nil {
+			t.Fatal(err)
+		}
+		drvs = append(drvs, drv)
+		want = append(want, pkg.DrvPath.Absolute())
+	}
+	fs := &fakeStore{t: t}
+	if err := registerPackageDerivations(fs, drvs); err != nil {
+		t.Fatalf("registerPackageDerivations: %v", err)
+	}
+	if !slices.Equal(fs.drvs, want) {
+		t.Errorf("registered %v, want %v", fs.drvs, want)
 	}
 }
 
