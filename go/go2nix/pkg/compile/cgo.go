@@ -248,14 +248,13 @@ func compileCgo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 	for _, s := range files.SysoFiles {
 		allOFiles = append(allOFiles, filepath.Join(opts.SrcDir, s))
 	}
-	packArgs := append([]string{"tool", "pack", "r", opts.Output}, allOFiles...)
-	if err := runIn(opts.SrcDir, "go", packArgs...); err != nil {
+	if err := packAppend(opts.Output, allOFiles); err != nil {
 		return fmt.Errorf("pack: %w", err)
 	}
 
 	// Pack _cgo_flags into archive so LDFLAGS propagate to the final link step.
 	if _, err := os.Stat(cgoFlagsFile); err == nil {
-		if err := runIn(opts.SrcDir, "go", "tool", "pack", "r", opts.Output, cgoFlagsFile); err != nil {
+		if err := packAppend(opts.Output, []string{cgoFlagsFile}); err != nil {
 			return fmt.Errorf("pack _cgo_flags: %w", err)
 		}
 	}
