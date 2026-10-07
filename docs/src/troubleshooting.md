@@ -68,8 +68,8 @@ Hint: your GOMODCACHE may be stale. Run 'go mod download' to populate it.
 
 `go list` ran, but some packages came back with errors; each line is one
 package and what `go` said about it.
-`resolveGoPackages: test dependency errors:` is the same thing from the
-second pass, which looks at test imports when `doCheck` is on. The hint at the end is rarely the cause. In order of
+`resolveGoPackages: test dependency errors:` is the same thing for the
+test imports, which are looked at when `doCheck` is on. The hint at the end is rarely the cause. In order of
 likelihood:
 
 - **A local package that Nix cannot see.** The import path is inside your own

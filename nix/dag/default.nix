@@ -778,7 +778,7 @@ let
 
   # --- Test-only third-party package set (only when doCheck = true) ---
   # These are packages reachable only via test imports, discovered by the
-  # plugin's second `go list -deps -test` pass. Built with the same pipeline
+  # plugin's `go list -deps -test` listing. Built with the same pipeline
   # as normal third-party packages. Their dependencies may include packages
   # from the normal `packages` set.
   testPackages = optionalAttrs doCheck (

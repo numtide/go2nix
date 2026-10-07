@@ -37,7 +37,7 @@ It is an alternative to nixpkgs' `buildGoModule` and to `gomod2nix`, which build
 
 - Nix with flakes, on `x86_64-linux`, `aarch64-linux` or `aarch64-darwin`. The Go toolchain comes from nixpkgs; only `go2nix generate` needs a `go` on `PATH`, to download the modules it hashes.
 - The default builder needs go2nix's Nix plugin loaded into the evaluator ([`plugin-files`](https://nix.dev/manual/nix/latest/command-ref/conf-file#conf-plugin-files)), and the plugin builds against Nix 2.34 or newer, the same Nix that loads it.
-- Evaluation runs `go list`: `builtins.resolveGoPackages` executes on every evaluation, reads the Go module cache and may reach `GOPROXY`, so the project's modules must be downloadable or already in `GOMODCACHE` where Nix evaluates. `src` should be a path or an evaluation-time fetch, otherwise it is [import from derivation](https://nix.dev/manual/nix/latest/language/import-from-derivation).
+- Evaluation runs `go list`: `builtins.resolveGoPackages` executes on every evaluation, reads the Go module cache and may reach `GOPROXY`, so the project's modules must be downloadable or already in `GOMODCACHE` where Nix evaluates. With `doCheck` (the default) that covers the tests of the main module and of every module `go.mod` replaces with a directory, whether or not the built packages use them. `src` should be a path or an evaluation-time fetch, otherwise it is [import from derivation](https://nix.dev/manual/nix/latest/language/import-from-derivation).
 - Optional: `contentAddressed = true` needs [`ca-derivations`](https://nix.dev/manual/nix/latest/development/experimental-features#xp-feature-ca-derivations); the experimental builder needs that plus [`recursive-nix`](https://nix.dev/manual/nix/latest/development/experimental-features#xp-feature-recursive-nix) and [`dynamic-derivations`](https://nix.dev/manual/nix/latest/development/experimental-features#xp-feature-dynamic-derivations).
 
 ### Flake input
@@ -238,7 +238,7 @@ Each compile passes `-trimpath` with two rewrites: the package's source director
 <details>
 <summary>Inputs and the fields it returns</summary>
 
-It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch, cgoEnabled, goProxy, doCheck ? false, resolveHashes ? false }`, runs `go list -deps -json` (and a second `-test` pass under `doCheck`) with the Go toolchain baked into the plugin, `GOFLAGS=-mod=readonly`, `GOWORK=off`, `GOENV=off`, `GOTOOLCHAIN=local` and the caller's `GOMODCACHE`, `GOPROXY` and `NETRC`, and returns:
+It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch, cgoEnabled, goProxy, doCheck ? false, resolveHashes ? false }`, runs `go list -deps -json` (with `-test` under `doCheck`) with the Go toolchain baked into the plugin, `GOFLAGS=-mod=readonly`, `GOWORK=off`, `GOENV=off`, `GOTOOLCHAIN=local` and the caller's `GOMODCACHE`, `GOPROXY` and `NETRC`, and returns:
 
 | Field | Content |
 |---|---|
