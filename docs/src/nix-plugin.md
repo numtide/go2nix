@@ -71,9 +71,8 @@ sibling module. It returns:
 - `siblingModules` — modules replaced with a directory, by module path:
   `path`, `version` (from the `require` line), `goVersion`, `replaceDir`;
   left out when there are none
-- `localReplaceDirs`, `nestedModuleRoots` — the replace target directories
-  (followed transitively) and every directory under them and `modRoot` that
-  holds a `go.mod`, both relative to `src`
+- `localReplaceDirs` — the replace target directories (followed
+  transitively), relative to `src`
 - `subPackageClosures` — per main package: `modKeys` and `siblingModPaths`
   (the modules it links, for the embedded module info) and `cxx` (whether
   it needs a C++ linker)

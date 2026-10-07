@@ -420,7 +420,7 @@ let
 
   # Bump in lockstep with API_LEVEL in
   # packages/go2nix-nix-plugin/rust/src/resolve.rs.
-  apiLevel = 1;
+  apiLevel = 2;
   resolverApiLevel = builtins.go2nixApiLevel or 0;
   apiLevelGuard =
     if resolverApiLevel == apiLevel then
