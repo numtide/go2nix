@@ -38,6 +38,9 @@ else
       buildPhase = ''
         export HOME=$TMPDIR
         export GOMODCACHE=$out
+        # torture-project has a go.work: without this, go fetches the
+        # workspace's build list instead of app-replace's.
+        export GOWORK=off
         cd ${go2nixSrc}/tests/fixtures/torture-project/app-replace
         go mod download
       '';

@@ -38,6 +38,9 @@ let
     buildPhase = ''
       export HOME=$TMPDIR
       export GOMODCACHE=$out
+      # torture-project has a go.work: without this, go fetches the
+      # workspace's build list instead of app-full's.
+      export GOWORK=off
       cd ${fixturePath}/app-full
       go mod download
     '';
