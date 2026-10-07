@@ -1,8 +1,11 @@
 # Test: default mode with xtest recompilation of local dependent packages.
+# test-drv-canary passes a stand-in for the CLI.
+{
+  pkgs ? import <nixpkgs> { },
+  go2nix ? import ../../../packages/go2nix { inherit pkgs; },
+}:
 let
-  pkgs = import <nixpkgs> { };
   inherit (pkgs) go;
-  go2nix = import ../../../packages/go2nix { inherit pkgs; };
   goEnv = import ../../../nix/mk-go-env.nix {
     inherit go go2nix;
     inherit (pkgs) callPackage;

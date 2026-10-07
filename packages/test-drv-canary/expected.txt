@@ -1,9 +1,7 @@
-# Expected .drv hashes for the nix/dag semantic-stability canary.
-# Regenerate with ./scripts/update-drv-canary.sh after any change to
-# go/go2nix/, packages/go2nix-nix-plugin/, nix/dag/hooks/, or the nixpkgs
-# flake input. A change to nix/dag/*.nix alone should NOT require
-# updating this file.
-testify-basic /nix/store/q8zaj6w17xy8bhjvqjv0dxw9khqsynba-testify-basic-0.0.1.drv
-xtest-local-dep /nix/store/1hjag8spqwjsr35jxjbsqgklya9cmxh9-xtest-local-dep-0.0.1.drv
-cgo-internal-test /nix/store/xqz4n7smyz1rxazid5q2n19d641madif-cgo-internal-test-0.0.1.drv
-torture-app-full /nix/store/mkvfka056fyksxddq4z0rnf6939nsayb-torture-app-full-0.0.1.drv
+# Expected application .drv paths (x86_64-linux) for test-drv-canary.
+# Written by ./scripts/update-drv-canary.sh; default.nix next to this
+# file says when to regenerate.
+testify-basic /nix/store/mlfy1sxk8vpwyslgm5h5h6jfiw2ma3g7-testify-basic-0.0.1.drv
+xtest-local-dep /nix/store/dph6225i6rraxzax1q61sg959j3jnwg2-xtest-local-dep-0.0.1.drv
+cgo-internal-test /nix/store/wc9q8z0vzy7kiagvjn57n31xi17afxqa-cgo-internal-test-0.0.1.drv
+torture-app-full /nix/store/kcrqqm4dmz6wbm4kfyf3isglaw12wmb6-torture-app-full-0.0.1.drv
