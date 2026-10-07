@@ -73,6 +73,14 @@ won't normally run these; they are documented for debugging build failures.
 The manifests they read are JSON files the Nix side writes into the build
 directory.
 
+All four run `go` with `GOTOOLCHAIN=local` unless `GOTOOLCHAIN` is already
+set in their environment (`goEnv`, `packageOverrides.<pkg>.env` or `env` in
+default mode; in experimental mode `goEnv` reaches `resolve` only, and the
+derivations it registers always use `local`). The toolchain is the one in the
+scope, so a `toolchain` line in a `go.mod`, the project's or a dependency's,
+never makes a build look for another one; this is also how the plugin runs
+`go list` at evaluation time.
+
 ### compile-package
 
 Compile a single Go package to an archive (`.a` file). Every per-package
