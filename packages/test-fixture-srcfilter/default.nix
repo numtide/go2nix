@@ -47,5 +47,25 @@ else
         --no-out-link)
       output=$($result/bin/app)
       [ "$output" = "hello srcfilter" ] || { echo "FAIL: unexpected output: '$output'"; exit 1; }
+
+      echo "=== srcfilter fixture: an unreadable directory the predicate rejects ==="
+      # The filtered copies must not touch what srcFilter rejects: with a
+      # mode-000 directory inside a package directory, evaluation succeeds
+      # and yields the derivation of the plain tree. The build user is not
+      # root, so the mode is enforced.
+      cp -r ${go2nixSrc}/tests/fixtures/srcfilter "$TMPDIR/locked-tree"
+      chmod -R u+w "$TMPDIR/locked-tree"
+      mkdir -m 000 "$TMPDIR/locked-tree/lib/locked"
+      instantiate() {
+        GOMODCACHE="$TMPDIR/empty-gmc" nix-instantiate ${go2nixSrc}/tests/fixtures/srcfilter/dag.nix -A viaSrcFilter \
+          -I nixpkgs=${nixpkgsPath} \
+          --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+          "$@"
+      }
+      plainDrv=$(instantiate)
+      lockedDrv=$(instantiate --arg src "$TMPDIR/locked-tree") || lockedDrv="(evaluation failed)"
+      chmod 755 "$TMPDIR/locked-tree/lib/locked"
+      [ "$lockedDrv" = "$plainDrv" ] || { echo "FAIL: unreadable lib/locked changed the derivation: $lockedDrv != $plainDrv"; exit 1; }
+
       echo "PASS: srcfilter" > $out
     ''

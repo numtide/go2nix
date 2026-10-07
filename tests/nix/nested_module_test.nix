@@ -6,8 +6,12 @@
 # per-package pkgSrc filters must drop the whole subtree; otherwise touching
 # a nested-module file would invalidate the parent package's compile drv.
 #
-# Plugin-wrapped: mainSrc reads goPackagesResult.nestedModuleRoots, so the
-# inner evaluation needs --option plugin-files.
+# The same holds for a go.mod below a `_`- or `.`-prefixed directory
+# (internal/util/_examples, internal/util/.tools): go list skips those
+# directories by name, but cmd/go still treats them as other modules.
+#
+# Plugin-wrapped: mainSrc and pkgSrc are built from the resolver's package
+# graph, so the inner evaluation needs --option plugin-files.
 {
   flake,
   pkgs,
@@ -58,8 +62,23 @@ else
         --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
         -E '(import ${go2nixSrc}/tests/fixtures/modroot-nested/dag.nix).passthru.localPackages."example.com/modroot-nested/internal/util".goPackageSrcDir')
       check '[ -e "$pkgSrc/util.go" ]'            "pkgSrc(util) must include util.go"
+      check '[ -d "$pkgSrc/testdata" ]'           "pkgSrc(util) must keep testdata/ (no go.mod there)"
       check '[ ! -e "$pkgSrc/testdata/mod" ]'     "pkgSrc(util) must NOT include testdata/mod (nested go.mod boundary)"
+      check '[ ! -e "$pkgSrc/_examples" ]'        "pkgSrc(util) must NOT include _examples (go.mod below a _ directory)"
+      check '[ ! -e "$pkgSrc/.tools" ]'           "pkgSrc(util) must NOT include .tools (go.mod below a . directory)"
+
+      # The main package's directory holds a nested module next to a
+      # package directory: both are pruned, each for its own reason, and
+      # the package's own go.mod stays.
+      rootSrc=$(GOMODCACHE="$TMPDIR/empty-gmc" nix-instantiate --eval --read-write-mode --raw \
+        -I nixpkgs=${nixpkgsPath} \
+        --option plugin-files "${plugin}/lib/nix/plugins/libgo2nix_plugin.so" \
+        -E '(import ${go2nixSrc}/tests/fixtures/modroot-nested/dag.nix).passthru.localPackages."example.com/modroot-nested".goPackageSrcDir')
+      check '[ -e "$rootSrc/main.go" ]'           "pkgSrc(main) must include main.go"
+      check '[ -e "$rootSrc/go.mod" ]'            "pkgSrc(main) must keep the package root's own go.mod"
+      check '[ ! -e "$rootSrc/nested-module" ]'   "pkgSrc(main) must NOT include nested-module"
+      check '[ ! -e "$rootSrc/internal/util" ]'   "pkgSrc(main) must NOT include internal/util (a package of its own)"
 
       [ "$fail" -eq 0 ] || exit 1
-      echo "nested-module-test: 6 assertions passed" > $out
+      echo "nested-module-test: 13 assertions passed" > $out
     ''
