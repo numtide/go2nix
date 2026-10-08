@@ -56,7 +56,6 @@ type Config struct {
 	CACert       string // path to CA certificate bundle
 	NetrcFile    string // path to .netrc file for private module authentication
 	Output       string // $out path
-	NixJobs      int    // max concurrent nix derivation add calls; 0 = auto (NumCPU*2, min 16)
 	DaemonSocket string // nix-daemon Unix socket; if reachable, used instead of NixBin subprocess
 
 	// coreutilsDir is the store path of coreutils, derived from CoreutilsBin.
@@ -112,10 +111,6 @@ func (cfg *Config) prepare() {
 	// matching cmd/go's platform.DefaultPIE logic.
 	cfg.buildMode = compile.DefaultBuildMode(cfg.goEnv["GOOS"], cfg.goEnv["GOARCH"])
 	slog.Info("build mode", "mode", cfg.buildMode)
-
-	if cfg.NixJobs <= 0 {
-		cfg.NixJobs = max(runtime.NumCPU()*2, 16)
-	}
 }
 
 // Resolve orchestrates the full dynamic derivation resolve flow.
@@ -163,8 +158,7 @@ func Resolve(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	// Register FODs with the store in parallel
-	if err := registerDerivations(nix, fodDrvs, cfg.NixJobs); err != nil {
+	if err := registerDerivations(nix, fodDrvs); err != nil {
 		return fmt.Errorf("registering FODs: %w", err)
 	}
 	slog.Info("module FODs created", "count", len(fodDrvPaths), "elapsed", time.Since(t))
@@ -248,10 +242,8 @@ func Resolve(cfg Config) error {
 	}
 	slog.Info("packages sorted", "count", len(sorted))
 
-	// Step 7a: Stage local-package sources in the Nix store concurrently.
-	// StoreAdd is a daemon round-trip per package and depends only on the
-	// package's own files, so it has no ordering constraint and can be fully
-	// parallelised before the topo-ordered drv assembly below.
+	// Step 7a: Stage local-package sources in the Nix store. The store paths
+	// feed the drv assembly below, so this has to come first.
 	t = time.Now()
 	localCount, err := stageLocalSources(cfg, nix, sorted)
 	if err != nil {
@@ -279,13 +271,10 @@ func Resolve(cfg Config) error {
 	}
 	slog.Info("package derivations built", "local", localCount, "thirdParty", thirdPartyCount, "elapsed", time.Since(t))
 
-	// Step 7c: Register package derivations with the store in parallel.
-	// Nix validates that input drvs exist during `nix derivation add`, so we
-	// can't blast all drvs concurrently. Instead, each drv waits for its
-	// dependency drvs to be registered first, then registers itself. This gives
-	// maximum parallelism while respecting the dependency ordering constraint.
+	// Step 7c: Register package derivations with the store, dependencies
+	// first: Nix checks that a derivation's input drvs exist when it is added.
 	t = time.Now()
-	if err := registerDerivationsParallel(nix, sorted, pkgDrvs, graph, cfg.NixJobs); err != nil {
+	if err := registerPackageDerivations(nix, pkgDrvs); err != nil {
 		return fmt.Errorf("registering package derivations: %w", err)
 	}
 	slog.Info("package derivations registered", "count", len(pkgDrvs), "elapsed", time.Since(t))
@@ -316,7 +305,7 @@ func Resolve(cfg Config) error {
 
 // buildModuleFODs creates a FOD derivation for each module in the lockfile.
 // Computes .drv paths in-process (no subprocess calls).
-// Returns modKey → .drv StorePath plus the list of Derivations for parallel registration.
+// Returns modKey → .drv StorePath plus the list of Derivations for registration.
 func buildModuleFODs(cfg Config, lock *lockfile.Lockfile) (map[string]*storepath.StorePath, []*nixdrv.Derivation, error) {
 	result := make(map[string]*storepath.StorePath, len(lock.Mod))
 	drvs := make([]*nixdrv.Derivation, 0, len(lock.Mod))
@@ -374,15 +363,22 @@ func buildModuleFODs(cfg Config, lock *lockfile.Lockfile) (map[string]*storepath
 	return result, drvs, nil
 }
 
-// buildFODs materializes all FODs in a single batched nix build call.
-// Returns modKey → output StorePath.
 // newStore returns a daemon-backed Store when cfg.DaemonSocket is reachable,
 // otherwise the CLI-subprocess NixTool.
+//
+// The socket belongs to the recursive-nix daemon of the enclosing build. That
+// daemon serves each connection on a thread of its own and records the paths
+// added during the build in a set it does not lock (Nix 2.34), so adds that
+// arrive on two connections at once can fail with "path ... is not valid" or
+// corrupt the set and hang or crash the outer build. The daemon store is
+// therefore limited to one connection, and Resolve issues store operations
+// one at a time, which also covers NixTool: every `nix` subprocess is a
+// connection of its own.
 func newStore(cfg Config) nixdrv.Store {
 	if cfg.DaemonSocket != "" {
-		ds, err := nixdrv.ConnectDaemon(context.Background(), cfg.DaemonSocket, cfg.NixJobs)
+		ds, err := nixdrv.ConnectDaemon(context.Background(), cfg.DaemonSocket, 1)
 		if err == nil {
-			slog.Info("using nix-daemon socket", "path", cfg.DaemonSocket, "max_conns", cfg.NixJobs)
+			slog.Info("using nix-daemon socket", "path", cfg.DaemonSocket)
 			return ds
 		}
 
@@ -397,6 +393,8 @@ func newStore(cfg Config) nixdrv.Store {
 	}
 }
 
+// buildFODs materializes all FODs in a single batched nix build call.
+// Returns modKey → output StorePath.
 func buildFODs(nix nixdrv.Store, fodDrvPaths map[string]*storepath.StorePath) (map[string]*storepath.StorePath, error) {
 	if len(fodDrvPaths) == 0 {
 		return map[string]*storepath.StorePath{}, nil
@@ -430,83 +428,34 @@ func buildFODs(nix nixdrv.Store, fodDrvPaths map[string]*storepath.StorePath) (m
 	return result, nil
 }
 
-// registerDerivations registers all derivations with the Nix store in parallel
-// via `nix derivation add`. The .drv paths have already been computed in-process;
-// this step writes the .drv files into the store so they can be built.
-func registerDerivations(nix nixdrv.Store, drvs []*nixdrv.Derivation, concurrency int) error {
-	g := new(errgroup.Group)
-	g.SetLimit(concurrency)
+// registerDerivations writes the .drv files into the store so they can be
+// built. The .drv paths have already been computed in-process.
+func registerDerivations(nix nixdrv.Store, drvs []*nixdrv.Derivation) error {
 	for _, drv := range drvs {
-		g.Go(func() error {
-			_, err := nix.DerivationAdd(drv)
+		if _, err := nix.DerivationAdd(drv); err != nil {
 			return err
-		})
+		}
 	}
-	return g.Wait()
+	return nil
 }
 
-// registerDerivationsParallel registers package derivations in parallel by topo level.
-// Each level contains packages whose dependencies are all in previous levels. All
-// packages within a level are registered concurrently, then we wait before starting
-// the next level. This ensures input drvs are visible on disk (through the build
-// sandbox bind mount) before dependents try to read them during hashDerivationModulo.
+// registerPackageDerivations registers package derivations in slice order.
+// Callers pass them in topological order, so every input drv is in the store
+// before a dependent is added.
 // Validates that in-process .drv paths match what Nix returns.
-func registerDerivationsParallel(
-	nix nixdrv.Store,
-	sorted []*ResolvedPkg,
-	drvs []*nixdrv.Derivation,
-	_ map[string]*ResolvedPkg,
-	concurrency int,
-) error {
-	// Compute topo level for each package.
-	// Level = max(dep levels) + 1; packages with no in-graph deps are level 0.
-	levels := make(map[string]int, len(sorted))
-	for _, pkg := range sorted {
-		maxDepLevel := -1
-		for _, imp := range pkg.Imports {
-			if lvl, ok := levels[imp]; ok && lvl > maxDepLevel {
-				maxDepLevel = lvl
-			}
+func registerPackageDerivations(nix nixdrv.Store, drvs []*nixdrv.Derivation) error {
+	for _, drv := range drvs {
+		nixPath, err := nix.DerivationAdd(drv)
+		if err != nil {
+			return err
 		}
-		levels[pkg.ImportPath] = maxDepLevel + 1
-	}
-
-	// Group packages by level.
-	maxLevel := 0
-	for _, lvl := range levels {
-		if lvl > maxLevel {
-			maxLevel = lvl
+		ourPath, err := drv.DrvPath()
+		if err != nil {
+			return fmt.Errorf("re-computing drv path: %w", err)
 		}
-	}
-	levelBuckets := make([][]*nixdrv.Derivation, maxLevel+1)
-	for i, pkg := range sorted {
-		lvl := levels[pkg.ImportPath]
-		levelBuckets[lvl] = append(levelBuckets[lvl], drvs[i])
-	}
-
-	// Register level by level: parallel within, sequential between.
-	for lvl, bucket := range levelBuckets {
-		g := new(errgroup.Group)
-		g.SetLimit(concurrency)
-		for _, drv := range bucket {
-			g.Go(func() error {
-				nixPath, err := nix.DerivationAdd(drv)
-				if err != nil {
-					return err
-				}
-				ourPath, err := drv.DrvPath()
-				if err != nil {
-					return fmt.Errorf("re-computing drv path: %w", err)
-				}
-				if nixPath.Absolute() != ourPath.Absolute() {
-					return fmt.Errorf("CA drv path mismatch:\n  ours: %s\n  nix:  %s\n  our aterm: %s",
-						ourPath.Absolute(), nixPath.Absolute(), drv.DebugATerm())
-				}
-				return nil
-			})
-		}
-		if err := g.Wait(); err != nil {
-			return fmt.Errorf("level %d: %w", lvl, err)
+		if nixPath.Absolute() != ourPath.Absolute() {
+			return fmt.Errorf("CA drv path mismatch:\n  ours: %s\n  nix:  %s\n  our aterm: %s",
+				ourPath.Absolute(), nixPath.Absolute(), drv.DebugATerm())
 		}
 	}
 	return nil
@@ -617,7 +566,7 @@ func symlinkTree(src, dst string) error {
 }
 
 // buildPackageDrv builds a CA derivation for a single package and computes its
-// .drv path in-process. The derivation is returned for later parallel registration.
+// .drv path in-process. The derivation is returned for later registration.
 // Local-package sources must already be staged via stageLocalSources.
 func buildPackageDrv(
 	cfg Config,
@@ -786,40 +735,37 @@ func setupPkgSource(
 	return nil
 }
 
-// stageLocalSources creates filtered source directories for every local package
-// and adds them to the Nix store concurrently. Each goroutine touches a distinct
-// *ResolvedPkg, so writing pkg.SrcStorePath is race-free. Returns the number of
-// local packages staged.
+// stageLocalSources creates a filtered source directory for every local package
+// and adds it to the Nix store. Returns the number of local packages staged.
 func stageLocalSources(cfg Config, nix nixdrv.Store, pkgs []*ResolvedPkg) (int, error) {
-	g := new(errgroup.Group)
-	g.SetLimit(cfg.NixJobs)
 	count := 0
 	for _, pkg := range pkgs {
 		if !pkg.IsLocal {
 			continue
 		}
 		count++
-		g.Go(func() error {
-			pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
-			filteredDir, err := createFilteredPkgDir(pkgDir, pkg)
-			if err != nil {
-				return fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
-			}
-			defer os.RemoveAll(filteredDir) //nolint:errcheck
-
-			name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
-			sp, err := nix.StoreAdd(name, filteredDir)
-			if err != nil {
-				return fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
-			}
-			pkg.SrcStorePath = sp
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return 0, err
+		if err := stageLocalSource(cfg, nix, pkg); err != nil {
+			return 0, err
+		}
 	}
 	return count, nil
+}
+
+func stageLocalSource(cfg Config, nix nixdrv.Store, pkg *ResolvedPkg) error {
+	pkgDir := filepath.Join(cfg.Src, cfg.ModRoot, pkg.Subdir)
+	filteredDir, err := createFilteredPkgDir(pkgDir, pkg)
+	if err != nil {
+		return fmt.Errorf("creating filtered source for %s: %w", pkg.ImportPath, err)
+	}
+	defer os.RemoveAll(filteredDir) //nolint:errcheck
+
+	name := "gosrc-" + nixdrv.SanitizeName(pkg.ImportPath)
+	sp, err := nix.StoreAdd(name, filteredDir)
+	if err != nil {
+		return fmt.Errorf("adding package source for %s: %w", pkg.ImportPath, err)
+	}
+	pkg.SrcStorePath = sp
+	return nil
 }
 
 // transitiveClosure returns mainPkg plus every package reachable via Imports
@@ -883,7 +829,7 @@ func buildImportcfg(
 }
 
 // buildFinalDrv creates the link (and optional collector) derivation.
-// Returns the final .drv path and all derivations for parallel registration.
+// Returns the final .drv path and all derivations for registration.
 func buildFinalDrv(
 	cfg Config,
 	graph map[string]*ResolvedPkg,
@@ -945,7 +891,7 @@ func buildFinalDrv(
 }
 
 // buildLinkDrv builds a link derivation for a main package.
-// Returns the .drv path and the Derivation for parallel registration.
+// Returns the .drv path and the Derivation for registration.
 // Only the main package's transitive closure is added as inputDrvs/importcfg
 // entries so unrelated package changes don't invalidate the link drv.
 func buildLinkDrv(
@@ -1103,7 +1049,7 @@ func buildLinkDrv(
 }
 
 // buildCollectorDrv builds a collector derivation merging multiple link outputs.
-// Returns the .drv path and Derivation for parallel registration.
+// Returns the .drv path and Derivation for registration.
 func buildCollectorDrv(
 	cfg Config,
 	linkDrvPaths []*storepath.StorePath,
