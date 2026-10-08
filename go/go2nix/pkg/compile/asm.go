@@ -94,8 +94,7 @@ func compileWithAsm(opts Options, files gofiles.PkgFiles, embedFlag string) erro
 
 	// Pack all object files in a single call.
 	if len(ofiles) > 0 {
-		packArgs := append([]string{"tool", "pack", "r", opts.Output}, ofiles...)
-		if err := runIn(opts.SrcDir, "go", packArgs...); err != nil {
+		if err := packAppend(opts.Output, ofiles); err != nil {
 			return fmt.Errorf("pack: %w", err)
 		}
 	}

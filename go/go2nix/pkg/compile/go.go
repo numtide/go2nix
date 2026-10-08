@@ -43,8 +43,7 @@ func compileGo(opts Options, files gofiles.PkgFiles, embedFlag string) error {
 		for _, s := range files.SysoFiles {
 			sysoAbsPaths = append(sysoAbsPaths, filepath.Join(opts.SrcDir, s))
 		}
-		packArgs := append([]string{"tool", "pack", "r", opts.Output}, sysoAbsPaths...)
-		if err := runIn(opts.SrcDir, "go", packArgs...); err != nil {
+		if err := packAppend(opts.Output, sysoAbsPaths); err != nil {
 			return fmt.Errorf("pack syso: %w", err)
 		}
 	}
