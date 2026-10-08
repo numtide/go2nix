@@ -137,6 +137,14 @@
           test-fixture-build-tags = callPkgWith ./packages/test-fixture-build-tags/default.nix {
             inherit flake system;
           };
+          test-fixture-stdlib-per-build = callPkgWith ./packages/test-fixture-stdlib-per-build/default.nix {
+            inherit flake system;
+          };
+          test-fixture-stdlib-per-build-dynamic =
+            callPkgWith ./packages/test-fixture-stdlib-per-build-dynamic/default.nix
+              {
+                inherit flake system;
+              };
           test-fixture-modroot-nested = callPkgWith ./packages/test-fixture-modroot-nested/default.nix {
             inherit flake system;
           };
@@ -266,12 +274,14 @@
             flake = self;
             inherit system;
           };
-          # tests/nix/{helpers,fetch_go_module}_test.nix return `true` or
-          # throw. seq forces them at eval time so a failure breaks the
+          # tests/nix/{helpers,fetch_go_module,stdlib}_test.nix return `true`
+          # or throw. seq forces them at eval time so a failure breaks the
           # check; the runCommand body is just the success marker.
           nix-unit-tests = builtins.seq (import ./tests/nix/helpers_test.nix) (
             builtins.seq (import ./tests/nix/fetch_go_module_test.nix { inherit pkgs; }) (
-              pkgs.runCommand "nix-unit-tests" { } "echo OK > $out"
+              builtins.seq (import ./tests/nix/stdlib_test.nix { inherit pkgs; }) (
+                pkgs.runCommand "nix-unit-tests" { } "echo OK > $out"
+              )
             )
           );
           # The --help check just confirms the binary links and the CLI
