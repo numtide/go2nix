@@ -58,10 +58,10 @@ time and emits an IFD warning.
 | `goLock` | path or `null` | `null` (default) / required (experimental) | both | Path to `go2nix.toml`. In default mode, `null` enables [lockfile-free builds](lockfile-format.md#lockfile-free-builds). The experimental builder requires a lockfile. |
 | `subPackages` | list of strings | `[ "." ]` | both | Packages to build, relative to `modRoot`. A `./` prefix is auto-added if missing. |
 | `modRoot` | string | `"."` | both | Subdirectory within `src` containing `go.mod`. |
-| `tags` | list of strings | `[]` | both | Go build tags. |
+| `tags` | list of strings | `[]` | both | Go build tags. They apply to everything the build compiles, the standard library included (`netgo`, `osusergo` and `timetzdata` select files there): a build with tags the standard library reads gets one compiled with those, and any other tag leaves the scope's in place when the plugin was built with the scope's Go release (see [The Scope](scope.md#stdlib)). |
 | `ldflags` | list of strings | `[]` | both | Flags passed to `go tool link` (`-s`, `-w`, `-X`, etc.). |
 | `gcflags` | list of strings | `[]` | both | Extra flags passed to `go tool compile`. |
-| `CGO_ENABLED` | `0`, `1`, or `null` | the scope's `goEnv.CGO_ENABLED` if set, else `null` (default mode); `null` (experimental) | both | Value of `CGO_ENABLED` for the eval-time `go list` and the build. With `null` the toolchain's default applies, and a package is built as cgo when `go list` reports `CgoFiles` for it, i.e. it has Go files that `import "C"`. |
+| `CGO_ENABLED` | `0`, `1`, or `null` | the scope's `goEnv.CGO_ENABLED` if set, else `null` (default mode); `null` (experimental) | both | Value of `CGO_ENABLED` for the eval-time `go list` and the build. A value given here wins over the scope's `goEnv.CGO_ENABLED` for this build: the standard library, every package compile, the link and the tests all see it, so `CGO_ENABLED = 0` gives the same binary as `goEnv.CGO_ENABLED = "0"` on the scope. When the two differ the build gets its own standard library. With `null` the toolchain's default applies, and a package is built as cgo when `go list` reports `CgoFiles` for it, i.e. it has Go files that `import "C"`. |
 | `pgoProfile` | path or `null` | `null` | both | Path to a pprof CPU profile for profile-guided optimization. The profile is passed to every `go tool compile` invocation, so changing it invalidates all package derivations. See [Go's PGO docs](https://go.dev/doc/pgo) for producing a profile. |
 | `nativeBuildInputs` | list | `[]` | both | Extra build inputs for the final derivation. In experimental mode they land on the wrapper that runs `go2nix resolve`, not on the link derivation; give link-time libraries through `packageOverrides`. |
 | `packageOverrides` | attrset | `{}` | both | Per-package customization (see below). |
@@ -90,7 +90,7 @@ whose inputs are all the others:
 
 | Derivation name | How many |
 |-----------------|----------|
-| `go-stdlib-<go version>[-<hash of goEnv>]` | one per scope, shared by every build in it (see [The Scope](scope.md#stdlib)) |
+| `go-stdlib-<go version>[-<hash of goEnv>][-tags-<hash of tags>]` | one per scope, shared by every build in it that sets no `CGO_ENABLED` of its own and no `tags` the standard library reads; one more per distinct combination of those (see [The Scope](scope.md#stdlib)) |
 | `gomod-<module path>-<version>` | one per module the build uses |
 | `gopkg-<import path>-<module version>` | one per third-party package the build reaches |
 | `golocal-<import path>` | one per local package, and `golocal-<import path>-src` for its filtered source |
@@ -172,7 +172,7 @@ goEnv = go2nix.lib.mkGoEnv {
 | `go2nix` | derivation | required | go2nix CLI binary. |
 | `callPackage` | function | required | `pkgs.callPackage`. |
 | `tags` | list of strings | `[]` | Stored on the scope, but neither builder reads it: pass `tags` to each `buildGoApplication` call. |
-| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and, in default mode, to every compile and link in this scope (e.g. `GOEXPERIMENT`, `GOFIPS140`, `CGO_ENABLED`). In experimental mode they reach the stdlib and `go2nix resolve` only, not the per-package derivations. Of these only `CGO_ENABLED`, `GOOS` and `GOARCH` also reach the eval-time `go list`. Scope-level because the stdlib derivation is shared by every build in the scope. |
+| `goEnv` | attrset | `{}` | Environment variables applied to stdlib compilation and, in default mode, to every compile and link in this scope (e.g. `GOEXPERIMENT`, `GOFIPS140`, `CGO_ENABLED`). In experimental mode they reach the stdlib and `go2nix resolve` only, not the per-package derivations. Of these only `CGO_ENABLED`, `GOOS` and `GOARCH` also reach the eval-time `go list`. Scope-level because the stdlib derivation is shared by every build in the scope; `CGO_ENABLED` can also be set per build. |
 | `netrcFile` | path or `null` | `null` | `.netrc` file for private module authentication (see below). |
 | `nixPackage` | derivation or `null` | `null` | Nix binary. Required for `buildGoApplicationExperimental`. |
 

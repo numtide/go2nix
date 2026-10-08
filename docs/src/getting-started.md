@@ -182,7 +182,7 @@ there, by derivation name:
 
 | Derivation | What it is |
 |------------|------------|
-| `go-stdlib-…` | the standard library, compiled once per toolchain and `goEnv` |
+| `go-stdlib-…` | the standard library, compiled once per toolchain, `goEnv` and set of build `tags` it reads |
 | `gomod-github.com-fatih-color-v1.18.0` and three more | one fetch per module |
 | `gopkg-github.com-fatih-color-v1.18.0`, `gopkg-github.com-mattn-go-colorable-v0.1.13`, `gopkg-github.com-mattn-go-isatty-v0.0.20`, `gopkg-golang.org-x-sys-unix-v0.25.0` | one compile per third-party *package* that `main.go` reaches: `x/sys` is one package here, not the module |
 | `golocal-example.com-my-app` | one compile per package of yours |

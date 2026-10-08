@@ -45,7 +45,8 @@ fetches does not change its output path.
 
 Two scopes with a different `go` or `goEnv` have different standard
 libraries, and therefore share no compiled package; two applications built
-from the *same* scope share every third-party package they have in common.
+from the *same* scope share every third-party package they have in common
+when they set the same `tags` and `CGO_ENABLED`.
 
 ## `stdlib`
 
@@ -61,6 +62,25 @@ which standard-library sources get compiled (`GOFIPS140`, `GOEXPERIMENT`,
 Every compile reads that `importcfg`; this is the only place go2nix runs
 `cmd/go`. Packages and the final link use `go tool compile` and
 `go tool link` directly.
+
+Build tags and `CGO_ENABLED` select files in the standard library as they do
+anywhere else, so a build that sets a `CGO_ENABLED` other than the scope's,
+or tags the standard library reads, does not use this derivation but
+`stdlib.override { goEnv = …; tags = …; }`: the same build with
+`CGO_ENABLED` replaced in `goEnv` and `-tags` passed to `go install`, named
+with a further `-tags-<8 hex>` when there are tags. Only the tags the
+standard library reads are passed, so `tags = [ "mytag" ]` keeps this
+derivation and `[ "mytag" "netgo" ]` shares one with `[ "netgo" ]`. Which
+those are changes between Go releases and with `GOOS`, `GOARCH` and
+`CGO_ENABLED`, so no list is kept: in default mode the plugin asks its own
+toolchain (`stdlibTags`, see [Nix Plugin](nix-plugin.md)) and says which
+release that is (`stdlibTagsGo`). The answer is used when that release is
+the scope's (`"go${go.version}"`). When `mkGoEnv` was given another release
+than the plugin was built with, with a plugin too old to report the two, and
+in experimental mode, which has no plugin, every tag is passed: the binary
+is the same, and each set of tags has a standard library of its own. Builds
+with the same settings share the result. A `stdlib` put in place with
+`overrideScope` has to keep that `override`.
 
 ## `fetchers.fetchGoModule`
 

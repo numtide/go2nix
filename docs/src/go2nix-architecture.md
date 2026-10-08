@@ -110,7 +110,9 @@ after copying the toolchain's `src`, `pkg` and `lib` there. Output:
 `$out/<pkg>.a` for each stdlib package + `$out/importcfg`. There is one such
 derivation per toolchain and scope `goEnv` (the variables are exported before
 the build and a hash of them is part of the name), shared by every build in
-the scope and by both modes.
+the scope and by both modes. A build that sets a `CGO_ENABLED` other than
+the scope's, or `tags` the standard library reads, overrides it with its own
+`goEnv` and `-tags`, because both select files in the standard library too.
 
 ### Shared: helpers.nix
 

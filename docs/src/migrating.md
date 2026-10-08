@@ -53,9 +53,9 @@ and the [plugin](nix-plugin.md) loaded. See
 | `subPackages` | `subPackages` | **The default differs.** `buildGoModule` builds every directory that has Go files when `subPackages` is not set; go2nix builds `[ "." ]`, the package at `modRoot`. List your main packages. |
 | `excludedPackages` | none | Say what to build with `subPackages` instead. |
 | `ldflags` | `ldflags` | Passed to `go tool link`. |
-| `tags` | `tags` | Per build, not on `mkGoEnv`. |
+| `tags` | `tags` | Per build, not on `mkGoEnv`. They reach the standard library too, as with `go build -tags`. |
 | `GOFLAGS` | none | Nothing here runs `go build`, so there is no `GOFLAGS` to read. `-trimpath` is always on; compiler flags go in `gcflags`. |
-| `env.CGO_ENABLED` | `CGO_ENABLED`, or `goEnv.CGO_ENABLED` on the scope | The scope's value also decides how the standard library is compiled. |
+| `env.CGO_ENABLED` | `CGO_ENABLED`, or `goEnv.CGO_ENABLED` on the scope | Either way the standard library is compiled with it. On the scope it covers every build and they share one standard library; on a build it wins over the scope's value for that build. |
 | other `env.*` | `env` for the final derivation; `goEnv` on the scope for what the toolchain must see (`GOEXPERIMENT`, `GOFIPS140`, `GOOS`, `GOARCH`) | |
 | `nativeBuildInputs`, `buildInputs` (for cgo) | `packageOverrides.<import path>.nativeBuildInputs` | The C compiler runs in the derivation of the package that has the cgo code, so that is where `pkg-config` and the library go. See [Package Overrides](package-overrides.md) and [how to find the package](recipes.md#cgo-packages-that-need-a-system-library). Top-level inputs reach the final link only. |
 | `doCheck` | `doCheck` | Both default to `true`. go2nix tests the local packages that are part of the build, not every directory with a `_test.go`. |

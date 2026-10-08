@@ -60,7 +60,7 @@ instead of two — but almost all of them are reusable across rebuilds.
 
 | Layer | One derivation per | Cache key (informally) | Rebuilds when |
 |-------|--------------------|------------------------|---------------|
-| stdlib | Go toolchain and scope `goEnv` | Go version + `goEnv` (`GOOS`/`GOARCH` when cross-compiling, `CGO_ENABLED`, `GOFIPS140`, ...) | Go is bumped or `goEnv` changes |
+| stdlib | Go toolchain, scope `goEnv`, and per-build `CGO_ENABLED` and the `tags` the stdlib reads, where a build sets them | Go version + `goEnv` (`GOOS`/`GOARCH` when cross-compiling, `CGO_ENABLED`, `GOFIPS140`, ...) + those tags | Go is bumped, `goEnv` changes, or the build's `CGO_ENABLED` or one of those tags changes |
 | module FOD | module `path@version` the build uses | module path@version + NAR hash | that module is bumped |
 | third-party package | imported package | module FOD + import deps + tags + gcflags | the module or any of its transitive deps change |
 | local package | local Go package | the package's directory (every file in it, `_test.go` and `testdata/` included, nested packages excluded) + import deps | any file in that directory or a dep changes |
@@ -104,8 +104,9 @@ The same reasoning for other kinds of change:
 | one module's version | its FOD, the packages of that module, everything that imports them, the importcfg bundle and the app |
 | a test-only dependency | its `testPackages` derivations, the test importcfg bundle and the app (relink, tests re-run) |
 | `ldflags`, `checkFlags` | the app only |
-| `tags` | the packages whose file selection changes, the packages with cgo files (only their compile manifests carry the tags), everything that imports them, then the bundle and the app. Pure-Go packages with the same files keep their store paths. The stdlib is not affected |
+| `tags` | the packages whose file selection changes, the packages with cgo files (only their compile manifests carry the tags), everything that imports them, then the bundle and the app. Pure-Go packages with the same files keep their store paths. With a tag the stdlib reads (`netgo`, `osusergo`, `timetzdata`, …) also the stdlib this build uses, compiled once per distinct set of such tags, then shared, and with it every package compile |
 | `gcflags`, `pgoProfile` | every package compile (they are part of each compile manifest), then the bundle and the app. The stdlib is not affected |
+| `CGO_ENABLED` | the stdlib this build uses (compiled once per distinct value, then shared), and everything after it |
 | the scope's `goEnv`, or the Go toolchain | the stdlib, and everything after it |
 
 To get a feel for how big the cone is in your project, see

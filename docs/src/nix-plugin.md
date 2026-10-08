@@ -90,7 +90,11 @@ returns:
   the plugin's toolchain, and another Go release may read other tags
   (`quicbasicnet` in go 1.27, not in go 1.26)
 - `stdlibTagsGo` — the release of that toolchain, as `go env GOVERSION`
-  prints it (`"go1.26.3"`); `""` when `tags` is empty
+  prints it (`"go1.26.3"`); `""` when `tags` is empty. The builder compiles
+  the standard library with `stdlibTags` instead of all of `tags` when this
+  is the release of the scope's `go` (`"go${go.version}"`). When `mkGoEnv`
+  was given another release every tag counts, read or not (see
+  [The Scope](scope.md#stdlib))
 - `moduleHashes` — module NAR hashes (when `resolveHashes = true`; see
   [Lockfile-free builds](lockfile-format.md#lockfile-free-builds))
 - `apiLevel` — see below
