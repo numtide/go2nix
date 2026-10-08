@@ -10,9 +10,9 @@ machine that builds them.
 Small Go modules, one behaviour each: build tags, assembly, cgo and C++,
 `pkg-config`, test-only dependencies, `//go:embed` in tests, nested modules,
 sibling modules behind a filesystem `replace`, `modRoot`, `srcFilter`, a
-third-party package importing a locally replaced module, and so on. Each has a
-`dag.nix` that builds it with the default builder, and most have a
-`go2nix.toml`.
+third-party package importing a locally replaced module, `toolchain` lines
+newer than the builder's Go, and so on. Each has a `dag.nix` that builds it
+with the default builder, and most have a `go2nix.toml`.
 
 Two ways to run one:
 

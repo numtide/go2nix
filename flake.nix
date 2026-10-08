@@ -159,6 +159,9 @@
               {
                 inherit flake system;
               };
+          test-fixture-toolchain-line = callPkgWith ./packages/test-fixture-toolchain-line/default.nix {
+            inherit flake system;
+          };
           test-mainsrc-precise = callPkgWith ./packages/test-mainsrc-precise/default.nix {
             inherit flake system;
           };

@@ -224,6 +224,15 @@ In the wrapper's build log: the experimental builder has no lockfile-free
 mode and found a module the lockfile does not list. See the stale-lockfile
 entry above.
 
+```
+resolve failed err="discovering packages: go list in …: exit status 1"
+```
+
+In the wrapper's build log, after a line from `go` itself. When that line is
+`go: go.mod requires go >= 1.N (running go 1.M; GOTOOLCHAIN=local)`, the `go`
+line of `go.mod` asks for a newer Go than the one in the scope, as in the
+evaluation-time entry above.
+
 ## Evaluation feels slow on large graphs
 
 Every evaluation runs `go list -json -deps` (via the plugin) and
