@@ -54,6 +54,9 @@ else
         buildPhase = ''
           export HOME=$TMPDIR
           export GOMODCACHE=$out
+          # torture-project has a go.work: without this, go fetches the
+          # workspace's build list instead of the module's own.
+          export GOWORK=off
           cd ${go2nixSrc}/${src}
           go mod download
         '';

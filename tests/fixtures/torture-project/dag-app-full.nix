@@ -4,10 +4,14 @@
 # 14 sibling modules under ../internal/*. This exercises the hard case where
 # src is the monorepo root, modRoot points to one app, and local replace
 # targets live outside modRoot.
+#
+# test-drv-canary passes a stand-in for the CLI.
+{
+  pkgs ? import <nixpkgs> { },
+  go2nix ? import ../../../packages/go2nix { inherit pkgs; },
+}:
 let
-  pkgs = import <nixpkgs> { };
   go = pkgs.go_1_26;
-  go2nix = import ../../../packages/go2nix { inherit pkgs; };
   goEnv = import ../../../nix/mk-go-env.nix {
     inherit go go2nix;
     inherit (pkgs) callPackage;

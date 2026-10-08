@@ -302,7 +302,7 @@ nix develop                                         # or: direnv allow — Go 1.
 (cd go/go2nix && go test ./...)                     # CLI unit tests
 nix build .#go2nix-nix-plugin                       # the plugin; its build runs the resolver's unit tests
 nix build .#test-fixture-testify-basic              # one integration fixture (needs recursive-nix)
-nix flake check                                     # formatting, linters, clippy, plugin eval tests, godebug table
+nix flake check                                     # formatting, linters, clippy, plugin eval tests, godebug table, drv canary
 nix fmt                                             # treefmt: nixfmt, deadnix, statix, gofumpt, shfmt, mdformat, ruff
 nix run .#bench-incremental -- -fixture light       # what an edit rebuilds, measured
 ```
@@ -319,7 +319,7 @@ docs/         the mdBook
 
 ## Contributing
 
-Issues and pull requests are welcome. CI is numtide's buildbot on every pull request, plus a benchmark regression job on GitHub Actions; `main` merges through a merge queue. The fixtures are flake packages, not checks, so `nix flake check` does not run them: build the ones your change touches (`nix build .#test-fixture-<name>`). Branches use a type prefix (`feat/`, `fix/`, `docs/`). A change to what the resolver returns has to keep `nix/dag` and the plugin compatible in both directions or bump the API level in both. A change to build behaviour should say what `go build` does in the same situation — parity with cmd/go is the specification.
+Issues and pull requests are welcome. CI is numtide's buildbot on every pull request, plus a benchmark regression job on GitHub Actions; `main` merges through a merge queue. The fixtures are flake packages, not checks, so `nix flake check` does not run them: build the ones your change touches (`nix build .#test-fixture-<name>`). A change that moves derivation hashes regenerates `packages/test-drv-canary/expected.txt` with `./scripts/update-drv-canary.sh` (x86_64-linux paths: on another system the script needs an x86_64-linux builder, or copy the four `+` lines from the failed check's log); one that says it moves none leaves that file alone and the `test-drv-canary` check proves it. That check's first build on x86_64-linux fetches a 2.6 GB Go module cache, once per store. Branches use a type prefix (`feat/`, `fix/`, `docs/`). A change to what the resolver returns has to keep `nix/dag` and the plugin compatible in both directions or bump the API level in both. A change to build behaviour should say what `go build` does in the same situation — parity with cmd/go is the specification.
 
 ## Acknowledgments
 

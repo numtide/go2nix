@@ -64,6 +64,37 @@ Starts a throw-away Nix daemon with `ca-derivations` enabled, builds the
 `xtest-local-dep` fixture with `contentAddressed = true` in it, and tears it
 down. Needs `socat`.
 
+## Derivation canary
+
+`packages/test-drv-canary` instantiates four fixtures (`testify-basic`,
+`xtest-local-dep`, `cgo-internal-test` and `torture-project`'s `app-full`)
+with the plugin and compares the application `.drv` paths with
+`packages/test-drv-canary/expected.txt`. It is how a change shows that it
+moves no derivation: a refactor of `nix/dag`, or a plugin change that returns
+the same graph, leaves `expected.txt` alone and the canary stays green.
+
+A change that is meant to move derivations (new builder behaviour, the hooks
+under `nix/dag/hooks/`, the nixpkgs input, one of the four fixtures, what the
+plugin returns for them) regenerates the file and commits it with the change:
+
+```bash
+./scripts/update-drv-canary.sh
+```
+
+The diff of `expected.txt` is then the record that derivations moved. A change
+under `go/go2nix/` does not move the paths: the fixtures are instantiated with
+a stand-in for the CLI, whose store path would otherwise be in every one of
+them. The paths are x86_64-linux ones and the script builds the x86_64-linux
+attribute whatever the host is: on another system it needs an x86_64-linux
+builder, and without one the four `+` lines in the failed check's log are the
+new contents of the file.
+
+The canary only evaluates, in read-only mode, so it needs no `recursive-nix`
+and runs as `checks.x86_64-linux.test-drv-canary`. By hand:
+`nix build .#checks.x86_64-linux.test-drv-canary`. Its first build fetches the
+module cache of `torture-project`'s `app-full` from the Go proxy (497 modules,
+2.6 GB in the store), once per store.
+
 ## Elsewhere
 
 - Go unit tests: `go test ./...` in `go/go2nix`; they also run when
@@ -77,7 +108,8 @@ down. Needs `socat`.
 ## What CI runs
 
 `nix flake check` and the CI build the flake's `checks`: formatting, the
-linters, the GODEBUG table check, the Nix unit tests and the two plugin
-evaluation tests. The fixture and package tests above are flake *packages*,
-not checks, so they do not run on a pull request: build the ones your change
-touches by hand, and say which in the pull request.
+linters, the GODEBUG table check, the Nix unit tests, the two plugin
+evaluation tests and, on x86_64-linux, the derivation canary. The fixture and
+package tests above are flake *packages*, not checks, so they do not run on a
+pull request: build the ones your change touches by hand, and say which in the
+pull request.

@@ -205,7 +205,7 @@
       );
 
       checks = forAllSystems (
-        _system: pkgs:
+        system: pkgs:
         let
           callPkg = path: pkgs.callPackage path { };
           callPkgWith = path: args: pkgs.callPackage path args;
@@ -255,6 +255,13 @@
                 $bench/bin/bench-incremental --help > /dev/null 2>&1 || true
                 touch $out
               '';
+        }
+        # The pinned .drv paths are x86_64-linux ones.
+        // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          test-drv-canary = callPkgWith ./packages/test-drv-canary/default.nix {
+            flake = self;
+            inherit system;
+          };
         }
       );
 
