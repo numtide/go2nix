@@ -420,7 +420,7 @@ let
 
   # Bump in lockstep with API_LEVEL in
   # packages/go2nix-nix-plugin/rust/src/resolve.rs.
-  apiLevel = 1;
+  apiLevel = 2;
   resolverApiLevel = builtins.go2nixApiLevel or 0;
   apiLevelGuard =
     if resolverApiLevel == apiLevel then
@@ -460,15 +460,6 @@ let
       // (if goProxy != null then { inherit goProxy; } else { })
       // (if CGO_ENABLED != null then { cgoEnabled = toString CGO_ENABLED; } else { })
     )
-  );
-
-  # Precomputed by the plugin: every src-relative directory containing a
-  # go.mod. Replaces per-filter `pathExists (path + "/go.mod")` syscalls.
-  nestedModuleRootSet = builtins.listToAttrs (
-    map (r: {
-      name = r;
-      value = true;
-    }) goPackagesResult.nestedModuleRoots
   );
 
   # Module hashes from plugin (lockfile-free path).
@@ -645,23 +636,28 @@ let
       # children, so an O(1) set lookup on the directory itself suffices.
       # Nested-module subtrees are also dropped: go list stopped at their
       # go.mod, so they are never compiled and would only churn the store
-      # path. The package's own root is never passed to the filter, so a
-      # modRoot/replace-target package's go.mod doesn't self-exclude.
+      # path. `_`- and `.`-prefixed directories are no exception: cmd/go
+      # does not embed across a go.mod whatever the directory is called
+      # (load.resolveEmbed). The package's own root is never passed to the
+      # filter, so a modRoot/replace-target package's go.mod doesn't
+      # self-exclude. srcFilter goes first: pathExists throws on a
+      # directory the evaluator may not search, and one the caller rejects
+      # must not be touched at all.
       pkgSrc = builtins.path {
         path = if isRoot then src else src + "/${relDir}";
         name = "golocal-${helpers.sanitizeName importPath}-src";
         filter =
           path: type:
-          (
+          srcFilter path type
+          && (
             type != "directory"
             || (
               let
                 rel = removePrefix srcPrefix (toString path);
               in
-              !(localPkgDirSet ? ${rel} || nestedModuleRootSet ? ${rel})
+              !(localPkgDirSet ? ${rel} || builtins.pathExists (path + "/go.mod"))
             )
-          )
-          && srcFilter path type;
+          );
       };
 
       srcDir = "${pkgSrc}";

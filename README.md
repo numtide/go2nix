@@ -246,7 +246,7 @@ It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch,
 | `localPackages`, `testLocalPackages` | main-module and filesystem-replaced packages: `dir` (relative to `src`), `modPath`, `localImports`, `thirdPartyImports`, file lists, `mainSrcFiles` |
 | `modulePath`, `goVersion` | the main module's path and `go` directive |
 | `replacements` | `replace` directives with a version, by `modKey` |
-| `siblingModules`, `localReplaceDirs`, `nestedModuleRoots` | filesystem `replace` targets: identity per module, their directories, every directory holding a `go.mod` |
+| `siblingModules`, `localReplaceDirs` | filesystem `replace` targets: identity per module, their directories |
 | `subPackageClosures` | per main package: the modules it links (for module info) and whether it needs a C++ linker |
 | `moduleHashes` | with `resolveHashes`: NAR hash per module, for lockfile-free builds |
 | `apiLevel` | the contract's version; `builtins.go2nixApiLevel` reports the plugin's, and the builder warns when they differ |

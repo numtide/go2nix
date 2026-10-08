@@ -151,8 +151,8 @@ static RegisterPrimOp rp(PrimOp {
 
   Returns: { apiLevel, packages, localPackages, modulePath, goVersion,
     replacements, subPackageClosures, siblingModules, localReplaceDirs,
-    nestedModuleRoots, testPackages, testLocalPackages (when doCheck=true and
-    non-empty), moduleHashes (when resolveHashes=true) }
+    testPackages, testLocalPackages (when doCheck=true and non-empty),
+    moduleHashes (when resolveHashes=true) }
 )",
 #ifdef NIX_PRIMOP_HAS_IMPL
     .impl = prim_resolveGoPackages,

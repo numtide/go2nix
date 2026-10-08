@@ -7,7 +7,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 /// Baked-in default Go binary path, set at compile time via GO2NIX_DEFAULT_GO.
@@ -20,7 +20,7 @@ pub(crate) const DEFAULT_GO: Option<&str> = option_env!("GO2NIX_DEFAULT_GO");
 /// compares it with its own copy via `builtins.go2nixApiLevel` and warns
 /// (`lib.warn`) on a mismatch, so skew surfaces with a clear message at the
 /// boundary.
-pub const API_LEVEL: u32 = 1;
+pub const API_LEVEL: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Go list JSON types
@@ -1499,9 +1499,6 @@ struct JsonOutput {
     sibling_modules: BTreeMap<String, SiblingModule>,
     /// Transitive local-replace target dirs (src-relative, normalized).
     local_replace_dirs: Vec<String>,
-    /// All src-relative directories containing a go.mod, so the Nix-side
-    /// filters need no `pathExists (path + "/go.mod")` per directory.
-    nested_module_roots: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1790,96 +1787,6 @@ fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
     out
 }
 
-/// Walk under each `start` directory (src-relative) for go.mod-bearing
-/// subdirectories; return all of them src-relative. Seeds are modRoot plus
-/// the local-replace targets — the only subtrees the dag-side `mainSrc` /
-/// `pkgSrc` filters ever descend into — so a monorepo `src` with
-/// `modRoot != "."` does no I/O outside the relevant module roots.
-///
-/// Descent stops at the first go.mod *strictly below* a seed (matches the
-/// `builtins.path` filter, which rejects a nested-module dir and so never
-/// recurses into it). Seeds themselves always have a go.mod and are
-/// included.
-fn find_nested_module_roots(src: &Path, starts: &[String]) -> Result<Vec<String>> {
-    fn rel_of(src: &Path, p: &Path) -> String {
-        let r = p.strip_prefix(src).unwrap_or(p);
-        let mut s = String::new();
-        for c in r.components() {
-            if let Component::Normal(seg) = c {
-                if !s.is_empty() {
-                    s.push('/');
-                }
-                s.push_str(&seg.to_string_lossy());
-            }
-        }
-        if s.is_empty() {
-            ".".to_owned()
-        } else {
-            s
-        }
-    }
-
-    const WALK_CAP: usize = 100_000;
-
-    let seed_set: BTreeSet<PathBuf> = starts
-        .iter()
-        .map(|s| if s == "." { src.to_path_buf() } else { src.join(s) })
-        .collect();
-
-    let mut out: BTreeSet<String> = BTreeSet::new();
-    let mut descended: BTreeSet<PathBuf> = BTreeSet::new();
-    let mut walked: usize = 0;
-    let mut stack: Vec<PathBuf> = seed_set.iter().cloned().collect();
-    while let Some(dir) = stack.pop() {
-        walked += 1;
-        if walked > WALK_CAP {
-            bail!(
-                "find_nested_module_roots: walked >{WALK_CAP} directories under seeds {starts:?}; \
-                 if this is a legitimate Go module tree, file an issue"
-            );
-        }
-        let has_gomod = dir.join("go.mod").is_file();
-        if has_gomod {
-            out.insert(rel_of(src, &dir));
-            // Nested boundary below a seed: stop here, matching the
-            // builtins.path filter's no-descend-on-reject behaviour.
-            if !seed_set.contains(&dir) {
-                continue;
-            }
-        }
-        // Only the descend step needs cycle protection: a symlink that
-        // points at an already-walked dir is fine to *record* (the dag
-        // filter sees both lexical paths) but must not be re-read.
-        let canon = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
-        if !descended.insert(canon) {
-            continue;
-        }
-        let Ok(rd) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in rd.flatten() {
-            let p = entry.path();
-            // Follow symlinked directories so a go.mod reachable through
-            // one is still recorded as a boundary; the visited set above
-            // breaks cycles.
-            if !p.is_dir() {
-                continue;
-            }
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            // Skip `.` and `_` prefixed dirs (`go help packages`). Unlike
-            // the pre-port skip list this does NOT exclude testdata/vendor:
-            // a go.mod under those is still a pkgSrc boundary the dag-side
-            // filter must respect, matching the original `pathExists go.mod`.
-            if name.starts_with('.') || name.starts_with('_') {
-                continue;
-            }
-            stack.push(p);
-        }
-    }
-    Ok(out.into_iter().collect())
-}
-
 /// Convert a `PackageGraph` to a JSON string.
 pub(crate) fn package_graph_to_json(
     graph: &PackageGraph,
@@ -2008,10 +1915,6 @@ pub(crate) fn package_graph_to_json(
 
     let sub_package_closures = compute_sub_package_closures(graph, &input.sub_packages);
     let local_replace_dirs = walk_local_replace_dirs(&canon_src, &input.mod_root);
-    let nested_starts: Vec<String> = std::iter::once(normalize_rel(&input.mod_root))
-        .chain(local_replace_dirs.iter().cloned())
-        .collect();
-    let nested_module_roots = find_nested_module_roots(&canon_src, &nested_starts)?;
 
     let output = JsonOutput {
         api_level: API_LEVEL,
@@ -2026,7 +1929,6 @@ pub(crate) fn package_graph_to_json(
         sub_package_closures,
         sibling_modules: graph.sibling_modules.clone(),
         local_replace_dirs,
-        nested_module_roots,
     };
 
     serde_json::to_string(&output).context("failed to serialize output JSON")
@@ -3203,65 +3105,6 @@ mod tests {
         .unwrap();
         let dirs = walk_local_replace_dirs(src.path(), "app");
         assert_eq!(dirs, vec!["has space", "quoted", "tail"]);
-    }
-
-    #[test]
-    fn test_nested_module_roots() {
-        // Monorepo layout: src/{app,sib,unrelated}/ each has go.mod;
-        // app/nested/ has go.mod; nested/under/ has go.mod (must NOT
-        // be reported — descent stops at app/nested).
-        let src = tempfile::tempdir().unwrap();
-        for d in ["app", "app/nested", "app/nested/under", "sib", "unrelated"] {
-            std::fs::create_dir_all(src.path().join(d)).unwrap();
-            std::fs::write(src.path().join(d).join("go.mod"), "module x\n").unwrap();
-        }
-        // go.mod under testdata IS a boundary (the dag-side pkgSrc filter
-        // would otherwise pull the whole fixture module into the input).
-        let td = src.path().join("app/testdata/x");
-        std::fs::create_dir_all(&td).unwrap();
-        std::fs::write(td.join("go.mod"), "module td\n").unwrap();
-        // `_`-prefixed dirs are Go-ignored; don't descend.
-        let us = src.path().join("app/_ignored/y");
-        std::fs::create_dir_all(&us).unwrap();
-        std::fs::write(us.join("go.mod"), "module us\n").unwrap();
-
-        // Seeds = modRoot + replaceDirs. unrelated/ is outside both → no I/O.
-        let roots =
-            find_nested_module_roots(src.path(), &["app".into(), "sib".into()]).unwrap();
-        assert_eq!(roots, vec!["app", "app/nested", "app/testdata/x", "sib"]);
-
-        // modRoot = "." walks the whole src.
-        let roots_all = find_nested_module_roots(src.path(), &[".".into()]).unwrap();
-        assert_eq!(roots_all, vec!["app", "sib", "unrelated"]);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_nested_module_roots_symlink() {
-        let src = tempfile::tempdir().unwrap();
-        let real = src.path().join("app/real");
-        std::fs::create_dir_all(&real).unwrap();
-        std::fs::write(src.path().join("app/go.mod"), "module app\n").unwrap();
-        std::fs::write(real.join("go.mod"), "module real\n").unwrap();
-        std::os::unix::fs::symlink(&real, src.path().join("app/link")).unwrap();
-        // Symlink loop: app/loop -> app
-        std::os::unix::fs::symlink(src.path().join("app"), src.path().join("app/loop")).unwrap();
-
-        let roots = find_nested_module_roots(src.path(), &["app".into()]).unwrap();
-        // Symlinked dir is followed; the boundary is recorded under both
-        // lexical paths (the dag-side filter sees both). app/loop also has
-        // a go.mod (it's app's) so it is recorded but not re-descended.
-        assert_eq!(roots, vec!["app", "app/link", "app/loop", "app/real"]);
-
-        // A symlink loop that does NOT pass through a go.mod must still
-        // terminate via the descended-set cycle break.
-        let src2 = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(src2.path().join("m/sub")).unwrap();
-        std::fs::write(src2.path().join("m/go.mod"), "module m\n").unwrap();
-        std::os::unix::fs::symlink(src2.path().join("m/sub"), src2.path().join("m/sub/loop"))
-            .unwrap();
-        let roots2 = find_nested_module_roots(src2.path(), &["m".into()]).unwrap();
-        assert_eq!(roots2, vec!["m"]);
     }
 
     #[test]

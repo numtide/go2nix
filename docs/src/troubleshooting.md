@@ -22,7 +22,7 @@ plugin against the Nix you're evaluating with.
 ```
 evaluation warning: go2nix-nix-plugin: API level mismatch.
   nix builtin resolver = 0
-  nix/dag/default.nix  = 1
+  nix/dag/default.nix  = 2
 Your nix was built against a different go2nix-nix-plugin revision
 than the nix/ tree you are evaluating. Rebuild/reload the plugin
 against this checkout.
