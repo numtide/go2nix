@@ -41,10 +41,14 @@ default-mode evaluation stays IFD-free; a derivation-backed `src` is accepted
 but emits a warning and forces the plugin to realise the derivation at eval
 time — i.e. opt-in IFD, still gated by `allow-import-from-derivation`.
 
-It runs `go list -deps -json` for `subPackages` in `src/modRoot` and, when
-`doCheck` is set and the build has local packages, a second
-`go list -deps -test` pass over `./...` and every filesystem-replaced
-sibling module. It returns:
+It runs `go list -deps -json` for `subPackages` in `src/modRoot`. When
+`doCheck` is set it runs `go list -deps -test` over `./...` and every
+filesystem-replaced sibling module instead, and takes the build graph of
+`subPackages` out of that listing. It runs both commands when the listing
+cannot answer for a `subPackages` entry — one `./...` does not match (under
+`testdata/`, a directory whose name starts with `_` or `.`, a symlink) or
+one not written as `.` or `./dir` — and before reporting an error. It
+returns:
 
 - `packages` — third-party packages by import path: `modKey`
   (`path@version`, the replacement's version when there is one), `subdir`,
@@ -171,8 +175,7 @@ To check from the command line: `nix eval --expr 'builtins ? resolveGoPackages'`
 
 `builtins.resolveGoPackages` is impure: it runs `go list`. The Nix
 evaluator does **not** cache its result, so it runs on every evaluation,
-once per `buildGoApplication` call — twice with `doCheck`, which is the
-builder's default.
+once per `buildGoApplication` call.
 
 What `go list` sees is fixed by the plugin, not by your shell. The
 environment is cleared and only `GOMODCACHE`, `GOPATH`, `HOME`, `GOPROXY`
@@ -184,7 +187,10 @@ Everything else — `GOPRIVATE`, `GONOPROXY`, `GOEXPERIMENT`,
 `GOFIPS140`, your own `GOFLAGS`, the scope's `goEnv` — does not reach it.
 Modules are read from `GOMODCACHE`; one that is missing is downloaded
 through `GOPROXY` if the network allows, otherwise `go list` fails and the
-error asks you to run `go mod download`.
+error asks you to run `go mod download`. With `doCheck` the listing covers
+`./...` and every module `go.mod` replaces with a directory, their tests
+included, whether or not `subPackages` uses them, so the modules those need
+are read, and downloaded, too.
 
 With `resolveHashes = true` (what `goLock = null` turns on) the plugin also
 hashes each module's tree in `GOMODCACHE` and remembers the result on disk,

@@ -70,8 +70,8 @@ graph are recompiled to see the replacement.
 
 ## Test-only dependencies
 
-When `doCheck = true`, the [Nix plugin](nix-plugin.md) runs a second
-`go list -deps -test` pass
+When `doCheck = true`, the [Nix plugin](nix-plugin.md) runs
+`go list -deps -test`
 to discover third-party packages that are only reachable through test
 imports (e.g., `github.com/stretchr/testify`). These are built as separate
 `testPackages` derivations and included in a `testDepsImportcfg` bundle

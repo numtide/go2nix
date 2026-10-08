@@ -149,8 +149,8 @@ the input-addressed `.x` path still changes whenever `src` changes.
 go2nix trades build time for eval time. Every `nix build` evaluation:
 
 1. Calls `builtins.resolveGoPackages` (the [Nix plugin](nix-plugin.md)),
-   which runs `go list -json -deps` against your source tree — and a second
-   `go list -deps -test` pass when `doCheck` is on, which is the default.
+   which runs `go list -json -deps` against your source tree — with `-test`
+   when `doCheck` is on, which is the default.
 1. Instantiates one derivation per package in the resulting graph.
 
 For a large application (~3,500 packages) the warm-cache `go list` step

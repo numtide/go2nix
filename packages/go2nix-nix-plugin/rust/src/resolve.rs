@@ -26,7 +26,7 @@ pub const API_LEVEL: u32 = 1;
 // Go list JSON types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 #[serde(default)]
 struct GoModule {
     #[serde(rename = "Path")]
@@ -41,7 +41,7 @@ struct GoModule {
     replace: Option<Box<GoModule>>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 #[serde(default)]
 struct GoPackage {
     #[serde(rename = "ImportPath")]
@@ -98,13 +98,17 @@ struct GoPackage {
     x_test_imports: Vec<String>,
     #[serde(rename = "ForTest")]
     for_test: String,
+    /// The command-line patterns this package matched; empty for one listed
+    /// only as a dependency.
+    #[serde(rename = "Match")]
+    match_patterns: Vec<String>,
     #[serde(rename = "InvalidGoFiles")]
     invalid_go_files: Vec<String>,
     #[serde(rename = "Error")]
     error: Option<GoPackageError>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 #[serde(default)]
 struct GoPackageError {
     #[serde(rename = "ImportStack")]
@@ -542,7 +546,7 @@ fn run_go_list_test(
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(go_bin);
     cmd.arg("list");
-    cmd.arg("-json=ImportPath,Dir,Module,Imports,TestImports,XTestImports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,ForTest,InvalidGoFiles,Error");
+    cmd.arg("-json=ImportPath,Dir,Module,Imports,TestImports,XTestImports,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedPatterns,EmbedFiles,TestGoFiles,XTestGoFiles,TestEmbedFiles,XTestEmbedFiles,CgoPkgConfig,CgoCFLAGS,CgoLDFLAGS,ForTest,Match,InvalidGoFiles,Error");
     cmd.arg("-deps");
     cmd.arg("-test");
     cmd.arg("-e");
@@ -593,6 +597,22 @@ fn parse_test_packages(
     local_paths: &BTreeSet<String>,
     replacements: &mut BTreeMap<String, (String, String)>,
 ) -> Result<TestPassResult> {
+    classify_test_packages(
+        serde_json::Deserializer::from_slice(stdout)
+            .into_iter::<GoPackage>()
+            .map(|r| r.context("resolveGoPackages: failed to parse test go list JSON")),
+        third_party_paths,
+        local_paths,
+        replacements,
+    )
+}
+
+fn classify_test_packages(
+    records: impl Iterator<Item = Result<GoPackage>>,
+    third_party_paths: &BTreeSet<String>,
+    local_paths: &BTreeSet<String>,
+    replacements: &mut BTreeMap<String, (String, String)>,
+) -> Result<TestPassResult> {
     let mut test_packages = Vec::new();
     let mut test_only_paths = BTreeSet::new();
     let mut test_local_paths = BTreeSet::new();
@@ -605,8 +625,8 @@ fn parse_test_packages(
     let mut local_test_imports: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut pkg_errors = Vec::new();
 
-    for result in serde_json::Deserializer::from_slice(stdout).into_iter::<GoPackage>() {
-        let jpkg = result.context("resolveGoPackages: failed to parse test go list JSON")?;
+    for result in records {
+        let jpkg = result?;
 
         if let Some(ref err) = jpkg.error {
             if !err.err.is_empty() {
@@ -907,6 +927,14 @@ impl PackageGraph {
 }
 
 pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
+    classify_go_packages(
+        serde_json::Deserializer::from_slice(stdout)
+            .into_iter::<GoPackage>()
+            .map(|r| r.context("resolveGoPackages: failed to parse go list JSON")),
+    )
+}
+
+fn classify_go_packages(records: impl Iterator<Item = Result<GoPackage>>) -> Result<PackageGraph> {
     let mut packages = Vec::new();
     let mut pkg_errors = Vec::new();
     let mut third_party_paths = BTreeSet::new();
@@ -918,8 +946,8 @@ pub(crate) fn parse_go_packages(stdout: &[u8]) -> Result<PackageGraph> {
     let mut go_version = String::new();
     let mut raw_local_pkgs: Vec<RawLocalPkg> = Vec::new();
 
-    for result in serde_json::Deserializer::from_slice(stdout).into_iter::<GoPackage>() {
-        let jpkg = result.context("resolveGoPackages: failed to parse go list JSON")?;
+    for result in records {
+        let jpkg = result?;
 
         if let Some(ref err) = jpkg.error {
             if !err.err.is_empty() {
@@ -1143,12 +1171,12 @@ pub(crate) fn find_gomodcache(go_bin: &str) -> Result<std::path::PathBuf> {
     Ok(std::path::PathBuf::from(path))
 }
 
-/// Run both go list passes and return the complete package graph.
+/// Run `go list` and return the complete package graph.
 ///
-/// The first pass (`go list -deps`) discovers build-time packages.
-/// When `do_check` is set and local packages exist, a second pass
-/// (`go list -deps -test`) discovers test-only dependencies, third-party
-/// and local.
+/// Without `do_check` one `go list -deps` discovers the build-time packages.
+/// With it one `go list -deps -test` gives both those and the test-only
+/// dependencies, third-party and local; where that run cannot stand in for
+/// the two separate passes they are run instead.
 pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
     let go_bin = input
         .go
@@ -1165,7 +1193,20 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
         cgo_enabled: &input.cgo_enabled,
     };
 
-    let stdout = run_go_list(go_bin, &input.src, &input.sub_packages, &opts)?;
+    if input.do_check {
+        if let Some(graph) = resolve_single_pass(go_bin, input, &opts) {
+            return Ok(graph);
+        }
+    }
+    resolve_two_passes(go_bin, input, &opts)
+}
+
+/// The first pass (`go list -deps`) discovers build-time packages.
+/// When `do_check` is set and local packages exist, a second pass
+/// (`go list -deps -test`) discovers test-only dependencies, third-party
+/// and local.
+fn resolve_two_passes(go_bin: &str, input: &JsonInput, opts: &GoListOpts) -> Result<PackageGraph> {
+    let stdout = run_go_list(go_bin, &input.src, &input.sub_packages, opts)?;
     let mut graph = parse_go_packages(&stdout)?;
 
     if input.do_check && !graph.local_packages.is_empty() {
@@ -1176,16 +1217,9 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
         // match rather than a `-deps` consequence — makes `go list -test`
         // resolve TestEmbedFiles for test-only-locals too
         // (cmd/go/internal/load/test.go:132 only does so for patterns).
-        let patterns: Vec<String> = std::iter::once("./...".to_owned())
-            .chain(
-                graph
-                    .local_replace_mod_paths
-                    .iter()
-                    .map(|m| format!("{m}/...")),
-            )
-            .collect();
+        let patterns = test_patterns(&graph.local_replace_mod_paths);
 
-        let test_stdout = run_go_list_test(go_bin, &input.src, &patterns, &opts)?;
+        let test_stdout = run_go_list_test(go_bin, &input.src, &patterns, opts)?;
 
         let tp = parse_test_packages(
             &test_stdout,
@@ -1193,23 +1227,214 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
             &graph.local_paths,
             &mut graph.replacements,
         )?;
-        graph.test_only_paths = tp
-            .test_packages
-            .iter()
-            .map(|p| p.import_path.clone())
-            .collect();
-        graph.test_packages = tp.test_packages;
-        graph.test_local_packages = tp.test_local_packages;
-        for lp in &mut graph.local_packages {
-            if let Some(extra) = tp.local_test_embed_files.get(&lp.import_path) {
-                lp.main_src_files.extend(extra.iter().cloned());
-                lp.main_src_files.sort();
-                lp.main_src_files.dedup();
-            }
-        }
+        merge_test_pass(&mut graph, tp);
     }
 
     Ok(graph)
+}
+
+fn test_patterns(sibling_mod_paths: &BTreeSet<String>) -> Vec<String> {
+    std::iter::once("./...".to_owned())
+        .chain(sibling_mod_paths.iter().map(|m| format!("{m}/...")))
+        .collect()
+}
+
+fn merge_test_pass(graph: &mut PackageGraph, tp: TestPassResult) {
+    graph.test_only_paths = tp
+        .test_packages
+        .iter()
+        .map(|p| p.import_path.clone())
+        .collect();
+    graph.test_packages = tp.test_packages;
+    graph.test_local_packages = tp.test_local_packages;
+    for lp in &mut graph.local_packages {
+        if let Some(extra) = tp.local_test_embed_files.get(&lp.import_path) {
+            lp.main_src_files.extend(extra.iter().cloned());
+            lp.main_src_files.sort();
+            lp.main_src_files.dedup();
+        }
+    }
+}
+
+/// A record of `go list -test` that is not a copy of a package made for a
+/// test binary (`P [X.test]`, `X_test [X.test]`).
+fn is_bare(pkg: &GoPackage) -> bool {
+    pkg.for_test.is_empty() && !pkg.import_path.contains(" [")
+}
+
+/// Both passes from one `go list -deps -test` over `./...` and every module
+/// the main go.mod replaces with a directory. Its bare records are the
+/// records the build pass prints for the same packages, plus the test embed
+/// files only `-test` resolves, which the test pass merges into these
+/// packages anyway; so the build graph is their closure over `Imports` from
+/// the subPackages. The one record of the build pass that closure can lack
+/// is `runtime/cgo`, which cmd/go makes a dependency of a cgo package
+/// without listing it in `Imports` (cmd/go/internal/load/pkg.go,
+/// `(*Package).load`); like every standard-library record it carries no
+/// module and is dropped.
+///
+/// `None` when that run cannot serve: no subPackage at all (go then lists
+/// `.`), one that `./...` does not match (under `testdata/`, `_dir/` or
+/// `.dir/`, or a symlink), that is not written as `.` or `./dir`, or that
+/// lies in another module, a sibling of the build closure the go.mod scan
+/// did not find, two records with one import path, or any failure, so that
+/// every error message is still worded by the two passes.
+fn resolve_single_pass(go_bin: &str, input: &JsonInput, opts: &GoListOpts) -> Option<PackageGraph> {
+    if input.sub_packages.is_empty()
+        || !input
+            .sub_packages
+            .iter()
+            .all(|sp| sp == "." || sp.starts_with("./"))
+    {
+        return None;
+    }
+    // Only the main module's replace directives apply.
+    let go_mod = Path::new(&input.src).join(&input.mod_root).join("go.mod");
+    let siblings: BTreeSet<String> = std::fs::read_to_string(go_mod)
+        .map(|text| parse_local_replaces(&text))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(mod_path, _)| mod_path)
+        .collect();
+
+    let stdout = run_go_list_test(go_bin, &input.src, &test_patterns(&siblings), opts).ok()?;
+    let records: Vec<GoPackage> = serde_json::Deserializer::from_slice(&stdout)
+        .into_iter::<GoPackage>()
+        .collect::<std::result::Result<_, _>>()
+        .ok()?;
+
+    let build = build_closure(&records, &input.sub_packages)?;
+    let mut graph = classify_go_packages(build.into_iter().map(|i| Ok(records[i].clone()))).ok()?;
+    if graph.local_packages.is_empty() {
+        return Some(graph);
+    }
+
+    // The test pass lists only the siblings that own a package of the build
+    // closure; third-party test dependencies of the others must not appear.
+    if !graph.local_replace_mod_paths.is_subset(&siblings) {
+        return None;
+    }
+    let records = if graph.local_replace_mod_paths == siblings {
+        records
+    } else {
+        restrict_to_patterns(records, &test_patterns(&graph.local_replace_mod_paths))?
+    };
+    let tp = classify_test_packages(
+        records.into_iter().map(Ok),
+        &graph.third_party_paths,
+        &graph.local_paths,
+        &mut graph.replacements,
+    )
+    .ok()?;
+    merge_test_pass(&mut graph, tp);
+    Some(graph)
+}
+
+/// The records `keep` accepts, by the import path go list prints. `None` when
+/// two share one: a local package may be called `P.test`, go's name for the
+/// test main of `P`.
+fn index_by_path(
+    records: &[GoPackage],
+    keep: impl Fn(&GoPackage) -> bool,
+) -> Option<BTreeMap<&str, usize>> {
+    let mut index = BTreeMap::new();
+    for (i, pkg) in records.iter().enumerate().filter(|(_, p)| keep(p)) {
+        if index.insert(pkg.import_path.as_str(), i).is_some() {
+            return None;
+        }
+    }
+    Some(index)
+}
+
+/// Indices of the bare records reachable from the subPackages over `Imports`:
+/// what `go list -deps -- <subPackages>` prints, standard library included
+/// because an import that does not resolve is reported on a record without a
+/// module. `None` when a subPackage has no bare record in the main module:
+/// go list refuses a directory of another module, also of one whose path is
+/// the main module's plus that directory.
+fn build_closure(records: &[GoPackage], sub_packages: &[String]) -> Option<Vec<usize>> {
+    let bare = index_by_path(records, is_bare)?;
+    let module_path = records
+        .iter()
+        .find_map(|p| p.module.as_ref().filter(|m| m.main))
+        .map(|m| m.path.as_str())?;
+    let in_main = |i: &usize| records[*i].module.as_ref().is_some_and(|m| m.main);
+    let mut stack = sub_packages
+        .iter()
+        .map(|sp| {
+            bare.get(sub_package_import_path(module_path, sp).as_str())
+                .copied()
+                .filter(in_main)
+        })
+        .collect::<Option<Vec<usize>>>()?;
+    let mut seen: BTreeSet<usize> = BTreeSet::new();
+    while let Some(i) = stack.pop() {
+        if seen.insert(i) {
+            stack.extend(
+                records[i]
+                    .imports
+                    .iter()
+                    .filter_map(|imp| bare.get(imp.as_str())),
+            );
+        }
+    }
+    Some(seen.into_iter().collect())
+}
+
+/// Narrow the records of `go list -deps -test` over more patterns to what the
+/// same run over `patterns` alone prints. Mirrors `runList` in
+/// cmd/go/internal/list/list.go: the roots are the pattern matches and, for a
+/// match with test files, its test main `P.test`, whose `Imports` name the
+/// test copy `P [P.test]` and the external test `P_test [P.test]`; the
+/// listing is what `load.PackageList` reaches from the roots. go list prints
+/// `Imports` with the names of the copies `recompileForTest`
+/// (cmd/go/internal/load/test.go) made, so following them as printed is that
+/// walk: a package that imports the package under test back is reached as its
+/// copy `Q [P.test]` only, and what only the copy imports is reached through
+/// it. What the walk skips are the dependencies cmd/go adds without listing
+/// them in `Imports`, all standard library. `TestPackagesAndErrors` (same
+/// file) resolves test embed files for matches only, so they are cleared on
+/// every other record, copies included. A match is told by `Match`, which
+/// the copies inherit, not by its module: `m/...` also matches the packages
+/// of a module `m/sub`.
+fn restrict_to_patterns(records: Vec<GoPackage>, patterns: &[String]) -> Option<Vec<GoPackage>> {
+    let by_path = index_by_path(&records, |_| true)?;
+    let matched =
+        |p: &GoPackage| is_bare(p) && p.match_patterns.iter().any(|m| patterns.contains(m));
+    let mut roots: BTreeSet<String> = BTreeSet::new();
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, p) in records.iter().enumerate().filter(|(_, p)| matched(p)) {
+        roots.insert(p.import_path.clone());
+        stack.push(i);
+        if !p.test_go_files.is_empty() || !p.x_test_go_files.is_empty() {
+            stack.push(*by_path.get(format!("{}.test", p.import_path).as_str())?);
+        }
+    }
+    let mut reached: BTreeSet<usize> = BTreeSet::new();
+    while let Some(i) = stack.pop() {
+        if reached.insert(i) {
+            stack.extend(
+                records[i]
+                    .imports
+                    .iter()
+                    .filter_map(|imp| by_path.get(imp.as_str())),
+            );
+        }
+    }
+    drop(by_path);
+    let restricted = records
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| reached.contains(i))
+        .map(|(_, mut p)| {
+            if !roots.contains(strip_variant_suffix(&p.import_path)) {
+                p.test_embed_files.clear();
+                p.x_test_embed_files.clear();
+            }
+            p
+        })
+        .collect();
+    Some(restricted)
 }
 
 // ---------------------------------------------------------------------------
@@ -1485,41 +1710,48 @@ fn normalize_rel(p: &str) -> String {
     }
 }
 
+/// The local-replace directives of a go.mod as (replaced module path, target
+/// dir) pairs.
+fn parse_local_replaces(text: &str) -> Vec<(String, String)> {
+    // `=>` only appears in `replace` directives; a local target is one
+    // starting with `./` or `../` (modfile.IsDirectoryPath). Strip
+    // `// comment` suffixes first so a commented-out replace doesn't
+    // match, and unwrap a single layer of `"` or `` ` `` quoting
+    // (modfile/read.go uses strconv.Unquote on the token).
+    fn first_token(s: &str) -> Option<&str> {
+        let s = s.trim_start();
+        let b = s.as_bytes();
+        if let Some(&q) = b.first() {
+            if q == b'"' || q == b'`' {
+                let close = s[1..].find(q as char)?;
+                return Some(&s[1..1 + close]);
+            }
+        }
+        s.split_whitespace().next()
+    }
+    text.lines()
+        .filter_map(|l| {
+            let l = l.split_once("//").map(|(h, _)| h).unwrap_or(l);
+            let i = l.find("=>")?;
+            let tgt = first_token(&l[i + 2..])?;
+            if !(tgt.starts_with("./") || tgt.starts_with("../")) {
+                return None;
+            }
+            // `replace old [v] => new`, or `old [v] => new` inside a block
+            let lhs = l[..i].trim_start();
+            let lhs = match lhs.split_once(char::is_whitespace) {
+                Some(("replace", rest)) => rest,
+                _ => lhs,
+            };
+            Some((first_token(lhs)?.to_owned(), tgt.to_owned()))
+        })
+        .collect()
+}
+
 /// Transitively walk local-replace directives (`=> ./X` / `=> ../X`) starting
 /// from `mod_root`, returning normalized src-relative target dirs (excluding
 /// `mod_root` itself, `"."`, and any that escape `src` via `..`).
 fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
-    fn parse_local_replaces(text: &str) -> Vec<String> {
-        // `=>` only appears in `replace` directives; a local target is one
-        // starting with `./` or `../` (modfile.IsDirectoryPath). Strip
-        // `// comment` suffixes first so a commented-out replace doesn't
-        // match, and unwrap a single layer of `"` or `` ` `` quoting
-        // (modfile/read.go uses strconv.Unquote on the token).
-        fn rhs_token(rhs: &str) -> Option<&str> {
-            let rhs = rhs.trim_start();
-            let b = rhs.as_bytes();
-            if let Some(&q) = b.first() {
-                if q == b'"' || q == b'`' {
-                    let close = rhs[1..].find(q as char)?;
-                    return Some(&rhs[1..1 + close]);
-                }
-            }
-            rhs.split_whitespace().next()
-        }
-        text.lines()
-            .filter_map(|l| {
-                let l = l.split_once("//").map(|(h, _)| h).unwrap_or(l);
-                let i = l.find("=>")?;
-                let tgt = rhs_token(&l[i + 2..])?;
-                if tgt.starts_with("./") || tgt.starts_with("../") {
-                    Some(tgt.to_owned())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
     let clean_mod_root = normalize_rel(mod_root);
     let mut visited: BTreeSet<String> = BTreeSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
@@ -1541,7 +1773,7 @@ fn walk_local_replace_dirs(src: &Path, mod_root: &str) -> Vec<String> {
         let Ok(text) = std::fs::read_to_string(&go_mod) else {
             continue;
         };
-        for r in parse_local_replaces(&text) {
+        for (_, r) in parse_local_replaces(&text) {
             let next = normalize_rel(&format!("{dir}/{r}"));
             if visited.contains(&next) {
                 continue;
@@ -3065,5 +3297,526 @@ mod tests {
             got,
             vec![("example.com/sib/testutil", vec!["example.com/sib".to_owned()])]
         );
+    }
+
+    // --- one `go list -test` run in place of the two passes ---
+
+    #[test]
+    fn test_parse_local_replaces_module_paths() {
+        let got = parse_local_replaces(concat!(
+            "module app\n",
+            "require a.example/x v1.0.0\n",
+            "replace a.example/x => ../x\n",
+            "replace b.example/y v1.2.3 => ./y // pinned\n",
+            "replace c.example/fork => github.com/fork/c v1.0.0\n",
+            "replace (\n",
+            "\t\"d.example/q\" => \"./q\"\n",
+            "\treplace.example/z v0.1.0 => ../z\n",
+            "\t// e.example/dead => ./dead\n",
+            ")\n",
+        ));
+        let want = [
+            ("a.example/x", "../x"),
+            ("b.example/y", "./y"),
+            ("d.example/q", "./q"),
+            ("replace.example/z", "../z"),
+        ]
+        .map(|(m, d)| (m.to_owned(), d.to_owned()));
+        assert_eq!(got, want);
+    }
+
+    fn rec(import_path: &str, mod_path: &str, fields: &str) -> String {
+        let module = match mod_path {
+            "" => String::new(),
+            "m" => r#","Module":{"Path":"m","Main":true}"#.to_owned(),
+            p if p.starts_with("tp/") => {
+                format!(r#","Module":{{"Path":"{p}","Version":"v1.0.0"}}"#)
+            }
+            p => format!(r#","Module":{{"Path":"{p}","Replace":{{"Path":"./{p}"}}}}"#),
+        };
+        let fields = if fields.is_empty() {
+            String::new()
+        } else {
+            format!(",{fields}")
+        };
+        format!(r#"{{"ImportPath":"{import_path}"{module}{fields}}}"#)
+    }
+
+    #[test]
+    fn test_build_closure() {
+        // m/sub is a nested module the go.mod replaces with ./sub: its path is the main module's plus the directory
+        let stream = [
+            rec("fmt", "", ""),
+            rec("m/lib", "m", r#""Imports":["fmt","tp/x"]"#),
+            rec("tp/x", "tp/x", ""),
+            rec("m/cmd/app", "m", r#""Imports":["m/lib","m/sub/s"]"#),
+            rec("m/sub/s", "m/sub", ""),
+            rec("m/sub/cmd/x", "m/sub", r#""Imports":["m/sub/s"]"#),
+            rec(
+                "m/lib [m/lib.test]",
+                "m",
+                r#""ForTest":"m/lib","Imports":["fmt","tp/x","tp/y"]"#,
+            ),
+            rec("tp/y", "tp/y", ""),
+        ]
+        .join("\n");
+        let records: Vec<GoPackage> = serde_json::Deserializer::from_str(&stream)
+            .into_iter()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        let closure = |sub_packages: &[&str]| {
+            let sub_packages: Vec<String> = sub_packages.iter().map(|s| s.to_string()).collect();
+            build_closure(&records, &sub_packages).map(|is| {
+                is.into_iter()
+                    .map(|i| records[i].import_path.as_str())
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(
+            closure(&["./cmd/app"]).unwrap(),
+            ["fmt", "m/lib", "tp/x", "m/cmd/app", "m/sub/s"]
+        );
+        assert_eq!(
+            closure(&["./lib", "./lib"]).unwrap(),
+            ["fmt", "m/lib", "tp/x"]
+        );
+        // go list refuses "./sub/cmd/x": the main module does not contain it
+        assert_eq!(closure(&["./sub/cmd/x"]), None);
+        assert_eq!(closure(&["./cmd/app", "./nowhere"]), None);
+    }
+
+    #[test]
+    fn test_restrict_to_patterns() {
+        // m/a (in the build closure) imports keep/k. Its test imports drop/d, which has a test of its own that
+        // imports tp/only and embeds a file. Its external test imports drop/back, which imports m/a back: without
+        // drop/... go lists it only as the copy made for m/a.test, and tp/behind only behind that copy. drop/e is
+        // matched by drop/... and reached by nothing.
+        let stream = [
+            rec("fmt", "", r#""GoFiles":["print.go"]"#),
+            rec(
+                "keep/k",
+                "keep",
+                r#""Match":["keep/..."],"Imports":["fmt"],"TestGoFiles":["k_test.go"],"TestImports":["tp/k"]"#,
+            ),
+            rec(
+                "m/a",
+                "m",
+                r#""Match":["./..."],"Imports":["keep/k"],"TestGoFiles":["a_test.go"],"XTestGoFiles":["x_test.go"],"TestImports":["drop/d"],"XTestImports":["drop/back"]"#,
+            ),
+            rec(
+                "drop/d",
+                "drop",
+                r#""Match":["drop/..."],"Imports":["tp/shared"],"TestGoFiles":["d_test.go"],"TestImports":["tp/only"],"TestEmbedFiles":["x.json"]"#,
+            ),
+            rec("tp/shared", "tp/shared", r#""Match":[]"#),
+            rec("drop/e", "drop", r#""Match":["drop/..."]"#),
+            rec(
+                "drop/back",
+                "drop",
+                r#""Match":["drop/..."],"Imports":["m/a","tp/behind"],"TestGoFiles":["b_test.go"],"TestImports":["tp/only"],"TestEmbedFiles":["b.json"]"#,
+            ),
+            rec("tp/behind", "tp/behind", ""),
+            rec("tp/k", "tp/k", ""),
+            rec("tp/only", "tp/only", ""),
+            rec("keep/k.test", "keep", r#""Imports":["keep/k [keep/k.test]"]"#),
+            rec(
+                "keep/k [keep/k.test]",
+                "keep",
+                r#""ForTest":"keep/k","Match":["keep/..."],"TestGoFiles":["k_test.go"],"Imports":["fmt","tp/k"]"#,
+            ),
+            rec("m/a.test", "m", r#""Imports":["m/a [m/a.test]","m/a_test [m/a.test]"]"#),
+            rec(
+                "m/a [m/a.test]",
+                "m",
+                r#""ForTest":"m/a","Match":["./..."],"Imports":["drop/d","keep/k"]"#,
+            ),
+            rec("m/a_test [m/a.test]", "m", r#""ForTest":"m/a","Imports":["drop/back [m/a.test]"]"#),
+            rec(
+                "drop/back [m/a.test]",
+                "drop",
+                r#""ForTest":"m/a","Match":["drop/..."],"Imports":["m/a [m/a.test]","tp/behind"],"TestEmbedFiles":["b.json"]"#,
+            ),
+            rec("drop/d.test", "drop", r#""Imports":["drop/d [drop/d.test]"]"#),
+            rec(
+                "drop/d [drop/d.test]",
+                "drop",
+                r#""ForTest":"drop/d","Match":["drop/..."],"Imports":["tp/only","tp/shared"]"#,
+            ),
+            rec("drop/back.test", "drop", r#""Imports":["drop/back [drop/back.test]"]"#),
+            rec(
+                "drop/back [drop/back.test]",
+                "drop",
+                r#""ForTest":"drop/back","Match":["drop/..."],"Imports":["m/a","tp/behind","tp/only"]"#,
+            ),
+        ]
+        .join("\n");
+        let records: Vec<GoPackage> = serde_json::Deserializer::from_str(&stream)
+            .into_iter()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        let kept =
+            restrict_to_patterns(records, &["./...".to_owned(), "keep/...".to_owned()]).unwrap();
+        let got: Vec<_> = kept.iter().map(|p| p.import_path.as_str()).collect();
+        assert_eq!(
+            got,
+            [
+                "fmt",
+                "keep/k",
+                "m/a",
+                "drop/d",
+                "tp/shared",
+                "tp/behind",
+                "tp/k",
+                "keep/k.test",
+                "keep/k [keep/k.test]",
+                "m/a.test",
+                "m/a [m/a.test]",
+                "m/a_test [m/a.test]",
+                "drop/back [m/a.test]",
+            ]
+        );
+        for path in ["drop/d", "drop/back [m/a.test]"] {
+            let p = kept.iter().find(|p| p.import_path == path).unwrap();
+            assert!(
+                p.test_embed_files.is_empty(),
+                "{path} is no pattern match without drop/..."
+            );
+        }
+    }
+
+    fn write_tree(root: &std::path::Path, files: &[(&str, &str)]) {
+        for (name, text) in files {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    }
+
+    /// A main module whose go.mod replaces five modules with directories. `cmd/app` links one of them (`used`);
+    /// a test of its dependency `internal/lib` imports a second (`tested`), whose own test embeds a file;
+    /// `pkg/other`, outside the closure of `cmd/app`, imports the third (`other`), whose test imports the fourth
+    /// (`far`). The fifth (`used/extra`) nothing imports, but `example.com/used/...` matches its packages too.
+    ///
+    /// Two packages import the package under test back, so go lists them as its copy `Q [P.test]` only, unless
+    /// a pattern matches them: `internal/lib/testdata/fix` (no pattern looks under testdata/; only its copy
+    /// leads to `testdata/deep`) for the external test of `internal/lib`, and `other/back` (whose own test
+    /// imports `pkg/other`) for the external test of `pkg/core`.
+    const SIBLINGS_TREE: &[(&str, &str)] = &[
+        (
+            "go.mod",
+            concat!(
+                "module example.com/m\n\ngo 1.21\n\n",
+                "require (\n",
+                "\texample.com/far v0.0.0\n",
+                "\texample.com/other v0.0.0\n",
+                "\texample.com/tested v0.0.0\n",
+                "\texample.com/used v0.0.0\n",
+                "\texample.com/used/extra v0.0.0\n",
+                ")\n\n",
+                "replace (\n",
+                "\texample.com/far => ./far\n",
+                "\texample.com/other => ./other\n",
+                "\texample.com/tested => ./tested\n",
+                "\texample.com/used/extra => ./extra\n",
+                ")\n\n",
+                "replace example.com/used => ./used\n",
+            ),
+        ),
+        (
+            "cmd/app/main.go",
+            "package main\n\nimport (\n\t\"example.com/m/internal/lib\"\n\t\"example.com/m/pkg/core\"\n\t\"example.com/used/u\"\n)\n\nfunc main() { println(lib.Name(), core.Name(), u.Name()) }\n",
+        ),
+        ("internal/lib/lib.go", "package lib\n\nfunc Name() string { return \"lib\" }\n"),
+        (
+            "internal/lib/lib_test.go",
+            "package lib\n\nimport (\n\t_ \"embed\"\n\t\"testing\"\n\n\t\"example.com/m/internal/testutil\"\n\t\"example.com/tested/helper\"\n)\n\n//go:embed testdata/golden.txt\nvar golden string\n\nfunc TestName(t *testing.T) { testutil.Equal(t, Name()+helper.Suffix(), golden) }\n",
+        ),
+        ("internal/lib/testdata/golden.txt", "lib\n"),
+        (
+            "internal/lib/lib_x_test.go",
+            "package lib_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/m/internal/lib/testdata/fix\"\n\t\"example.com/m/internal/xhelp\"\n)\n\nfunc TestTwice(t *testing.T) { _ = xhelp.Twice() + fix.Name() }\n",
+        ),
+        (
+            "internal/lib/testdata/fix/fix.go",
+            "package fix\n\nimport (\n\t\"example.com/m/internal/lib\"\n\t\"example.com/m/internal/lib/testdata/deep\"\n)\n\nfunc Name() string { return lib.Name() + deep.Name() }\n",
+        ),
+        (
+            "internal/lib/testdata/deep/deep.go",
+            "package deep\n\nfunc Name() string { return \"deep\" }\n",
+        ),
+        (
+            "internal/xhelp/xhelp.go",
+            "package xhelp\n\nimport \"example.com/m/internal/lib\"\n\nfunc Twice() string { return lib.Name() + lib.Name() }\n",
+        ),
+        (
+            "internal/testutil/testutil.go",
+            "package testutil\n\nimport \"testing\"\n\nfunc Equal(t *testing.T, a, b string) {\n\tif a != b {\n\t\tt.Fatal(a, b)\n\t}\n}\n",
+        ),
+        ("pkg/core/core.go", "package core\n\nfunc Name() string { return \"core\" }\n"),
+        (
+            "pkg/core/core_test.go",
+            "package core\n\nimport \"testing\"\n\nfunc TestName(t *testing.T) { _ = Name() }\n",
+        ),
+        (
+            "pkg/core/core_x_test.go",
+            "package core_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/other/back\"\n)\n\nfunc TestBack(t *testing.T) { _ = back.Name() }\n",
+        ),
+        (
+            "pkg/other/other.go",
+            "package other\n\nimport \"example.com/other/o\"\n\nfunc Name() string { return o.Name() }\n",
+        ),
+        ("_tools/gen/main.go", "package main\n\nimport \"example.com/m/internal/lib\"\n\nfunc main() { println(lib.Name()) }\n"),
+        ("used/go.mod", "module example.com/used\n\ngo 1.21\n"),
+        ("used/u/u.go", "package u\n\nfunc Name() string { return \"u\" }\n"),
+        ("used/u/u_test.go", "package u\n\nimport \"testing\"\n\nfunc TestName(t *testing.T) { _ = Name() }\n"),
+        ("tested/go.mod", "module example.com/tested\n\ngo 1.21\n"),
+        ("tested/helper/helper.go", "package helper\n\nfunc Suffix() string { return \"\" }\n"),
+        (
+            "tested/helper/helper_test.go",
+            "package helper\n\nimport (\n\t_ \"embed\"\n\t\"testing\"\n)\n\n//go:embed fixture.json\nvar fixture string\n\nfunc TestSuffix(t *testing.T) { _ = fixture }\n",
+        ),
+        ("tested/helper/fixture.json", "{}\n"),
+        ("other/go.mod", "module example.com/other\n\ngo 1.21\n\nrequire example.com/far v0.0.0\n"),
+        ("other/o/o.go", "package o\n\nfunc Name() string { return \"o\" }\n"),
+        (
+            "other/o/o_test.go",
+            "package o\n\nimport (\n\t\"testing\"\n\n\t\"example.com/far/f\"\n)\n\nfunc TestName(t *testing.T) { _ = f.Name() }\n",
+        ),
+        (
+            "other/back/back.go",
+            "package back\n\nimport \"example.com/m/pkg/core\"\n\nfunc Name() string { return core.Name() }\n",
+        ),
+        (
+            "other/back/back_test.go",
+            "package back\n\nimport (\n\t\"testing\"\n\n\t\"example.com/m/pkg/other\"\n)\n\nfunc TestName(t *testing.T) { _ = other.Name() }\n",
+        ),
+        ("far/go.mod", "module example.com/far\n\ngo 1.21\n"),
+        ("far/f/f.go", "package f\n\nfunc Name() string { return \"f\" }\n"),
+        ("far/g/g.go", "package g\n\nfunc Name() string { return \"g\" }\n"),
+        (
+            "extra/go.mod",
+            "module example.com/used/extra\n\ngo 1.21\n\nrequire example.com/far v0.0.0\n",
+        ),
+        ("extra/e/e.go", "package e\n\nfunc Name() string { return \"e\" }\n"),
+        (
+            "extra/e/e_test.go",
+            "package e\n\nimport (\n\t\"testing\"\n\n\t\"example.com/far/g\"\n)\n\nfunc TestName(t *testing.T) { _ = g.Name() }\n",
+        ),
+    ];
+
+    fn check_input(go: &str, src: &std::path::Path, sub_packages: &[&str]) -> JsonInput {
+        serde_json::from_value(serde_json::json!({
+            "go": go,
+            "src": src,
+            "subPackages": sub_packages,
+            "doCheck": true,
+            "goProxy": "off",
+        }))
+        .unwrap()
+    }
+
+    fn opts_of(input: &JsonInput) -> GoListOpts<'_> {
+        GoListOpts {
+            tags: &input.tags,
+            mod_root: &input.mod_root,
+            goos: &input.goos,
+            goarch: &input.goarch,
+            go_proxy: input.go_proxy.as_deref(),
+            cgo_enabled: &input.cgo_enabled,
+        }
+    }
+
+    /// The plugin's answer by the two passes, and by the single run where it serves; errors as text.
+    fn both_ways(
+        go: &str,
+        input: &JsonInput,
+    ) -> (std::result::Result<String, String>, Option<String>) {
+        let json = |g: PackageGraph| package_graph_to_json(&g, input, BTreeMap::new()).unwrap();
+        let two = resolve_two_passes(go, input, &opts_of(input))
+            .map(json)
+            .map_err(|e| format!("{e:#}"));
+        (
+            two,
+            resolve_single_pass(go, input, &opts_of(input)).map(json),
+        )
+    }
+
+    #[test]
+    fn single_pass_matches_two_passes() {
+        let Some(go) = DEFAULT_GO else {
+            eprintln!("skip: GO2NIX_DEFAULT_GO unset at build time");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        write_tree(dir.path(), SIBLINGS_TREE);
+        for sub_packages in [
+            &["./cmd/app"][..],
+            &["./pkg/other"],
+            &["./cmd/app", "./pkg/other"],
+            &["./internal/lib", "./internal/xhelp"],
+        ] {
+            let input = check_input(go, dir.path(), sub_packages);
+            let (two, one) = both_ways(go, &input);
+            assert_eq!(one.as_ref(), Some(&two.unwrap()), "{sub_packages:?}");
+        }
+
+        // What the first case must not pick up from the siblings `cmd/app` does not link: `pkg/other` behind
+        // the test of `other/back`, `far/f` behind that of `other/o`, the file the test of `tested/helper` embeds.
+        let (_, one) = both_ways(go, &check_input(go, dir.path(), &["./cmd/app"]));
+        let out: serde_json::Value = serde_json::from_str(&one.unwrap()).unwrap();
+        let test_locals = out["testLocalPackages"].as_object().unwrap();
+        assert_eq!(
+            test_locals.keys().collect::<Vec<_>>(),
+            [
+                "example.com/m/internal/lib/testdata/deep",
+                "example.com/m/internal/lib/testdata/fix",
+                "example.com/m/internal/testutil",
+                "example.com/m/internal/xhelp",
+                "example.com/other/back",
+                "example.com/tested/helper"
+            ]
+        );
+        assert_eq!(
+            test_locals["example.com/tested/helper"]["mainSrcFiles"],
+            serde_json::json!(["tested/helper/helper.go", "tested/helper/helper_test.go"])
+        );
+    }
+
+    /// `restrict_to_patterns` against cmd/go itself: the records it keeps are the ones `go list` prints when
+    /// given the narrower patterns.
+    #[test]
+    fn restrict_to_patterns_matches_go_list() {
+        let Some(go) = DEFAULT_GO else {
+            eprintln!("skip: GO2NIX_DEFAULT_GO unset at build time");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        write_tree(dir.path(), SIBLINGS_TREE);
+        let src = dir.path().to_str().unwrap();
+        let patterns = |siblings: &[&str]| -> Vec<String> {
+            test_patterns(
+                &siblings
+                    .iter()
+                    .map(|s| format!("example.com/{s}"))
+                    .collect(),
+            )
+        };
+        let list = |siblings: &[&str]| -> Vec<GoPackage> {
+            let stdout =
+                run_go_list_test(go, src, &patterns(siblings), &test_opts(Some("off"))).unwrap();
+            serde_json::Deserializer::from_slice(&stdout)
+                .into_iter()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap()
+        };
+        // every record outside the standard library, copies and test mains too, with what it imports
+        let summary = |records: &[GoPackage]| -> BTreeSet<(String, Vec<String>, Vec<String>)> {
+            records
+                .iter()
+                .filter(|p| p.module.is_some())
+                .map(|p| {
+                    let mut files = main_src_files_from(p);
+                    // the source of a test main is a file in the build cache
+                    files.retain(|f| !f.starts_with('/'));
+                    (p.import_path.clone(), files, p.imports.clone())
+                })
+                .collect()
+        };
+        for keep in [&["used"][..], &["other"], &["tested", "used/extra"], &[]] {
+            let all = list(&["far", "other", "tested", "used", "used/extra"]);
+            let restricted = restrict_to_patterns(all, &patterns(keep)).unwrap();
+            assert_eq!(summary(&restricted), summary(&list(keep)), "{keep:?}");
+        }
+    }
+
+    #[test]
+    fn single_pass_leaves_other_roots_and_errors_to_the_two_passes() {
+        let Some(go) = DEFAULT_GO else {
+            eprintln!("skip: GO2NIX_DEFAULT_GO unset at build time");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        write_tree(dir.path(), SIBLINGS_TREE);
+        // `./...` does not match a directory go ignores; a path without `./` is an import path to go; without
+        // any, go lists `.`
+        for sub_packages in [&["./_tools/gen"][..], &["cmd/app"], &["./cmd/..."], &[]] {
+            let input = check_input(go, dir.path(), sub_packages);
+            assert!(
+                resolve_single_pass(go, &input, &opts_of(&input)).is_none(),
+                "{sub_packages:?}"
+            );
+        }
+        let input = check_input(go, dir.path(), &["./_tools/gen"]);
+        let (two, _) = both_ways(go, &input);
+        let whole = resolve_packages(&input)
+            .map(|g| package_graph_to_json(&g, &input, BTreeMap::new()).unwrap())
+            .map_err(|e| format!("{e:#}"));
+        assert_eq!(whole, two);
+
+        // an import nothing provides in the build closure, and a test of it that embeds a file that is not there
+        for (file, text, wording) in [
+            (
+                "internal/lib/more.go",
+                "package lib\n\nimport _ \"example.com/nowhere/pkg\"\n",
+                "package errors:",
+            ),
+            (
+                "internal/lib/more_test.go",
+                "package lib\n\nimport _ \"embed\"\n\n//go:embed missing.txt\nvar missing string\n",
+                "test dependency errors:",
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            write_tree(dir.path(), SIBLINGS_TREE);
+            write_tree(dir.path(), &[(file, text)]);
+            let input = check_input(go, dir.path(), &["./cmd/app"]);
+            let (two, one) = both_ways(go, &input);
+            assert!(one.is_none(), "{file}");
+            let whole = resolve_packages(&input)
+                .map(|_| ())
+                .map_err(|e| format!("{e:#}"));
+            assert_eq!(whole, two.clone().map(|_| ()), "{file}");
+            assert!(two.unwrap_err().contains(wording), "{file}");
+        }
+    }
+
+    /// With doCheck one `go list` process serves the call.
+    #[test]
+    #[cfg(unix)]
+    fn do_check_runs_go_list_once() {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(go) = DEFAULT_GO else {
+            eprintln!("skip: GO2NIX_DEFAULT_GO unset at build time");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        write_tree(&src, SIBLINGS_TREE);
+        let log = dir.path().join("go.calls");
+        let wrapper = dir.path().join("go");
+        std::fs::write(
+            &wrapper,
+            format!("#!/bin/sh\necho \"$1\" >> \"$0.calls\"\nexec '{go}' \"$@\"\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A child another test forked while the script was open for writing holds that descriptor until it
+        // execs; until then running the script fails with ETXTBSY.
+        while let Err(e) = Command::new(&wrapper).arg("version").output() {
+            assert_eq!(e.kind(), std::io::ErrorKind::ExecutableFileBusy, "{e}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let calls = |sub_packages: &[&str], do_check: bool| -> Vec<String> {
+            std::fs::write(&log, "").unwrap();
+            let mut input = check_input(wrapper.to_str().unwrap(), &src, sub_packages);
+            input.do_check = do_check;
+            resolve_packages(&input).unwrap();
+            let log = std::fs::read_to_string(&log).unwrap();
+            log.lines().map(str::to_owned).collect()
+        };
+        assert_eq!(calls(&["./cmd/app"], true), ["list"]);
+        assert_eq!(calls(&["./cmd/app"], false), ["list"]);
+        // a root `./...` does not match costs the run that found that out
+        assert_eq!(calls(&["./_tools/gen"], true), ["list", "list", "list"]);
     }
 }

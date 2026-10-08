@@ -142,8 +142,9 @@ static RegisterPrimOp rp(PrimOp {
   - `goos` / `goarch` (optional): Cross-compilation targets
   - `goProxy` (optional): GOPROXY override; when unset, inherits the environment
   - `cgoEnabled` (optional): CGO_ENABLED value
-  - `doCheck` (optional): When true, runs a second `go list -deps -test`
-    pass to discover test-only third-party dependencies (default: false)
+  - `doCheck` (optional): When true, lists with `go list -deps -test` over
+    `./...` and the directory-replaced modules, which also discovers
+    test-only dependencies (default: false)
   - `resolveHashes` (optional): When true, resolves NAR hashes for all
     modules from go.sum + GOMODCACHE, enabling lockfile-free builds.
     Returns `moduleHashes` in the output (default: false)
