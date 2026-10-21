@@ -1162,6 +1162,8 @@ pub(crate) struct PackageGraph {
     test_packages: Vec<PkgData>,
     test_local_packages: Vec<LocalPkgData>,
     test_only_paths: BTreeSet<String>,
+    /// See [`stdlib_tags`]; filled in by `resolve_packages`.
+    stdlib_tags: StdlibTags,
 }
 
 impl PackageGraph {
@@ -1380,6 +1382,7 @@ fn classify_go_packages(
         test_packages: Vec::new(),
         test_local_packages: Vec::new(),
         test_only_paths: BTreeSet::new(),
+        stdlib_tags: StdlibTags::default(),
     })
 }
 
@@ -1473,7 +1476,8 @@ pub(crate) fn find_gomodcache(go_bin: &str) -> Result<std::path::PathBuf> {
 /// Without `do_check` one `go list -deps` discovers the build-time packages.
 /// With it one `go list -deps -test` gives both those and the test-only
 /// dependencies, third-party and local; where that run cannot stand in for
-/// the two separate passes they are run instead.
+/// the two separate passes they are run instead. A build with tags also has
+/// `go list std` say which of them the standard library reads.
 pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
     let go_bin = input
         .go
@@ -1490,12 +1494,17 @@ pub(crate) fn resolve_packages(input: &JsonInput) -> Result<PackageGraph> {
         cgo_enabled: &input.cgo_enabled,
     };
 
-    if input.do_check {
-        if let Some(graph) = resolve_single_pass(go_bin, input, &opts) {
-            return Ok(graph);
-        }
-    }
-    resolve_two_passes(go_bin, input, &opts)
+    let single_pass = if input.do_check {
+        resolve_single_pass(go_bin, input, &opts)
+    } else {
+        None
+    };
+    let mut graph = match single_pass {
+        Some(graph) => graph,
+        None => resolve_two_passes(go_bin, input, &opts)?,
+    };
+    graph.stdlib_tags = stdlib_tags(go_bin, &input.src, &opts)?;
+    Ok(graph)
 }
 
 /// The first pass (`go list -deps`) discovers build-time packages.
@@ -1766,6 +1775,159 @@ fn restrict_to_patterns(records: Vec<GoPackage>, patterns: &[String]) -> Option<
 }
 
 // ---------------------------------------------------------------------------
+// Build tags the standard library reads
+// ---------------------------------------------------------------------------
+
+/// `go list std` under `opts`, printing every field of a package that a build
+/// tag can change: its files by kind, its `#cgo` flags and its imports. Runs
+/// are compared byte for byte: cmd/go prints the packages in one order, and
+/// were it not to, equal standard libraries would only read as different.
+fn run_go_list_std(go_bin: &str, src_dir: &str, opts: &GoListOpts) -> Result<Vec<u8>> {
+    let mut cmd = Command::new(go_bin);
+    cmd.arg("list");
+    cmd.arg("-json=ImportPath,GoFiles,CgoFiles,SFiles,CFiles,CXXFiles,MFiles,FFiles,HFiles,SysoFiles,SwigFiles,SwigCXXFiles,EmbedFiles,CgoCFLAGS,CgoCPPFLAGS,CgoCXXFLAGS,CgoFFLAGS,CgoLDFLAGS,CgoPkgConfig,Imports");
+    // A tag can break a package (`ignore` adds a second package to a
+    // directory); its lists still differ, and `go install std` reports it.
+    cmd.arg("-e");
+    if !opts.tags.is_empty() {
+        cmd.arg("-tags");
+        cmd.arg(opts.tags.join(","));
+    }
+    cmd.arg("--");
+    cmd.arg("std");
+
+    configure_go_env(&mut cmd, src_dir, opts);
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("resolveGoPackages: failed to execute '{go_bin}'"))?;
+    if !output.status.success() {
+        bail!(
+            "resolveGoPackages: 'go list std' failed (exit {}).\n{}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(output.stdout)
+}
+
+/// The tags of `all` (sorted, without repeats) that are enough for `list` to
+/// print what it prints with all of them, or `all` itself when no such subset
+/// is found. `list(&[])` and `list(all)` come first, and are the only runs
+/// when they agree or `all` is one tag. Otherwise a tag is kept when it alone
+/// changes the listing, and the kept ones are listed together: a file behind
+/// `//go:build a && b` is selected by neither tag alone, so only that last
+/// run shows whether the others can go.
+fn tags_that_change(
+    all: &[String],
+    list: &(impl Fn(&[String]) -> Result<Vec<u8>> + Sync),
+) -> Result<Vec<String>> {
+    use rayon::prelude::*;
+
+    let (untagged, tagged) = rayon::join(|| list(&[]), || list(all));
+    let (untagged, tagged) = (untagged?, tagged?);
+    if untagged == tagged {
+        return Ok(Vec::new());
+    }
+    if all.len() == 1 {
+        return Ok(all.to_vec());
+    }
+    let kept: Vec<String> = all
+        .par_iter()
+        .map(|tag| Ok((list(std::slice::from_ref(tag))? != untagged).then(|| tag.clone())))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+    let enough = match kept.len() {
+        0 => false,
+        n if n == all.len() => true,
+        _ => list(&kept)? == tagged,
+    };
+    Ok(if enough { kept } else { all.to_vec() })
+}
+
+/// The release `go_bin` says it is (`go1.26.3`). `go_bin` may be a symlink
+/// or a wrapper, so its path does not lead to `$GOROOT/VERSION`; for a
+/// release that file's first line is what `go env GOVERSION` prints.
+fn run_go_env_goversion(go_bin: &str, src_dir: &str, opts: &GoListOpts) -> Result<String> {
+    let mut cmd = Command::new(go_bin);
+    cmd.args(["env", "GOVERSION"]);
+    configure_go_env(&mut cmd, src_dir, opts);
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("resolveGoPackages: failed to execute '{go_bin}'"))?;
+    if !output.status.success() {
+        bail!(
+            "resolveGoPackages: 'go env GOVERSION' failed (exit {}).\n{}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// What [`stdlib_tags`] found.
+#[derive(Clone, Default)]
+struct StdlibTags {
+    /// The tags the standard library reads, sorted and without repeats.
+    read: Vec<String>,
+    /// The release of the toolchain whose standard library was listed; empty
+    /// when there were no tags to ask about. Another release may read other
+    /// tags, so `nix/dag` takes `read` only for a scope of this release.
+    go: String,
+}
+
+/// What `stdlib_tags` found, by everything its `go list std` runs depend on:
+/// the toolchain, GOOS, GOARCH, CGO_ENABLED, whether PATH is inherited
+/// (`goProxy`), and the tags. The module is not among them: it has no say in
+/// which files of GOROOT a build context selects.
+type StdlibTagsKey = (String, String, String, String, Option<String>, Vec<String>);
+static STDLIB_TAGS: std::sync::Mutex<BTreeMap<StdlibTagsKey, StdlibTags>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+/// The build's tags that select files, `#cgo` flags or imports inside the
+/// standard library under the build's GOOS, GOARCH and CGO_ENABLED, sorted
+/// and without repeats: `go install -tags <these> std` compiles what it
+/// compiles with all of the build's tags. The toolchain decides which those
+/// are (see [`tags_that_change`]), in the environment of the package listing,
+/// so no list of tag names is kept here, and it says which release it is. No
+/// tags, no run; builds of one evaluation that agree on the key share the
+/// answer.
+fn stdlib_tags(go_bin: &str, src_dir: &str, opts: &GoListOpts) -> Result<StdlibTags> {
+    let all: Vec<String> = opts
+        .tags
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if all.is_empty() {
+        return Ok(StdlibTags::default());
+    }
+    let key = (
+        go_bin.to_owned(),
+        opts.goos.to_owned(),
+        opts.goarch.to_owned(),
+        opts.cgo_enabled.to_owned(),
+        opts.go_proxy.map(str::to_owned),
+        all.clone(),
+    );
+    if let Some(known) = STDLIB_TAGS.lock().unwrap().get(&key) {
+        return Ok(known.clone());
+    }
+    let found = StdlibTags {
+        read: tags_that_change(&all, &|tags: &[String]| {
+            run_go_list_std(go_bin, src_dir, &GoListOpts { tags, ..*opts })
+        })?,
+        go: run_go_env_goversion(go_bin, src_dir, opts)?,
+    };
+    STDLIB_TAGS.lock().unwrap().insert(key, found.clone());
+    Ok(found)
+}
+
+// ---------------------------------------------------------------------------
 // Serializable output types
 // ---------------------------------------------------------------------------
 
@@ -1827,6 +1989,12 @@ struct JsonOutput {
     sibling_modules: BTreeMap<String, SiblingModule>,
     /// Transitive local-replace target dirs (src-relative, normalized).
     local_replace_dirs: Vec<String>,
+    /// The tags to compile the standard library with; see [`stdlib_tags`].
+    /// Always present, so that `nix/dag` can tell "none" from a plugin that
+    /// does not report them.
+    stdlib_tags: Vec<String>,
+    /// The release of the toolchain that said so; see [`StdlibTags`].
+    stdlib_tags_go: String,
 }
 
 #[derive(Serialize)]
@@ -2260,6 +2428,8 @@ pub(crate) fn package_graph_to_json(
         sub_package_closures,
         sibling_modules: graph.sibling_modules.clone(),
         local_replace_dirs,
+        stdlib_tags: graph.stdlib_tags.read.clone(),
+        stdlib_tags_go: graph.stdlib_tags.go.clone(),
     };
 
     serde_json::to_string(&output).context("failed to serialize output JSON")
@@ -4458,5 +4628,148 @@ mod tests {
         memo.put(key("e"), listing(3));
         assert_eq!(memo.get(&key("e")).map(|l| l.len()), Some(3));
         assert_eq!(memo.kept.len(), 1);
+    }
+
+    // --- stdlib_tags ---
+
+    /// A constraint over tags, given the test for one tag.
+    type Constraint = fn(&dyn Fn(&str) -> bool) -> bool;
+
+    /// `tags_that_change` over a stand-in for `go list std` that prints the
+    /// files whose constraint holds; with it, how many times it ran.
+    fn kept_of(files: &[(&str, Constraint)], all: &[&str]) -> (Vec<String>, usize) {
+        let runs = std::sync::atomic::AtomicUsize::new(0);
+        let all: Vec<String> = all.iter().map(|t| t.to_string()).collect();
+        let kept = tags_that_change(&all, &|tags: &[String]| {
+            runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let has = |t: &str| tags.iter().any(|x| x == t);
+            let listed: Vec<&str> = files
+                .iter()
+                .filter(|(_, holds)| holds(&has))
+                .map(|(file, _)| *file)
+                .collect();
+            Ok(listed.join(" ").into_bytes())
+        })
+        .unwrap();
+        (kept, runs.into_inner())
+    }
+
+    #[test]
+    fn tags_that_change_keeps_what_the_listing_needs() {
+        let tags = |tags: &[&str]| -> Vec<String> { tags.iter().map(|t| t.to_string()).collect() };
+        let net: &[(&str, Constraint)] = &[
+            ("conf.go", |_| true),
+            ("netgo_on.go", |has| has("netgo")),
+            ("netgo_off.go", |has| !has("netgo")),
+            ("lookup_stubs.go", |has| has("osusergo")),
+        ];
+        // no tag read: the two listings that say so
+        assert_eq!(kept_of(net, &["mytag"]), (tags(&[]), 2));
+        assert_eq!(kept_of(net, &["fts5", "mytag"]), (tags(&[]), 2));
+        assert_eq!(kept_of(net, &["netgo"]), (tags(&["netgo"]), 2));
+        // one listing per tag, and one of the kept tags together
+        assert_eq!(kept_of(net, &["mytag", "netgo"]), (tags(&["netgo"]), 5));
+        // every tag kept: nothing left to compare
+        let both_read = ["netgo", "osusergo"];
+        assert_eq!(kept_of(net, &both_read), (tags(&both_read), 4));
+
+        // a file two tags select only together: neither changes the listing alone
+        let both: &[(&str, Constraint)] = &[
+            ("both.go", |has| has("a") && has("b")),
+            ("c.go", |has| has("c")),
+        ];
+        assert_eq!(kept_of(both, &["a", "b"]), (tags(&["a", "b"]), 4));
+        assert_eq!(kept_of(both, &["a", "b", "c"]), (tags(&["a", "b", "c"]), 6));
+        assert_eq!(kept_of(both, &["a", "c"]), (tags(&["c"]), 5));
+        let either: &[(&str, Constraint)] = &[("either.go", |has| has("a") || has("b"))];
+        assert_eq!(kept_of(either, &["a", "b"]), (tags(&["a", "b"]), 4));
+
+        let failed = tags_that_change(&tags(&["a"]), &|_: &[String]| bail!("no go"));
+        assert!(failed.is_err());
+    }
+
+    /// Against cmd/go itself, through `resolve_packages`: which tags come
+    /// back as `stdlibTags`, how many `go list std` runs that took, and which
+    /// release `stdlibTagsGo` names.
+    #[test]
+    #[cfg(unix)]
+    fn stdlib_tags_are_the_ones_the_toolchain_reads() {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(go) = DEFAULT_GO else {
+            eprintln!("skip: GO2NIX_DEFAULT_GO unset at build time");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        write_tree(
+            &src,
+            &[
+                ("go.mod", "module example.com/stdtags\n\ngo 1.23\n"),
+                (
+                    "main.go",
+                    "package main\n\nimport _ \"net\"\n\nfunc main() {}\n",
+                ),
+            ],
+        );
+        let log = dir.path().join("go.calls");
+        let wrapper = dir.path().join("go");
+        std::fs::write(
+            &wrapper,
+            format!("#!/bin/sh\necho \"$*\" >> \"$0.calls\"\nexec '{go}' \"$@\"\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // See do_check_runs_go_list_once.
+        while let Err(e) = Command::new(&wrapper).arg("version").output() {
+            assert_eq!(e.kind(), std::io::ErrorKind::ExecutableFileBusy, "{e}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // "go" and what nixpkgs calls `go.version`, which `nix/dag` compares
+        // `stdlibTagsGo` with: the first line of $GOROOT/VERSION.
+        let goroot = Command::new(go).args(["env", "GOROOT"]).output().unwrap();
+        let goroot = String::from_utf8(goroot.stdout).unwrap();
+        let version = std::fs::read_to_string(Path::new(goroot.trim()).join("VERSION")).unwrap();
+        let release = version.lines().next().unwrap();
+        // (stdlibTags of the output, `go list std` runs)
+        let resolve_cgo = |tags: &[&str], cgo: &str| -> (serde_json::Value, usize) {
+            std::fs::write(&log, "").unwrap();
+            let input: JsonInput = serde_json::from_value(serde_json::json!({
+                "go": wrapper,
+                "src": src,
+                "tags": tags,
+                "goProxy": "off",
+                "cgoEnabled": cgo,
+            }))
+            .unwrap();
+            let graph = resolve_packages(&input).unwrap();
+            let json = package_graph_to_json(&graph, &input, BTreeMap::new()).unwrap();
+            let out: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let log = std::fs::read_to_string(&log).unwrap();
+            let std_runs = log.lines().filter(|l| l.ends_with(" -- std")).count();
+            // the toolchain is asked who it is when it is asked about tags
+            let asked = log.lines().filter(|l| *l == "env GOVERSION").count();
+            assert_eq!(asked, usize::from(std_runs > 0), "{tags:?}");
+            let answered_by = if tags.is_empty() { "" } else { release };
+            assert_eq!(out["stdlibTagsGo"], answered_by, "{tags:?}");
+            (out["stdlibTags"].clone(), std_runs)
+        };
+        // CGO_ENABLED is given: os/user reads osusergo only with cgo, and a
+        // toolchain's own default depends on how it was built and on PATH.
+        let resolve = |tags: &[&str]| resolve_cgo(tags, "1");
+        let json = |tags: &[&str]| serde_json::json!(tags);
+        let none: [&str; 0] = [];
+        assert_eq!(resolve(&none), (json(&none), 0));
+        assert_eq!(resolve(&["mytag"]), (json(&none), 2));
+        assert_eq!(resolve(&["netgo"]), (json(&["netgo"]), 2));
+        assert_eq!(resolve(&["mytag", "netgo"]), (json(&["netgo"]), 5));
+        // order and repeats aside, the same tags: answered from the first time
+        assert_eq!(resolve(&["netgo", "mytag", "netgo"]), (json(&["netgo"]), 0));
+        assert_eq!(
+            resolve(&["osusergo", "netgo"]),
+            (json(&["netgo", "osusergo"]), 4)
+        );
+        // the same tag under another CGO_ENABLED is another question
+        assert_eq!(resolve(&["osusergo"]), (json(&["osusergo"]), 2));
+        assert_eq!(resolve_cgo(&["osusergo"], "0"), (json(&none), 2));
     }
 }

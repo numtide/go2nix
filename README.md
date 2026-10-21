@@ -248,6 +248,7 @@ It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch,
 | `replacements` | `replace` directives with a version, by `modKey` |
 | `siblingModules`, `localReplaceDirs` | filesystem `replace` targets: identity per module, their directories |
 | `subPackageClosures` | per main package: the modules it links (for module info) and whether it needs a C++ linker |
+| `stdlibTags`, `stdlibTagsGo` | the `tags` the standard library of the plugin's toolchain reads for this target, from `go list std` with and without them, and that toolchain's release (`go1.26.3`) |
 | `moduleHashes` | with `resolveHashes`: NAR hash per module, for lockfile-free builds |
 | `apiLevel` | the contract's version; `builtins.go2nixApiLevel` reports the plugin's, and the builder warns when they differ |
 

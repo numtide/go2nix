@@ -82,6 +82,15 @@ returns:
 - `subPackageClosures` — per main package: `modKeys` and `siblingModPaths`
   (the modules it links, for the embedded module info) and `cxx` (whether
   it needs a C++ linker)
+- `stdlibTags` — the `tags` that select files, `#cgo` flags or imports
+  inside the standard library for this `goos`, `goarch` and `cgoEnabled`,
+  sorted: `[ "netgo" ]` for `tags = [ "mytag" "netgo" ]`. Found by
+  comparing `go list std` with and without the tags, so the toolchain
+  decides, and nothing is run when `tags` is empty. The answer is that of
+  the plugin's toolchain, and another Go release may read other tags
+  (`quicbasicnet` in go 1.27, not in go 1.26)
+- `stdlibTagsGo` — the release of that toolchain, as `go env GOVERSION`
+  prints it (`"go1.26.3"`); `""` when `tags` is empty
 - `moduleHashes` — module NAR hashes (when `resolveHashes = true`; see
   [Lockfile-free builds](lockfile-format.md#lockfile-free-builds))
 - `apiLevel` — see below
