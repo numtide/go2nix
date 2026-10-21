@@ -156,9 +156,10 @@ packages.api = goEnv.buildGoApplication {
 };
 ```
 
-`CGO_ENABLED` belongs in the scope's `goEnv` because the standard library is
-compiled once per scope and has to agree with the packages built on top of
-it. With cgo off, `net` and `os/user` use their pure-Go implementations and
+In the scope's `goEnv`, `CGO_ENABLED` applies to every build of the scope and
+they share one standard library. `CGO_ENABLED = 0` on one `buildGoApplication`
+call does the same for that build alone, against a standard library of its
+own. With cgo off, `net` and `os/user` use their pure-Go implementations and
 the binary has no dynamic dependencies; its closure is the binary (the builder
 refuses a result that still refers to the Go toolchain unless
 `allowGoReference` is set).

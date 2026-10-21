@@ -37,7 +37,11 @@ lockfile-free mode (`goLock` is required), and ignores `version`, `meta`,
 `goProxy`, `allowGoReference`, `contentAddressed`, `extraMainSrcFiles`,
 `srcFilter`, `env` and `passthru`. `CGO_ENABLED` does not default to the
 scope's `goEnv.CGO_ENABLED`, and the scope's `goEnv` reaches the standard
-library and `go2nix resolve` but not the per-package derivations. The whole
+library and `go2nix resolve` but not the per-package derivations. A
+`CGO_ENABLED` or `tags` given to the build reaches the standard library and
+the per-package derivations, as in default mode (see
+[The Scope](../scope.md#stdlib)), except that every tag of the build goes to
+the standard library, whether it reads the tag or not. The whole
 `src` is an input of the wrapper, so any change to it re-runs
 `go2nix resolve`, even though the per-package derivations it registers are
 then reused.

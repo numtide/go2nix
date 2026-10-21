@@ -141,7 +141,7 @@ goEnv = go2nix.lib.mkGoEnv {
 };
 ```
 
-The scope holds `buildGoApplication`, `buildGoApplicationExperimental`, `go`, `go2nix`, `stdlib`, `hooks`, `fetchers.fetchGoModule` and `helpers`. It is a `lib.makeScope`, so `goEnv.overrideScope` replaces any of them — for instance to wrap `fetchGoModule` with a proxy's authentication. The standard library is compiled once per scope and shared by every build in it.
+The scope holds `buildGoApplication`, `buildGoApplicationExperimental`, `go`, `go2nix`, `stdlib`, `hooks`, `fetchers.fetchGoModule` and `helpers`. It is a `lib.makeScope`, so `goEnv.overrideScope` replaces any of them — for instance to wrap `fetchGoModule` with a proxy's authentication. The standard library is compiled once per scope and shared by every build in it; a build that sets its own `CGO_ENABLED`, or `tags` the standard library reads (`netgo`, `osusergo`, …), gets one compiled with them.
 
 ### `buildGoApplication`
 
@@ -248,6 +248,7 @@ It takes `{ src, modRoot ? ".", subPackages ? [ "." ], tags ? [ ], goos, goarch,
 | `replacements` | `replace` directives with a version, by `modKey` |
 | `siblingModules`, `localReplaceDirs` | filesystem `replace` targets: identity per module, their directories |
 | `subPackageClosures` | per main package: the modules it links (for module info) and whether it needs a C++ linker |
+| `stdlibTags`, `stdlibTagsGo` | the `tags` the standard library of the plugin's toolchain reads for this target, from `go list std` with and without them, and that toolchain's release (`go1.26.3`); the builder compiles the standard library with these only when the scope's `go` is that release, and with all of `tags` otherwise |
 | `moduleHashes` | with `resolveHashes`: NAR hash per module, for lockfile-free builds |
 | `apiLevel` | the contract's version; `builtins.go2nixApiLevel` reports the plugin's, and the builder warns when they differ |
 

@@ -17,7 +17,8 @@
   nixPackage ? null,
   # Env vars forwarded to stdlib compilation and go tool invocations.
   # Scope-level because stdlib is scope-level — every buildGoApplication
-  # call in this scope shares the same stdlib derivation.
+  # call in this scope shares the same stdlib derivation, unless it sets a
+  # CGO_ENABLED of its own or tags the standard library reads.
   goEnv ? { },
 }:
 callPackage ./scope.nix {

@@ -59,6 +59,23 @@ assert
 let
   normalizedSubPackages = helpers.normalizeSubPackages subPackages;
 
+  # `go install std` selects the standard library's files by CGO_ENABLED and
+  # tags, as `go2nix resolve`'s `go list` does for every other package: a
+  # build that sets tags, or a CGO_ENABLED other than the scope's, gets its
+  # own stdlib. Nothing here runs the toolchain while evaluating, so which
+  # tags the standard library reads is not known and all of them go.
+  buildCgoEnv = lib.optionalAttrs (
+    CGO_ENABLED != null && toString CGO_ENABLED != toString (goEnv.CGO_ENABLED or "")
+  ) { CGO_ENABLED = toString CGO_ENABLED; };
+  buildStdlib =
+    if buildCgoEnv == { } && tags == [ ] then
+      stdlib
+    else
+      stdlib.override {
+        goEnv = goEnv // buildCgoEnv;
+        inherit tags;
+      };
+
   # Validate packageOverrides: experimental mode only supports nativeBuildInputs.
   # Derivations are synthesized at build time by `go2nix resolve`, so env and
   # other attrs cannot be forwarded. Fail early instead of silently dropping.
@@ -142,7 +159,7 @@ let
         --lockfile ${goLock} \
         --system ${stdenv.buildPlatform.system} \
         --go ${go}/bin/go \
-        --stdlib ${stdlib} \
+        --stdlib ${buildStdlib} \
         --nix ${nixPackage}/bin/nix \
         --go2nix ${go2nix}/bin/go2nix \
         --bash ${bash}/bin/bash \

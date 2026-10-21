@@ -165,6 +165,8 @@ static RegisterPrimOp rp(PrimOp {
 
   Returns: { apiLevel, packages, localPackages, modulePath, goVersion,
     replacements, subPackageClosures, siblingModules, localReplaceDirs,
+    stdlibTags (the tags the standard library reads), stdlibTagsGo (the
+    release of the toolchain that said so),
     testPackages, testLocalPackages (when doCheck=true and non-empty),
     moduleHashes (when resolveHashes=true) }
 )",

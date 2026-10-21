@@ -297,6 +297,35 @@ let
 
   normalizedSubPackages = helpers.normalizeSubPackages subPackages;
 
+  # goEnv and stdlib as this build sees them. `go install std` selects the
+  # standard library's files by CGO_ENABLED and tags, as the plugin's
+  # `go list` does for every other package, so a build that sets a
+  # CGO_ENABLED other than the scope's, or tags the standard library reads,
+  # compiles its own. Every other build must get the scope's two untouched:
+  # its derivation paths depend on them.
+  buildCgoEnv = optionalAttrs (
+    CGO_ENABLED != null && toString CGO_ENABLED != toString (goEnv.CGO_ENABLED or "")
+  ) { CGO_ENABLED = toString CGO_ENABLED; };
+  buildGoEnv = goEnv // buildCgoEnv;
+  # Which tags the standard library reads is the answer of the plugin's
+  # toolchain, which need not be the scope's `go`, and another release may
+  # read other tags: it counts only when `stdlibTagsGo` names the scope's
+  # release. Otherwise, and with a plugin that reports neither, every tag
+  # stays in.
+  stdlibTags =
+    if (goPackagesResult.stdlibTagsGo or null) == "go${go.version}" then
+      goPackagesResult.stdlibTags
+    else
+      tags;
+  buildStdlib =
+    if buildCgoEnv == { } && stdlibTags == [ ] then
+      stdlib
+    else
+      stdlib.override {
+        goEnv = buildGoEnv;
+        tags = stdlibTags;
+      };
+
   # Build the compile manifest JSON string for a per-package derivation.
   # `deps` is the list of dependency derivations whose importcfg entries
   # need to be merged with stdlib's.
@@ -313,7 +342,7 @@ let
       {
         version = 2;
         kind = "compile";
-        importcfgParts = [ "${stdlib}/importcfg" ] ++ map depCompileCfg deps;
+        importcfgParts = [ "${buildStdlib}/importcfg" ] ++ map depCompileCfg deps;
         # The plugin selected the files with these tags at eval time;
         # compile-package reads them only for `#cgo` lines in cgo files.
         # Writing them for a pure-Go package would give it a different
@@ -330,7 +359,7 @@ let
       // (if files != null then { inherit files; } else { })
     );
 
-  # Env attrset for per-package compile derivations. goEnv is the scope-level
+  # Env attrset for per-package compile derivations. buildGoEnv is the
   # base; packageOverrides.<pkg>.env overlays it; the hook-required wiring
   # keys come last so a stray env.compileManifestJSON / goPackagePath /
   # goPackageSrcDir / goLangVersion in an override can't silently break the
@@ -354,7 +383,7 @@ let
       modulePath ? "",
       moduleVersion ? "",
     }:
-    goEnv
+    buildGoEnv
     // extraEnv
     // {
       goPackagePath = importPath;
@@ -771,7 +800,7 @@ let
       __structuredAttrs = true;
       PATH = "${buildPackages.coreutils}/bin";
       inherit allPkgsImportcfg;
-      stdlibCfg = "${stdlib}/importcfg";
+      stdlibCfg = "${buildStdlib}/importcfg";
       args = [
         (builtins.toFile "deps-importcfg.sh" ''
           set -eu

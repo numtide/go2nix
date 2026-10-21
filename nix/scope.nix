@@ -64,7 +64,12 @@ lib.makeScope newScope (
 
     helpers = import ./helpers.nix;
 
-    stdlib = callPackage ./stdlib.nix { goEnv = goEnv'; };
+    # The scope has a `tags` member of its own, which callPackage would
+    # hand to stdlib.nix; only a build's tags may reach it.
+    stdlib = callPackage ./stdlib.nix {
+      goEnv = goEnv';
+      tags = [ ];
+    };
 
     hooks = callPackage ./dag/hooks { };
 

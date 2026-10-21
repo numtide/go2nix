@@ -8,6 +8,7 @@ machine that builds them.
 ## `fixtures/`
 
 Small Go modules, one behaviour each: build tags, assembly, cgo and C++,
+a per-build `CGO_ENABLED` and tags the standard library reads,
 `pkg-config`, test-only dependencies, `//go:embed` in tests, nested modules,
 sibling modules behind a filesystem `replace`, `modRoot`, `srcFilter`, a
 third-party package importing a locally replaced module, `toolchain` lines
@@ -49,8 +50,9 @@ the lockfile-free path, `.#test-package-yubikey-agent-no-lockfile`.
 
 ## `nix/`
 
-Tests written in Nix. `helpers_test.nix` and `fetch_go_module_test.nix`
-evaluate to `true` or throw, and run as `checks.<system>.nix-unit-tests`.
+Tests written in Nix. `helpers_test.nix`, `fetch_go_module_test.nix` and
+`stdlib_test.nix` evaluate to `true` or throw, and run as
+`checks.<system>.nix-unit-tests`.
 `cross_platform_test.nix` is `checks.<system>.cross-platform-env`.
 `compile_manifest_tags_test.nix` is `checks.<system>.compile-manifest-tags`: it
 evaluates a fixture with two tag sets and checks that only the cgo package's
