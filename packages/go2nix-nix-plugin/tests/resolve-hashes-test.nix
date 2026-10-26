@@ -18,7 +18,7 @@ in
 pkgs.runCommand "go2nix-nix-plugin-resolve-hashes-test"
   {
     nativeBuildInputs = [
-      pkgs.nixVersions.nix_2_34
+      plugin.nixPackage
       pkgs.go
       pkgs.jq
     ];

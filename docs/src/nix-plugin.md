@@ -113,9 +113,29 @@ halves:
 The shim uses Nix's C++ API, which is unstable across releases, so the
 plugin must be built against the **same Nix version** you evaluate with.
 The package builds against `nixVersions.nix_2_34`; to target another Nix,
-change the `nixComponents` binding in
-`packages/go2nix-nix-plugin/default.nix`. The build requires Nix 2.34 or
-newer, which makes that the minimum for default mode as a whole.
+pass it as `nixPackage` (the plugin exposes it again as
+`passthru.nixPackage`):
+
+```nix
+import (inputs.go2nix + "/packages/go2nix-nix-plugin") {
+  inherit pkgs;
+  nixPackage = config.nix.package;
+}
+```
+
+The build requires Nix 2.34 or newer, which makes that the minimum for
+default mode as a whole.
+
+When the plugin loads, it compares the major.minor version of the Nix it
+was built against with the evaluator's. On a mismatch it registers no
+builtins and prints
+
+```
+go2nix-nix-plugin: built against Nix 2.34.9 but loaded into Nix 2.35.3; builtins.resolveGoPackages is not registered. ...
+```
+
+so evaluation stops at the missing attribute instead of crashing the
+evaluator. Releases with the same major.minor are treated as compatible.
 
 ## Loading the plugin
 

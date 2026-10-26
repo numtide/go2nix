@@ -9,9 +9,13 @@
 #include <nix/expr/value.hh>
 #include <nix/expr/json-to-value.hh>
 #include <nix/expr/value-to-json.hh>
+#include <nix/store/globals.hh>
 #include <nix/store/local-fs-store.hh>
 #include <nix/util/util.hh>
 #include <nlohmann/json.hpp>
+
+#include <cstdio>
+#include <string_view>
 
 extern "C" {
     int resolve_go_packages_json(
@@ -129,12 +133,39 @@ static void prim_resolveGoPackages(EvalState &state, const PosIdx pos,
     parseJSON(state, result, v);
 }
 
-// Nix >=2.34 renamed PrimOp::fun to PrimOp::impl (see CMakeLists.txt).
-static RegisterPrimOp rp(PrimOp {
-    .name = "resolveGoPackages",
-    .args = {"attrs"},
-    .arity = 1,
-    .doc = R"(
+static void prim_go2nixApiLevel(EvalState &, const PosIdx, Value **, Value &v) {
+    v.mkInt(go2nix_api_level());
+}
+
+// "2.35.3" and "2.35pre20260101_abcdef" -> "2.35".
+static std::string_view majorMinor(std::string_view version) {
+    auto dot = version.find('.');
+    if (dot == std::string_view::npos)
+        return version;
+    return version.substr(0, version.find_first_not_of("0123456789", dot + 1));
+}
+
+// The shim compiles Nix's inline code and struct layouts (EvalState,
+// Value, PrimOp) into itself, and those change between Nix releases, so
+// in an evaluator of another release the primops below crash it. Compare
+// versions before registering anything; nixVersion is a plain std::string
+// exported by libnixstore, safe to read whatever Nix loaded the plugin.
+static bool registerPrimOps() {
+    if (majorMinor(GO2NIX_BUILT_NIX_VERSION) != majorMinor(nixVersion)) {
+        std::fprintf(stderr,
+            "go2nix-nix-plugin: built against Nix %s but loaded into Nix %s; "
+            "builtins.resolveGoPackages is not registered. Build the plugin "
+            "against the Nix that loads it (the nixPackage argument of "
+            "packages/go2nix-nix-plugin).\n",
+            GO2NIX_BUILT_NIX_VERSION, nixVersion.c_str());
+        return false;
+    }
+
+    static RegisterPrimOp rp(PrimOp {
+        .name = "resolveGoPackages",
+        .args = {"attrs"},
+        .arity = 1,
+        .doc = R"(
   Discover the Go package graph at eval time by running `go list`.
 
   The Go toolchain is the one baked into the plugin at build time, run
@@ -168,27 +199,20 @@ static RegisterPrimOp rp(PrimOp {
     testPackages, testLocalPackages (when doCheck=true and non-empty),
     moduleHashes (when resolveHashes=true) }
 )",
-#ifdef NIX_PRIMOP_HAS_IMPL
-    .impl = prim_resolveGoPackages,
-#else
-    .fun = prim_resolveGoPackages,
-#endif
-});
+        .impl = prim_resolveGoPackages,
+    });
 
-static void prim_go2nixApiLevel(EvalState &, const PosIdx, Value **, Value &v) {
-    v.mkInt(go2nix_api_level());
+    // Internal probe so nix/dag/default.nix can detect a skewed .so before
+    // calling resolveGoPackages. Not user API.
+    static RegisterPrimOp rpApiLevel(PrimOp {
+        .name = "__go2nixApiLevel",
+        .args = {},
+        .arity = 0,
+        .doc = "Internal: contract version of the loaded go2nix-nix-plugin resolver.",
+        .impl = prim_go2nixApiLevel,
+    });
+
+    return true;
 }
 
-// Internal probe so nix/dag/default.nix can detect a skewed .so before
-// calling resolveGoPackages. Not user API.
-static RegisterPrimOp rpApiLevel(PrimOp {
-    .name = "__go2nixApiLevel",
-    .args = {},
-    .arity = 0,
-    .doc = "Internal: contract version of the loaded go2nix-nix-plugin resolver.",
-#ifdef NIX_PRIMOP_HAS_IMPL
-    .impl = prim_go2nixApiLevel,
-#else
-    .fun = prim_go2nixApiLevel,
-#endif
-});
+[[maybe_unused]] static const bool registered = registerPrimOps();

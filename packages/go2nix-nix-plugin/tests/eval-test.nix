@@ -10,7 +10,7 @@ in
 pkgs.runCommand "go2nix-nix-plugin-eval-test"
   {
     nativeBuildInputs = [
-      pkgs.nixVersions.nix_2_34
+      plugin.nixPackage
       pkgs.go
       pkgs.jq
     ];

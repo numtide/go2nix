@@ -66,7 +66,7 @@ nix build \
   "$(nix build --no-link --print-out-paths github:numtide/go2nix#go2nix-nix-plugin)/lib/nix/plugins/libgo2nix_plugin.so"
 ```
 
-or permanently, with `plugin-files` in `nix.conf` (`nix.settings.plugin-files` on NixOS, from `inputs.go2nix.packages.${pkgs.system}.go2nix-nix-plugin`). Without it evaluation stops at `error: attribute 'resolveGoPackages' missing`. Nix's plugin ABI changes between releases, so the plugin must be built against the Nix that loads it; the package builds against `nixVersions.nix_2_34`. Details in [Nix Plugin](docs/src/nix-plugin.md).
+or permanently, with `plugin-files` in `nix.conf` (`nix.settings.plugin-files` on NixOS, from `inputs.go2nix.packages.${pkgs.system}.go2nix-nix-plugin`). Without it evaluation stops at `error: attribute 'resolveGoPackages' missing`. Nix's plugin ABI changes between releases, so the plugin must be built against the Nix that loads it: the package builds against `nixVersions.nix_2_34` unless its `nixPackage` argument names another, and in an evaluator of another Nix release it registers nothing and says so on stderr. Details in [Nix Plugin](docs/src/nix-plugin.md).
 
 The flake's `nixConfig` adds `nix-community.cachix.org` as a substituter. The CLI alone is `nix run github:numtide/go2nix -- generate .`.
 

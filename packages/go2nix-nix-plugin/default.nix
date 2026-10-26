@@ -1,4 +1,11 @@
-{ pkgs, ... }:
+{
+  pkgs,
+  # The plugin uses Nix's C++ API, whose ABI changes between releases: build
+  # it against the Nix that loads it. The plugin refuses to register its
+  # builtins in an evaluator of another major.minor version.
+  nixPackage ? pkgs.nixVersions.nix_2_34,
+  ...
+}:
 
 let
   inherit (pkgs)
@@ -9,10 +16,9 @@ let
     cmake
     boost
     nlohmann_json
-    nixVersions
     go
     ;
-  nixComponents = nixVersions.nix_2_34.libs;
+  nixComponents = nixPackage.libs;
 
   core = rustPlatform.buildRustPackage {
     pname = "go2nix-nix-plugin-core";
@@ -53,6 +59,8 @@ stdenv.mkDerivation {
   cmakeFlags = [
     "-DRUST_LIB_DIR=${core}/lib"
   ];
+
+  passthru = { inherit nixPackage; };
 
   meta = {
     description = "Nix plugin for resolving Go module dependencies";
