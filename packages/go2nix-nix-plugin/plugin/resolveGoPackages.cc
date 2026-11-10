@@ -68,6 +68,13 @@ static void prim_resolveGoPackages(EvalState &state, const PosIdx pos,
     for (const auto &c : context) {
         std::visit(overloaded {
             [&](const NixStringContextElem::Opaque &o) {
+#ifdef NIX_HAS_ENSURE_LAZY_PATH_COPIED
+                // A flake input is only mounted at its store path until
+                // something copies it. Copy it, as derivationStrict does;
+                // ensurePath alone can only substitute it, and a revision
+                // that no cache holds yet then fails to evaluate.
+                state.ensureLazyPathCopied(o.path);
+#endif
                 state.store->ensurePath(o.path);
             },
             [&](const NixStringContextElem::Built &) {
