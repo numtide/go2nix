@@ -16,12 +16,23 @@ check_cxx_source_compiles("
   int main() { return 0; }
 " NIX_PRIMOP_HAS_IMPL)
 
+# Nix >=2.35 mounts flake inputs without copying them to the store, and
+# EvalState::ensureLazyPathCopied copies one on demand.
+check_cxx_source_compiles("
+  #include <nix/expr/eval.hh>
+  void check() { auto p = &nix::EvalState::ensureLazyPathCopied; (void)p; }
+  int main() { return 0; }
+" NIX_HAS_ENSURE_LAZY_PATH_COPIED)
+
 add_library(go2nix_plugin MODULE resolveGoPackages.cc)
 target_include_directories(go2nix_plugin PUBLIC ${NIX_INCLUDE_DIRS})
 target_compile_options(go2nix_plugin PUBLIC ${NIX_CFLAGS_OTHER})
 
 if(NIX_PRIMOP_HAS_IMPL)
   target_compile_definitions(go2nix_plugin PRIVATE NIX_PRIMOP_HAS_IMPL)
+endif()
+if(NIX_HAS_ENSURE_LAZY_PATH_COPIED)
+  target_compile_definitions(go2nix_plugin PRIVATE NIX_HAS_ENSURE_LAZY_PATH_COPIED)
 endif()
 target_link_libraries(go2nix_plugin nlohmann_json::nlohmann_json)
 
