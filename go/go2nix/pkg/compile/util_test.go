@@ -80,6 +80,14 @@ func TestLangVersion(t *testing.T) {
 		{"1.22.0", "1.22"},
 		{"1", "1"},
 		{"2.0", "2.0"},
+		{"1.23rc1", "1.23"},
+		{"1.23rc2", "1.23"},
+		{"go1.23rc1", "1.23"},
+		{"1.24beta1", "1.24"},
+		{"1.25dev", "1.25"},
+		{"1.23alpha1", "1.23"},
+		{"1.23.0-rc.1", "1.23"},
+		{"1.23.0-beta.1", "1.23"},
 	}
 	for _, tt := range tests {
 		if got := LangVersion(tt.in); got != tt.want {
@@ -98,6 +106,16 @@ func TestFindGoVersion(t *testing.T) {
 	// From the module root itself.
 	if got := findGoVersion(dir); got != "1.21" {
 		t.Errorf("root: got %q, want %q", got, "1.21")
+	}
+
+	// A go directive with a prerelease suffix must yield a -lang value
+	// the compiler accepts (go 1.23rc1 → 1.23, not 1.23rc1).
+	prerelease := t.TempDir()
+	if err := os.WriteFile(filepath.Join(prerelease, "go.mod"), []byte("module example.com/rc\n\ngo 1.23rc1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := findGoVersion(prerelease); got != "1.23" {
+		t.Errorf("prerelease go directive: got %q, want %q", got, "1.23")
 	}
 
 	// From a sub-package directory.

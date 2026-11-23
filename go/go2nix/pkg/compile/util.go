@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"go/version"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -184,15 +185,16 @@ var ToolchainVersion = sync.OnceValue(func() string {
 	return LangVersion(strings.TrimPrefix(v, "go"))
 })
 
-// LangVersion strips the patch version from a Go version string,
-// matching internal/gover.Lang: "1.21.3" → "1.21", "1.21" → "1.21".
+// LangVersion strips the patch and prerelease suffix from a Go version
+// string, matching go/version.Lang (and cmd/go's -lang value):
+// "1.21.3" → "1.21", "1.21" → "1.21", "1.23rc1" → "1.23".
 func LangVersion(v string) string {
-	major, rest, ok := strings.Cut(v, ".")
-	if !ok {
+	s := strings.TrimPrefix(v, "go")
+	lang := version.Lang("go" + s)
+	if lang == "" {
 		return v
 	}
-	minor, _, _ := strings.Cut(rest, ".")
-	return major + "." + minor
+	return strings.TrimPrefix(lang, "go")
 }
 
 // BuildCores returns how many CPU-bound jobs this process may run at once: the
